@@ -16,7 +16,7 @@ body{margin:0;font:14px/1.45 Inter, system-ui, -apple-system, Segoe UI, Roboto, 
 /* Header */
 .app-header{position:sticky;top:0;z-index:10;height:var(--headerH);
   display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;
-  padding:10px 14px;background:rgba(20,23,28,.85);backdrop-filter:saturate(140%) blur(8px);border-bottom:1px solid var(--stroke)}
+  padding:10px 14px;border-bottom:1px solid var(--stroke)}
 .hdr-left,.hdr-right{display:flex;align-items:center;gap:10px}
 .hdr-left{min-width:0}.hdr-center{display:flex;justify-content:center;align-items:center}
 .avatar{width:40px;height:40px;border-radius:50%;object-fit:cover;background:linear-gradient(135deg,#23262d,#1b1e24);border:1px solid var(--stroke)}
