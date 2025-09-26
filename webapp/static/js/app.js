@@ -34,7 +34,6 @@
   (function injectLayoutTweaks(){
     const css = `
       .tabbar { position: fixed; left: 0; right: 0; }
-      header, .header, .app-header { margin-top: 10px !important; }
 
       #topupOverlay { position: fixed; inset: 0; z-index: 99999; background: rgba(10,12,16,0.92);
         display: none; align-items: center; justify-content: center; padding: 24px; backdrop-filter: blur(4px); }
