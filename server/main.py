@@ -1,6 +1,6 @@
 # server/main.py
 # -*- coding: utf-8 -*-
-import os, time, re, json, hmac, hashlib
+import os, time, re, json, hmac, hashlib, math
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -28,7 +28,7 @@ MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER", "5.0"))
 CRYPTOBOT_API_KEY = os.getenv("CRYPTOBOT_API_KEY", "").strip()  # для API и подписи вебхука
 CRYPTOBOT_BASE = os.getenv("CRYPTOBOT_BASE", "https://pay.crypt.bot/api").strip().rstrip("/")
 
-app = FastAPI(title="SMMShop Proxy", version="0.3")
+app = FastAPI(title="SMMShop Proxy", version="0.4")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,25 +42,45 @@ _client = httpx.AsyncClient(timeout=20.0)
 
 # ===== internal storage (json) =====
 DATA_DIR = ROOT_DIR / "server" / "data"
-USERS_JSON = DATA_DIR / "users.json"
+USERS_JSON  = DATA_DIR / "users.json"
+ORDERS_JSON = DATA_DIR / "orders.json"
 PAYLOG_JSON = DATA_DIR / "paylog.json"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 _users: Dict[str, Dict[str, Any]] = {}
+_orders: Dict[str, Any] = {}
+
 def _load_users():
     global _users
     try:
-        with open(USERS_JSON, "r", encoding="utf-8") as f:
-            _users = json.load(f) or {}
+        _users = json.loads(USERS_JSON.read_text("utf-8"))
     except Exception:
         _users = {}
+
 def _save_users():
-    with open(USERS_JSON, "w", encoding="utf-8") as f:
-        json.dump(_users, f, ensure_ascii=False, indent=2)
-def _next_seq() -> int:
+    USERS_JSON.write_text(json.dumps(_users, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def _load_orders():
+    global _orders
+    try:
+        _orders = json.loads(ORDERS_JSON.read_text("utf-8"))
+    except Exception:
+        _orders = {"seq": 0, "items": []}
+
+def _save_orders():
+    ORDERS_JSON.write_text(json.dumps(_orders, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def _next_order_id() -> int:
+    if not _orders: _load_orders()
+    _orders["seq"] = int(_orders.get("seq", 0)) + 1
+    _save_orders()
+    return _orders["seq"]
+
+def _next_user_seq() -> int:
     if not _users: return 1
     try: return max(int(v.get("seq") or 0) for v in _users.values()) + 1
     except Exception: return 1
+
 def get_or_create_profile(user_id: int, nick: Optional[str]=None) -> Dict[str, Any]:
     if not _users: _load_users()
     key = str(user_id)
@@ -68,7 +88,7 @@ def get_or_create_profile(user_id: int, nick: Optional[str]=None) -> Dict[str, A
         _users[key] = {
             "user_id": user_id, "nick": nick or None,
             "balance": 0.0, "currency": CURRENCY,
-            "seq": _next_seq(), "ts": int(time.time())
+            "seq": _next_user_seq(), "ts": int(time.time())
         }
         _save_users()
     else:
@@ -76,9 +96,20 @@ def get_or_create_profile(user_id: int, nick: Optional[str]=None) -> Dict[str, A
             _users[key]["nick"] = nick
             _save_users()
     return _users[key]
+
 def credit_user(user_id: int, amount: float):
     p = get_or_create_profile(user_id)
     p["balance"] = round(float(p.get("balance", 0.0)) + float(amount), 2)
+    _save_users()
+    return p
+
+def debit_user(user_id: int, amount: float):
+    p = get_or_create_profile(user_id)
+    cur = float(p.get("balance", 0.0))
+    new = round(cur - float(amount), 2)
+    if new < -1e-6:
+        raise HTTPException(400, "Недостаточно средств")
+    p["balance"] = new
     _save_users()
     return p
 
@@ -93,6 +124,7 @@ def _set_cache(key: str, data: Any):
     _cache[key] = {"data": data, "ts": time.time()}
 
 # grouping utils
+NETWORKS = ["telegram","tiktok","instagram","youtube","facebook"]
 NETWORK_KEYWORDS = {
     "telegram":  [r"\btelegram\b", r"\btg\b"],
     "tiktok":    [r"\btik\s*tok\b", r"\btiktok\b"],
@@ -126,6 +158,10 @@ async def vex_services() -> List[Dict[str, Any]]:
     if not isinstance(data, list): raise HTTPException(502, "Unexpected response format")
     return data
 
+def client_rate(rate_per_1k: float) -> float:
+    # наценка * округление до цента
+    return round(float(rate_per_1k) * MARKUP_MULTIPLIER + 1e-9, 2)
+
 # ===== routes =====
 @app.get("/api/v1/ping")
 async def ping(): return {"ok": True}
@@ -147,6 +183,124 @@ async def api_services():
     _set_cache("services_grouped", result)
     return result
 
+@app.get("/api/v1/services/{network}")
+async def api_services_by_network(network: str):
+    if network not in NETWORKS:
+        raise HTTPException(404, "Unknown network")
+    cache_key = f"services_{network}"
+    cached = _get_cache(cache_key, ttl_sec=300)
+    if cached: return cached
+
+    raw = await vex_services()
+    items = []
+    for s in raw:
+        net = detect_network(str(s.get("name","")), str(s.get("category","")))
+        if net != network: continue
+        try:
+            rate_v = float(s.get("rate", 0.0))
+        except Exception:
+            rate_v = 0.0
+        items.append({
+            "service": int(s.get("service")),
+            "name": str(s.get("name","")),
+            "type": str(s.get("type","")),
+            "min": int(s.get("min", 0)),
+            "max": int(s.get("max", 0)),
+            "refill": bool(s.get("refill", False)),
+            "cancel": bool(s.get("cancel", False)),
+            "rate_supplier_1000": rate_v,
+            "rate_client_1000": client_rate(rate_v),
+        })
+    # сортировка: по клиентской цене
+    items.sort(key=lambda x: (x["rate_client_1000"], x["min"]))
+    _set_cache(cache_key, items)
+    return items
+
+@app.post("/api/v1/order/create")
+async def create_order(payload: Dict[str, Any] = Body(...)):
+    """
+    payload = { user_id:int, service:int, link:str, quantity:int }
+    Списывает внутренний баланс и создаёт заказ в VEXBOOST.
+    Возвращает { order_id, supplier_order, cost, currency, status }
+    """
+    user_id = int(payload.get("user_id") or 0)
+    service_id = int(payload.get("service") or 0)
+    link = (payload.get("link") or "").strip()
+    quantity = int(payload.get("quantity") or 0)
+    if user_id <= 0 or service_id <= 0 or not link or quantity <= 0:
+        raise HTTPException(400, "Bad payload")
+
+    # ищем услугу среди всех
+    services_all = await vex_services()
+    service_obj = None
+    for s in services_all:
+        if int(s.get("service")) == service_id:
+            service_obj = s; break
+    if not service_obj:
+        raise HTTPException(404, "Service not found")
+
+    # валидации
+    min_q = int(service_obj.get("min", 0))
+    max_q = int(service_obj.get("max", 0))
+    if quantity < min_q or quantity > max_q:
+        raise HTTPException(400, f"Количество должно быть от {min_q} до {max_q}")
+
+    # цена
+    try:
+        base = float(service_obj.get("rate") or 0.0)  # цена за 1000 у поставщика
+    except Exception:
+        base = 0.0
+    rate_client_1000 = client_rate(base)
+    cost = round(rate_client_1000 * quantity / 1000.0 + 1e-9, 2)
+    if cost <= 0:
+        raise HTTPException(400, "Неверная цена для услуги")
+
+    # списываем внутренний баланс
+    try:
+        debit_user(user_id, cost)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "Недостаточно средств")
+
+    # создаём заказ у поставщика
+    try:
+        url = f"{API_BASE}?action=add&service={service_id}&link={httpx.QueryParams({'u':link})['u']}&quantity={quantity}&key={VEX_KEY}"
+        r = await _client.get(url)
+        j = r.json()
+        supplier_order = int(j.get("order"))
+    except Exception as e:
+        # откатываем списание
+        credit_user(user_id, cost)
+        raise HTTPException(502, f"Supplier error: {e}")
+
+    # сохраняем наш заказ
+    if not _orders: _load_orders()
+    oid = _next_order_id()
+    order_rec = {
+        "id": oid,
+        "user_id": user_id,
+        "service": service_id,
+        "link": link,
+        "quantity": quantity,
+        "cost": cost,
+        "currency": CURRENCY,
+        "supplier_order": supplier_order,
+        "status": "Awaiting",
+        "ts": int(time.time()),
+    }
+    _orders["items"].append(order_rec)
+    _save_orders()
+
+    return {
+        "order_id": oid,
+        "supplier_order": supplier_order,
+        "cost": cost,
+        "currency": CURRENCY,
+        "status": "Awaiting",
+    }
+
+# ---- CryptoBot invoice + webhook (как раньше) ----
 @app.post("/api/v1/pay/invoice")
 async def create_invoice(payload: Dict[str, Any] = Body(...)):
     user_id = int(payload.get("user_id") or 0)
@@ -173,12 +327,7 @@ async def create_invoice(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(502, f"Unexpected CryptoBot response: {j}")
     return {"pay_url": pay_url}
 
-# ---- CryptoBot webhook ----
 def _hmac_ok(raw_body: bytes, token: str, signature: str) -> bool:
-    """
-    Попытка верификации подписи (если CryptoBot её присылает).
-    Схема может отличаться — уточним после включения вебхука.
-    """
     try:
         mac = hmac.new(token.encode(), raw_body, hashlib.sha256).hexdigest()
         return hmac.compare_digest(mac, (signature or "").lower())
@@ -194,7 +343,7 @@ async def cryptobot_webhook(request: Request):
     except Exception:
         data = {}
 
-    # Логируем событие
+    # log
     try:
         log = []
         if PAYLOG_JSON.exists():
@@ -204,11 +353,9 @@ async def cryptobot_webhook(request: Request):
     except Exception:
         pass
 
-    # Если есть ключ — попытаемся проверить подпись (best-effort)
     if CRYPTOBOT_API_KEY and sig and not _hmac_ok(raw, CRYPTOBOT_API_KEY, sig):
         raise HTTPException(400, "bad signature")
 
-    # Универсальный парсер: вытаскиваем amount, валюту и payload
     def read(path, default=None):
         cur = data
         for k in path:
@@ -218,7 +365,6 @@ async def cryptobot_webhook(request: Request):
 
     payload_s = read(["payload"]) or read(["result","payload"]) or read(["invoice","payload"]) or ""
     amount = read(["amount"]) or read(["result","amount"]) or read(["invoice","amount"]) or 0
-    asset  = read(["asset"])  or read(["result","asset"])  or read(["invoice","asset"])  or "USDT"
 
     try:
         payload = json.loads(payload_s) if isinstance(payload_s, str) else (payload_s or {})
@@ -226,12 +372,8 @@ async def cryptobot_webhook(request: Request):
         payload = {}
 
     user_id = int(payload.get("user_id") or 0)
-    if not user_id:
-        return {"ok": True, "skip": "no user_id in payload"}
+    if not user_id: return {"ok": True, "skip": "no user_id"}
 
-    # считаем, что USDT≈USD
     amount_usd = float(amount or 0)
-    if amount_usd > 0:
-        credit_user(user_id, amount_usd)
-
+    if amount_usd > 0: credit_user(user_id, amount_usd)
     return {"ok": True, "credited": amount_usd, "user_id": user_id}
