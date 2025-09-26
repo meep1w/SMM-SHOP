@@ -21,8 +21,11 @@
   --radius-sm:12px;
   --shadow:0 8px 24px rgba(0,0,0,.25);
 
-  --headerH:68px;
+  /* Высоты и отступы */
+  --headerH:80px;        /* ↑ сделал выше */
+  --headerPadY:14px;     /* ↑ вертикальный паддинг внутри хедера */
   --tabbarH:74px;
+  --tabbarOffset:22px;   /* ↑ отступ таббара от нижнего края */
 }
 
 /* Base */
@@ -41,20 +44,17 @@ body{
   position:sticky; top:0; z-index:10; height:var(--headerH);
   display:grid; grid-template-columns:1fr auto 1fr;
   align-items:center; gap:12px;
-  padding:10px 14px;
+  padding:var(--headerPadY) 14px;                 /* ↑ воздух внутри */
   background:rgba(16,18,22,.85);
   backdrop-filter:saturate(140%) blur(8px);
-  border-bottom:1px solid var(--stroke);
 
-  /* ДОБАВЛЕНО: мягко скругляем края и не даём контенту выходить за рамки */
+  /* скругление + грани */
   border:1px solid var(--stroke);
-  border-bottom-right-radius:20px ;
-  border-bottom-left-radius:20px ;
+  border-radius:var(--radius);
   overflow:hidden;
-  position:sticky;
 }
 
-/* ДОБАВЛЕНО: красивая “полочка” снизу у хедера с округлыми концами */
+/* мягкая “полочка” снизу у хедера */
 .app-header::after{
   content:"";
   position:absolute;
@@ -78,11 +78,7 @@ body{
 .nick{font-weight:400; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:140px}
 .nick-sub{font-size:9px; color:var(--muted)}
 
-.logo{
-  display:flex; align-items:center; gap:8px;
-  /* убираем “пилюлю” вокруг логотипа */
-  padding:0; background:none; border:none; box-shadow:none;
-}
+.logo{display:flex; align-items:center; gap:8px; padding:0; background:none; border:none; box-shadow:none;}
 .logo-img{width:18px; height:18px; display:block}
 .logo-text{font-weight:800; letter-spacing:.2px}
 
@@ -100,7 +96,7 @@ body{
 .balance-label{ font-size:10px; letter-spacing:.2px; color:var(--muted) }
 .balance-value{ font-size:12px; font-weight:500; color:#fff }
 
-/* Центрируем плюсик идеально */
+/* Плюс */
 .btn-plus{
   width:24px; height:24px; border-radius:8px;
   border:1px solid var(--stroke); background:#12161c; color:var(--text);
@@ -116,14 +112,17 @@ body{
 .btn-plus:active{ transform:translateY(0) scale(.98) }
 
 /* ===== Content ===== */
-.app-main{padding:12px 12px calc(var(--tabbarH) + 12px); min-height:calc(100dvh - var(--headerH))}
+.app-main{
+  padding:12px 12px calc(var(--tabbarH) + var(--tabbarOffset) + 12px); /* запас под поднятый таббар */
+  min-height:calc(100dvh - var(--headerH));
+}
 .page{display:none; height:100%}
 .page.active{display:block}
 
 /* ===== Category cards ===== */
 .cats-list{
   display:flex; flex-direction:column; gap:12px;
-  height:calc(100dvh - var(--headerH) - var(--tabbarH) - 24px);
+  height:calc(100dvh - var(--headerH) - var(--tabbarH) - var(--tabbarOffset) - 24px);
   overflow:auto; padding-right:2px;
 }
 .cat{
@@ -143,7 +142,7 @@ body{
   background:linear-gradient(180deg,#1a1e24,#14181e);
   border:1px solid var(--stroke);
 }
-.cat-icon img{width:26px; height:26px; display:block; filter:none}
+.cat-icon img{width:26px; height:26px; display:block}
 .cat-body{display:flex; flex-direction:column; gap:2px}
 .cat-name{font-weight:700; font-size:15px}
 .cat-desc{font-size:12px; color:var(--muted)}
@@ -157,7 +156,7 @@ body{
 .subheader-title{margin:0; font-size:16px; font-weight:800}
 .services-list{
   display:flex; flex-direction:column; gap:10px;
-  height:calc(100dvh - var(--headerH) - var(--tabbarH) - 56px);
+  height:calc(100dvh - var(--headerH) - var(--tabbarH) - var(--tabbarOffset) - 56px);
   overflow:auto;
 }
 .service{
@@ -196,22 +195,19 @@ body{
 
 /* ===== Bottom Tabbar ===== */
 .tabbar{
-  position:fixed; left:0; right:0; bottom:0; z-index:20; height:var(--tabbarH);
+  position:fixed; left:0; right:0; bottom:var(--tabbarOffset); z-index:20; height:var(--tabbarH);
   display:grid; grid-template-columns:repeat(3, 1fr);
   gap:8px; padding:10px 12px;
   background:rgba(14,16,20,.92);
   backdrop-filter:blur(8px);
-  border-top:1px solid var(--stroke);
 
-  /* ДОБАВЛЕНО: скруглённые края таббара и маска содержимого */
+  /* скругление + рамка */
   border:1px solid var(--stroke);
-  border-top-right-radius:20px ;
-  border-top-left-radius:20px ;
+  border-radius:var(--radius);
   overflow:hidden;
-  position:fixed;
 }
 
-/* ДОБАВЛЕНО: мягкая линия сверху у таббара с округлыми концами */
+/* мягкая линия сверху у таббара */
 .tabbar::before{
   content:"";
   position:absolute;
@@ -232,7 +228,7 @@ body{
 .tab:active{transform:scale(.98)}
 .tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
 .tab .tab-icon{width:20px; height:20px; display:block; opacity:.9}
-.tab.active .tab-icon{filter:none; opacity:1}
+.tab.active .tab-icon{opacity:1}
 
 /* ===== Modal (order) ===== */
 .modal{position:fixed; inset:0; display:none}
@@ -262,6 +258,19 @@ body{
   font:500 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   opacity:.95;
   padding:18px 8px 12px;
+}
+
+/* ===== Скрытие скроллбаров (страница + списки) ===== */
+body, .page, .app-main, .cats-list, .services-list{
+  -ms-overflow-style: none;     /* IE/Edge */
+  scrollbar-width: none;        /* Firefox */
+}
+body::-webkit-scrollbar,
+.page::-webkit-scrollbar,
+.app-main::-webkit-scrollbar,
+.cats-list::-webkit-scrollbar,
+.services-list::-webkit-scrollbar{
+  width:0; height:0;            /* WebKit */
 }
 
 /* Responsive tweaks */
