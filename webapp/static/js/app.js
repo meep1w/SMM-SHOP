@@ -107,14 +107,6 @@
   });
 
   // === CATEGORIES ===
-  const ICONS = {
-    telegram:`<svg viewBox="0 0 24 24"><path fill="currentColor" d="M21.6 2.1 2.7 9.2c-1.3.5-1.3 2.3 0 2.8l4.8 1.9 1.9 4.8c.5 1.3 2.3 1.3 2.8 0l7.1-18.9c.4-1-0.6-2-1.7-1.6zM9 15.1l-.2 3.1 2.6-2.6 4.8-7.7-7.2 5.3z"/></svg>`,
-    instagram:`<svg viewBox="0 0 24 24"><path fill="currentColor" d="M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zm5 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm6.5-.8a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4zM12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg>`,
-    youtube:`<svg viewBox="0 0 24 24"><path fill="currentColor" d="M23 7.2a3 3 0 0 0-2.1-2.1C18.7 4.5 12 4.5 12 4.5s-6.7 0-8.9.6A3 3 0 0 0 1 7.2 31 31 0 0 0 1 12a31 31 0 0 0 .1 4.8 3 3 0 0 0 2.1 2.1c2.2.6 8.8.6 8.8.6s6.7 0 8.9-.6a3 3 0 0 0 2.1-2.1A31 31 0 0 0 23 12a31 31 0 0 0 0-4.8zM9.8 15V9l5.9 3-5.9 3z"/></svg>`,
-    tiktok:`<svg viewBox="0 0 24 24"><path fill="currentColor" d="M16.5 3c.6 2.2 2.2 3.6 4.5 3.9v3.1c-1.8 0-3.4-.6-4.5-1.6v6.7a6.8 6.8 0 1 1-6.8-6.8c.4 0 .9.1 1.3.2v3.3a3.4 3.4 0 1 0 2.4 3.2V3h3.1z"/></svg>`,
-    facebook:`<svg viewBox="0 0 24 24"><path fill="currentColor" d="M13 22v-8h3l1-4h-4V7c0-1.2.3-2 2-2h2V1h-3c-3 0-5 1.8-5 5v3H6v4h3v8h4z"/></svg>`,
-  };
-
   async function loadCategories(){
     try{
       const r = await fetch(`${API_BASE}/services`);
@@ -130,12 +122,18 @@
       ]);
     }
   }
+
   function renderCategories(items){
     catsList.innerHTML='';
     items.forEach(c=>{
-      const a=document.createElement('a'); a.href='#'; a.className='cat'; a.dataset.cat=c.id;
-      a.innerHTML = `<div class="cat-icon">${ICONS[c.id]||''}</div>
-        <div class="cat-body"><div class="cat-name">${c.name}</div><div class="cat-desc">${c.desc}${c.count?` • ${c.count}`:''}</div></div>`;
+      const a=document.createElement('a');
+      a.href='#'; a.className='cat'; a.dataset.cat=c.id;
+      a.innerHTML = `
+        <div class="cat-icon"><img src="static/img/${c.id}.svg" alt=""></div>
+        <div class="cat-body">
+          <div class="cat-name">${c.name}</div>
+          <div class="cat-desc">${c.desc}${c.count?` • ${c.count}`:''}</div>
+        </div>`;
       a.addEventListener('click',e=>{e.preventDefault(); openServices(c.id,c.name);});
       catsList.appendChild(a);
     });
@@ -146,20 +144,36 @@
   let currentNetwork = null;
   let currentService = null; // selected in modal
 
-  btnBackToCats.addEventListener('click', ()=>{
-    showPage('categories');
-  });
+  btnBackToCats.addEventListener('click', ()=>{ showPage('categories'); });
 
   function showPage(name){
     Object.entries(pages).forEach(([k,el])=> el.classList.toggle('active', k===name));
     document.querySelectorAll('.tabbar .tab').forEach(b=> b.classList.toggle('active', b.dataset.tab===name));
   }
 
+  // скелет-лоадер
+  function renderServicesSkeleton(rows=4){
+    servicesList.innerHTML = '';
+    for(let i=0;i<rows;i++){
+      servicesList.insertAdjacentHTML('beforeend', `
+        <div class="skeleton">
+          <div class="skel-row">
+            <div class="skel-avatar"></div>
+            <div class="skel-lines">
+              <div class="skel-line"></div>
+              <div class="skel-line short"></div>
+            </div>
+          </div>
+        </div>
+      `);
+    }
+  }
+
   async function openServices(network, title){
     currentNetwork = network;
     servicesTitle.textContent = title;
     showPage('services');
-    servicesList.innerHTML = '<div class="empty">Загрузка…</div>';
+    renderServicesSkeleton(4); // 🔥 красивый лоадер
     try{
       const r = await fetch(`${API_BASE}/services/${network}`);
       if(!r.ok) throw 0;
@@ -241,9 +255,7 @@
   // Tabs default
   function initTabs(){
     const tabs = document.querySelectorAll('.tabbar .tab');
-    tabs.forEach(b=> b.addEventListener('click', ()=>{
-      showPage(b.dataset.tab);
-    }));
+    tabs.forEach(b=> b.addEventListener('click', ()=>{ showPage(b.dataset.tab); }));
   }
   initTabs();
 })();
