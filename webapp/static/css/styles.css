@@ -45,7 +45,26 @@ body{
   background:rgba(16,18,22,.85);
   backdrop-filter:saturate(140%) blur(8px);
   border-bottom:1px solid var(--stroke);
+
+  /* ДОБАВЛЕНО: мягко скругляем края и не даём контенту выходить за рамки */
+  border:1px solid var(--stroke);
+  border-bottom-right-radius:20px ;
+  border-bottom-left-radius:20px ;
+  overflow:hidden;
+  position:sticky;
 }
+
+/* ДОБАВЛЕНО: красивая “полочка” снизу у хедера с округлыми концами */
+.app-header::after{
+  content:"";
+  position:absolute;
+  left:10px; right:10px; bottom:0;
+  height:1px;
+  border-radius:999px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
+  pointer-events:none;
+}
+
 .hdr-left,.hdr-right{display:flex; align-items:center; gap:10px}
 .hdr-left{min-width:0}
 .hdr-center{display:flex; justify-content:center; align-items:center}
@@ -69,71 +88,32 @@ body{
 
 /* ===== Wallet chip: авто-ширина ===== */
 .hdr-right{
-  /* вместо широкого грид-элемента — компактный чип */
-  justify-self: end;          /* прижать к правому краю ячейки грида */
-  align-self: center;
-  display: inline-flex;       /* shrink-to-fit по содержимому */
-  align-items: center;
-  gap: 6px;
-
-  padding: 6px 8px;
-  width: auto;                /* ← ключевой момент */
-  max-width: 100%;
-
-  background: linear-gradient(180deg,#14181c,#10141a);
-  border: 1px solid var(--stroke);
-  border-radius: 12px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.02);
+  justify-self:end; align-self:center;
+  display:inline-flex; align-items:center; gap:6px;
+  padding:6px 8px; width:auto; max-width:100%;
+  background:linear-gradient(180deg,#14181c,#10141a);
+  border:1px solid var(--stroke);
+  border-radius:12px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.02);
 }
-
-.balance{
-  display:flex; flex-direction:column; align-items:flex-end; line-height:1.05;
-  min-width: 0;               /* убираем фикс. ширину — чип сужается */
-}
+.balance{display:flex; flex-direction:column; align-items:flex-end; line-height:1.05; min-width:0}
 .balance-label{ font-size:10px; letter-spacing:.2px; color:var(--muted) }
-.balance-value{ font-size:12px; font-weight:500; color: #fff}
+.balance-value{ font-size:12px; font-weight:500; color:#fff }
 
 /* Центрируем плюсик идеально */
 .btn-plus{
-  width:24px;
-  height:24px;
-  border-radius:8px;
-  border:1px solid var(--stroke);
-  background:#12161c;
-  color:var(--text);
-  cursor:pointer;
-
-  /* ключевое — центрирование SVG */
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-
-  padding:0;
-  line-height:0;     /* убираем базовую линию текста */
-  font-size:0;       /* чтобы ничего не тянуло вверх/вниз */
-
-  position:relative;
+  width:24px; height:24px; border-radius:8px;
+  border:1px solid var(--stroke); background:#12161c; color:var(--text);
+  cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+  padding:0; line-height:0; font-size:0; position:relative;
   transition:transform .08s, background .2s, border-color .2s;
 }
 .btn-plus::before{
-  content:"";
-  position:absolute;
-  left:-6px;
-  top:4px;           /* чуть точнее по центру */
-  bottom:4px;
-  width:1px;
-  background:#242a36;
+  content:""; position:absolute; left:-6px; top:4px; bottom:4px; width:1px; background:#242a36;
 }
-.btn-plus svg{
-  width:18px;
-  height:18px;
-  display:block;     /* убираем лишние зазоры вокруг SVG */
-  pointer-events:none;
-}
+.btn-plus svg{ width:18px; height:18px; display:block; pointer-events:none; }
 .btn-plus:hover{ transform:translateY(-1px); background:#161b22 }
 .btn-plus:active{ transform:translateY(0) scale(.98) }
-
-
 
 /* ===== Content ===== */
 .app-main{padding:12px 12px calc(var(--tabbarH) + 12px); min-height:calc(100dvh - var(--headerH))}
@@ -196,10 +176,7 @@ body{
 }
 
 /* ===== Skeleton loader (перелив) ===== */
-@keyframes shimmer{
-  0%{background-position:-200% 0}
-  100%{background-position:200% 0}
-}
+@keyframes shimmer{ 0%{background-position:-200% 0} 100%{background-position:200% 0} }
 .skeleton{
   position:relative; overflow:hidden;
   border-radius:14px; border:1px solid var(--stroke);
@@ -225,7 +202,26 @@ body{
   background:rgba(14,16,20,.92);
   backdrop-filter:blur(8px);
   border-top:1px solid var(--stroke);
+
+  /* ДОБАВЛЕНО: скруглённые края таббара и маска содержимого */
+  border:1px solid var(--stroke);
+  border-top-right-radius:20px ;
+  border-top-left-radius:20px ;
+  overflow:hidden;
+  position:fixed;
 }
+
+/* ДОБАВЛЕНО: мягкая линия сверху у таббара с округлыми концами */
+.tabbar::before{
+  content:"";
+  position:absolute;
+  left:10px; right:10px; top:0;
+  height:1px;
+  border-radius:999px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
+  pointer-events:none;
+}
+
 .tab{
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   gap:6px; padding:8px 6px; border-radius:12px;
@@ -255,6 +251,18 @@ body{
 .btn{cursor:pointer}
 .btn.primary{background:var(--brand); border:none; color:white; border-radius:10px; padding:10px 14px; font-weight:700}
 .btn.secondary{background:var(--surface-2); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:10px 14px}
+
+/* ===== Подпись под списком категорий ===== */
+.cats-list{ padding-bottom:58px; } /* запас над таббаром */
+.cats-list::after{
+  content:"Скоро добавим ещё категорий";
+  display:block;
+  text-align:center;
+  color:var(--muted);
+  font:500 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  opacity:.95;
+  padding:18px 8px 12px;
+}
 
 /* Responsive tweaks */
 @media (min-width:520px){
