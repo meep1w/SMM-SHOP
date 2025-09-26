@@ -1,4 +1,3 @@
-# server/main.py
 # -*- coding: utf-8 -*-
 import os, time, re, json, hmac, hashlib, logging
 from typing import List, Dict, Any, Optional
@@ -32,7 +31,7 @@ CRYPTOBOT_BASE = os.getenv("CRYPTOBOT_BASE", "https://pay.crypt.bot/api").strip(
 MIN_TOPUP_USD = float(os.getenv("CRYPTOBOT_MIN_TOPUP_USD", "0.10"))
 FX_CACHE_TTL = int(os.getenv("FX_CACHE_TTL", "600"))
 
-app = FastAPI(title="SMMShop API", version="0.6")
+app = FastAPI(title="SMMShop API", version="0.7")
 
 app.add_middleware(
     CORSMiddleware,
@@ -364,6 +363,42 @@ def _log_pay(payload: Dict[str, Any]):
     except Exception:
         pass
 
+def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Унифицируем разные форматы CryptoBot:
+    - { update_type, invoice: { ... } }
+    - { result: { invoice: { ... } } } или { result: { ... } }
+    - { update_type, payload: { ... } }  <-- у тебя такой кейс
+    Возвращаем объект с полями invoice_id, status, amount, asset, payload (строка или dict).
+    """
+    # 1) классика
+    if isinstance(data.get("invoice"), dict):
+        inv = data["invoice"]
+    elif isinstance(data.get("result"), dict) and isinstance(data["result"].get("invoice"), dict):
+        inv = data["result"]["invoice"]
+    elif isinstance(data.get("result"), dict):
+        inv = data["result"]
+    # 2) как в твоём логе: вся информация в data.payload
+    elif isinstance(data.get("payload"), dict) and ("status" in data["payload"]):
+        inv = data["payload"]
+    else:
+        inv = {}
+
+    # приводим к одному виду
+    out = {
+        "invoice_id": inv.get("invoice_id") or inv.get("id") or "",
+        "status": str(inv.get("status") or "").lower(),
+        "amount": inv.get("amount") or inv.get("paid_amount") or 0,
+        "asset": (inv.get("asset") or "USDT").upper(),
+        "payload": inv.get("payload") or data.get("payload") or "",
+    }
+    # amount может быть строкой
+    try:
+        out["amount"] = float(out["amount"])
+    except Exception:
+        out["amount"] = 0.0
+    return out
+
 @app.post("/api/v1/cryptobot/webhook")
 async def cryptobot_webhook(request: Request):
     raw = await request.body()
@@ -373,53 +408,58 @@ async def cryptobot_webhook(request: Request):
     except Exception:
         data = {}
 
-    # логируем всё подряд
+    # логируем
     _log_pay({"ts": int(time.time()), "headers": {"sig": bool(sig)}, "data": data})
 
-    # проверка подписи (если заголовок присутствует)
+    # проверяем подпись, если заголовок присутствует
     if sig and CRYPTOBOT_API_KEY and not _hmac_ok(raw, CRYPTOBOT_API_KEY, sig):
         raise HTTPException(400, "bad signature")
 
-    # ожидаемый формат: update_type=invoice_paid, invoice.status=paid
-    inv = (data.get("invoice")
-           or (data.get("result") or {}).get("invoice")
-           or data.get("result")
-           or {})
-    status = str(inv.get("status") or data.get("status") or "").lower()
+    # тип апдейта (если есть)
     update_type = str(data.get("update_type") or "").lower()
-
     if update_type and update_type != "invoice_paid":
         return {"ok": True, "skip": f"update_type={update_type}"}
+
+    inv = _extract_invoice(data)
+    status = inv["status"]
+    amount = float(inv["amount"] or 0)
+    invoice_id = str(inv["invoice_id"] or "")
+    asset = inv["asset"]
+
     if status and status not in ("paid", "finished", "completed"):
         return {"ok": True, "skip": f"status={status}"}
+    if amount <= 0:
+        return {"ok": True, "skip": "zero amount"}
 
-    invoice_id = str(inv.get("invoice_id") or inv.get("id") or "")
-    payload_s = inv.get("payload") or data.get("payload") or ""
-    amount = float(inv.get("amount") or data.get("amount") or 0)
-    asset = str(inv.get("asset") or data.get("asset") or "USDT").upper()
-
-    try:
-        payload = json.loads(payload_s) if isinstance(payload_s, str) else (payload_s or {})
-    except Exception:
+    # вытащим user_id из payload (строка JSON или dict)
+    payload_raw = inv["payload"]
+    if isinstance(payload_raw, str):
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            payload = {}
+    elif isinstance(payload_raw, dict):
+        payload = payload_raw
+    else:
         payload = {}
-    user_id = int(payload.get("user_id") or 0)
 
-    if not user_id or amount <= 0:
-        return {"ok": True, "skip": "no user_id or zero amount"}
+    user_id = int(payload.get("user_id") or 0)
+    if not user_id:
+        return {"ok": True, "skip": "no user_id in payload"}
 
     # идемпотентность
     if invoice_id:
         if invoice_id in _credited:
             return {"ok": True, "already": True, "invoice_id": invoice_id}
-    # конвертация в валюту витрины
+
+    # конвертация (USDT≈USD)
     if CURRENCY == "RUB":
         fx = await fx_usd_rub()
         credited = round(amount * fx, 2)
     else:
         credited = round(amount, 2)
 
-    profile = credit_user(user_id, credited)
-
+    credit_user(user_id, credited)
     if invoice_id:
         _credited[invoice_id] = credited
         _save_credited()
