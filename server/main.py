@@ -168,11 +168,11 @@ NETWORK_KEYWORDS = {
     "facebook":  [r"\bfacebook\b", r"\bfb\b", r"\bmeta\b"],
 }
 DISPLAY = {
-    "telegram":  {"id":"telegram",  "name":"Telegram",  "desc":"подписчики, просмотры"},
-    "tiktok":    {"id":"tiktok",    "name":"TikTok",    "desc":"просмотры, фолловеры"},
-    "instagram": {"id":"instagram", "name":"Instagram", "desc":"подписчики, лайки"},
-    "youtube":   {"id":"youtube",   "name":"YouTube",   "desc":"просмотры, подписки"},
-    "facebook":  {"id":"facebook",  "name":"Facebook",  "desc":"лайки, подписчики"},
+    "telegram":  {"id":"telegram",  "name":"Telegram",  "desc":"подписчики, просмотры, реакции, и многое др."},
+    "tiktok":    {"id":"tiktok",    "name":"TikTok",    "desc":"просмотры, фолловеры, комментарии и др."},
+    "instagram": {"id":"instagram", "name":"Instagram", "desc":"подписчики, лайки, комментарии и др."},
+    "youtube":   {"id":"youtube",   "name":"YouTube",   "desc":"просмотры, подписки, лайки, комментраии и др."},
+    "facebook":  {"id":"facebook",  "name":"Facebook",  "desc":"лайки, подписчики, просмотры и др."},
 }
 
 def detect_network(name: str, category: str) -> Optional[str]:
