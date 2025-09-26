@@ -30,7 +30,7 @@
   const btnCancelOrder = document.getElementById('btnCancelOrder');
   const btnCreateOrder = document.getElementById('btnCreateOrder');
 
-  // ==== Layout tweaks (опускаем хедер, поднимаем таббар) + оверлей ====
+  // ==== Layout tweaks: хедер чуть ниже, таббар чуть выше + оверлей ====
   (function injectLayoutTweaks(){
     const css = `
       .tabbar { position: fixed; left: 0; right: 0; bottom: 10px !important; }
@@ -49,7 +49,6 @@
       }
       .topup-icon {
         width: 88px; height: 88px; margin: 0 auto 16px auto; border-radius: 50%;
-        background: radialGradient(#2ed47a,#1a9f55,#117a3f);
         background: radial-gradient(110px 110px at 30% 30%, #2ed47a 0%, #1a9f55 60%, #117a3f 100%);
         display: grid; place-items: center; box-shadow: 0 10px 30px rgba(46,212,122,0.35), inset 0 0 18px rgba(255,255,255,0.15);
       }
@@ -71,6 +70,7 @@
     document.head.appendChild(style);
   })();
 
+  // ---- Overlay DOM ----
   let overlay, overlayAmount;
   (function ensureOverlay(){
     overlay = document.getElementById('topupOverlay');
@@ -89,7 +89,8 @@
           <div class="topup-sub">Баланс пополнен. Средства уже доступны для оформления заказов.</div>
           <div class="topup-amount" id="topupAmount"></div>
           <button type="button" class="topup-ok" id="topupOkBtn">Окей</button>
-        </div>`;
+        </div>
+      `;
       document.body.appendChild(overlay);
     }
     overlayAmount = document.getElementById('topupAmount');
@@ -146,12 +147,27 @@
   let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||urlNick||'guest');
   if (userSeqEl) userSeqEl.textContent = seq;
 
-  // ==== Профиль / баланс ====
+  // ===== Баланс: in-memory + persistent (для сценария «закрыл → открыл заново») =====
+  const LS_BAL_KEY = 'smm_last_balance_val';
+  const LS_CUR_KEY = 'smm_last_balance_cur';
+
+  function lsGetBalance(){
+    const raw = localStorage.getItem(LS_BAL_KEY);
+    const val = raw === null ? null : Number(raw);
+    const cur = localStorage.getItem(LS_CUR_KEY) || 'RUB';
+    return { val, cur };
+  }
+  function lsSetBalance(val, cur){
+    localStorage.setItem(LS_BAL_KEY, String(Number(val||0)));
+    localStorage.setItem(LS_CUR_KEY, (cur||'RUB').toUpperCase());
+  }
+
   let currentCurrency = 'RUB';
-  let lastBalance = 0;            // последний известный баланс
-  let lastPopupTs = 0;            // анти-спам для оверлея
-  let topupTimer = null;          // сторожок после открытия инвойса
+  let lastBalance = 0;     // актуальное значение в памяти
+  let lastPopupTs = 0;     // чтобы не спамить оверлеем
+  let topupTimer = null;   // сторожок после инвойса
   let topupTries = 0;
+  let coldStart = true;    // первое открытие с момента загрузки страницы
 
   function setBalanceView(value, currency){
     currentCurrency = (currency || 'RUB').toUpperCase();
@@ -160,6 +176,16 @@
     const prev = lastBalance;
     lastBalance = num;
     return { grew: num > prev + 1e-6, delta: Math.max(0, num - prev) };
+  }
+
+  function maybePopup(delta, currency){
+    const now = Date.now();
+    if (delta > 0.009 && now - lastPopupTs > 1200) {
+      lastPopupTs = now;
+      showTopupOverlay(delta, currency || currentCurrency);
+      // после показа фиксируем новую базу в localStorage
+      lsSetBalance(lastBalance, currency || currentCurrency);
+    }
   }
 
   async function fetchProfile(){
@@ -171,25 +197,40 @@
       const p = await r.json(); // {nick, balance, currency, seq}
       if (p.nick && nicknameEl) nicknameEl.textContent = p.nick;
       if (p.seq){ seq = p.seq; userSeqEl && (userSeqEl.textContent = p.seq); localStorage.setItem('smm_user_seq', String(p.seq)); }
+
+      // 1) отрисуем и получим дельту относительно in-memory
       const cmp = setBalanceView(p.balance || 0, p.currency || 'RUB');
-      return { profile: p, ...cmp };
+
+      // 2) обработка холодного старта: сравниваем с предыдущим балансом из localStorage
+      if (coldStart) {
+        coldStart = false;
+        const prev = lsGetBalance();
+        if (prev.val === null) {
+          // первый запуск вообще — просто запомним
+          lsSetBalance(lastBalance, currentCurrency);
+        } else {
+          const deltaFromStorage = Math.max(0, lastBalance - Number(prev.val||0));
+          if (deltaFromStorage > 0.009) {
+            // показать сумму именно пополнения, даже если приложение перезапускалось
+            maybePopup(deltaFromStorage, currentCurrency);
+            return { profile: p, grew: true, delta: deltaFromStorage };
+          } else {
+            // синхронизируем актуальное значение
+            lsSetBalance(lastBalance, currentCurrency);
+          }
+        }
+      }
+      return { profile: p, grew: cmp.grew, delta: cmp.delta };
     }catch(_){
       const cmp = setBalanceView(0, 'RUB');
-      return { profile: null, ...cmp };
+      return { profile: null, grew: cmp.grew, delta: cmp.delta };
     }
   }
+
   // первичная загрузка
   fetchProfile();
 
-  function maybePopup(delta, currency){
-    const now = Date.now();
-    if (delta > 0.009 && now - lastPopupTs > 1200) {
-      lastPopupTs = now;
-      showTopupOverlay(delta, currency || currentCurrency);
-    }
-  }
-
-  // Возврат в мини-аппу: и focus, и visibilitychange (надёжнее в Telegram)
+  // при возврате в мини-аппу (и focus, и visibilitychange — так надежнее в Telegram)
   window.addEventListener('focus', async () => {
     const { delta, profile } = await fetchProfile();
     maybePopup(delta, profile?.currency);
@@ -201,7 +242,7 @@
     }
   });
 
-  // Сторожок после открытия инвойса
+  // сторожок после открытия инвойса (приложение НЕ закрылось)
   function startTopupWatcher(){
     if (topupTimer) { clearTimeout(topupTimer); topupTimer = null; }
     topupTries = 0;
@@ -210,13 +251,8 @@
       const before = lastBalance;
       const { profile } = await fetchProfile();
       const delta = Math.max(0, lastBalance - before);
-      if (delta > 0.009) {
-        maybePopup(delta, profile?.currency);
-        return;
-      }
-      if (topupTries < 24) { // ~2 минуты по 5 сек
-        topupTimer = setTimeout(tick, 5000);
-      }
+      if (delta > 0.009) { maybePopup(delta, profile?.currency); return; }
+      if (topupTries < 24) topupTimer = setTimeout(tick, 5000); // 2 мин
     };
     topupTimer = setTimeout(tick, 5000);
   }
@@ -236,11 +272,12 @@
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
       (tg?.openLink ? tg.openLink(j.pay_url) : window.open(j.pay_url,'_blank'));
+      // если мини-аппа не закроется — watcher поймает и покажет; если закроется — покажем на холодном старте через localStorage
       startTopupWatcher();
     } catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
 
-  // ==== Навигация категорий/услуг (без изменений в логике) ====
+  // ===== Категории / услуги (как раньше) =====
   function showPage(name){
     Object.entries(pages).forEach(([k,el])=> el?.classList.toggle('active', k===name));
     document.querySelectorAll('.tabbar .tab').forEach(b=> b.classList.toggle('active', b.dataset.tab===name));
@@ -340,8 +377,9 @@
     if (qtyHint) qtyHint.textContent = `(мин ${svc.min} • макс ${svc.max})`;
     updatePrice();
     modal.setAttribute('aria-hidden','false');
+    currentService = svc;
   }
-  function closeOrderModal(){ modal?.setAttribute('aria-hidden','true'); }
+  function closeOrderModal(){ modal?.setAttribute('aria-hidden','true'); currentService = null; }
   function updatePrice(){
     if(!priceInfo || !inputQty || !currentService) return;
     const q = parseInt(inputQty.value||'0',10);
@@ -368,7 +406,8 @@
       const j = await r.json();
       closeOrderModal();
       alert(`Заказ создан!\nНомер: ${j.order_id}\nСумма: ${j.cost} ${j.currency}`);
-      await fetchProfile();
+      const { delta, profile } = await fetchProfile();
+      maybePopup(delta, profile?.currency); // если внезапно баланс изменился — покажем
     }catch(e){
       alert('Не удалось создать заказ: ' + (e?.message||e));
     }finally{
