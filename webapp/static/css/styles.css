@@ -51,13 +51,13 @@ body{
 .hdr-center{display:flex; justify-content:center; align-items:center}
 
 .avatar{
-  width:40px; height:40px; border-radius:50%; object-fit:cover;
+  width:30px; height:30px; border-radius:50%; object-fit:cover;
   background:linear-gradient(135deg,#23262d,#1b1e24);
   border:1px solid var(--stroke);
 }
 .nick-wrap{min-width:0}
-.nick{font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:140px}
-.nick-sub{font-size:12px; color:var(--muted)}
+.nick{font-weight:400; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:140px}
+.nick-sub{font-size:9px; color:var(--muted)}
 
 .logo{
   display:flex; align-items:center; gap:8px;
