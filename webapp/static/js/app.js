@@ -1,13 +1,11 @@
-/* Mini-App: категории → список услуг → заказ за внутренний баланс */
+/* Mini-App: категории → список услуг → заказ за внутренний баланс (RUB/USDT-aware) */
 (function () {
   const tg = window.Telegram?.WebApp;
 
   try { tg?.expand?.(); tg?.ready?.(); tg?.MainButton?.hide?.(); tg?.BackButton?.hide?.(); tg?.disableVerticalSwipes?.(); } catch (_) {}
 
-  // ===== CONFIG =====
-  const API_BASE = "/api/v1"; // в проде через Nginx
+  const API_BASE = "/api/v1";
 
-  // Elements
   const nicknameEl = document.getElementById('nickname');
   const avatarEl   = document.getElementById('avatar');
   const userSeqEl  = document.getElementById('userSeq');
@@ -34,11 +32,11 @@
   const btnCancelOrder = document.getElementById('btnCancelOrder');
   const btnCreateOrder = document.getElementById('btnCreateOrder');
 
-  // --- User init (id, nick, avatar) ---
+  // Telegram user id (для привязки)
   let userId = null;
   try { userId = tg?.initDataUnsafe?.user?.id || null; } catch (_) {}
 
-  // ник передаём из бота: WEBAPP_URL?...&n=<urlencodedNick>
+  // Ник из URL (?n=...)
   function getQueryNick() {
     try {
       const qs = new URLSearchParams(window.location.search);
@@ -47,15 +45,10 @@
     } catch (_) { return null; }
   }
   const urlNick = getQueryNick();
-
-  // первичное отображение
   nicknameEl.textContent = urlNick || 'Гость';
 
-  // аватар из Telegram (если есть)
-  try {
-    const photo = tg?.initDataUnsafe?.user?.photo_url;
-    if (photo) avatarEl.src = photo;
-  } catch (_) {}
+  // Аватар
+  try { const photo = tg?.initDataUnsafe?.user?.photo_url; if (photo) avatarEl.src = photo; } catch (_) {}
   if (!avatarEl.src) {
     avatarEl.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80">
@@ -68,42 +61,42 @@
       </svg>`);
   }
 
-  // стабильный № пользователя (для отображения #n)
+  // helper: символ валюты
+  function curSign(c){ return c === 'RUB' ? ' ₽' : (c === 'USD' ? ' $' : ` ${c}`); }
+
+  // стабильный #
   function stableHashId(x){let h=0,s=String(x||'');for(let i=0;i<s.length;i++){h=((h<<5)-h+s.charCodeAt(i))|0;}h=Math.abs(h);return (h%100000)+1;}
   let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||urlNick||'guest');
   userSeqEl.textContent = seq;
 
-  // профиль/баланс с сервера
+  // профиль
+  let currentCurrency = 'RUB';
+
   async function fetchProfile(){
     try{
       const params = new URLSearchParams({ user_id: String(userId || seq) });
-      // ВАЖНО: отправляем ник только если пришёл из URL (регистрация в боте).
       if (urlNick) params.set('nick', urlNick);
-
       const r = await fetch(`${API_BASE}/user?${params.toString()}`);
       if(!r.ok) throw 0;
       const p = await r.json(); // {nick, balance, currency, seq}
-
-      // если на сервере уже хранится ник — показываем его
       if (p.nick) nicknameEl.textContent = p.nick;
-
-      // обновим #n, если сервер выдал свой порядковый
-      if(p.seq){ seq = p.seq; userSeqEl.textContent = p.seq; localStorage.setItem('smm_user_seq', String(p.seq)); }
-
-      balanceEl.textContent = Number(p.balance||0).toFixed(2);
+      if (p.seq){ seq = p.seq; userSeqEl.textContent = p.seq; localStorage.setItem('smm_user_seq', String(p.seq)); }
+      currentCurrency = (p.currency || 'RUB').toUpperCase();
+      balanceEl.textContent = `${Number(p.balance||0).toFixed(2)}${curSign(currentCurrency)}`;
     }catch(_){
-      balanceEl.textContent = "0.00";
+      currentCurrency = 'RUB';
+      balanceEl.textContent = `0.00${curSign(currentCurrency)}`;
     }
   }
   fetchProfile();
 
-  // пополнение
+  // Пополнение — min 0.10 USDT
   btnTopup.addEventListener('click', async () => {
     try {
-      const amountStr = prompt('Сумма пополнения, USD (мин. 1.00):', '1.00');
+      const amountStr = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
       if (!amountStr) return;
       const amount = parseFloat(amountStr);
-      if (isNaN(amount) || amount < 1.0) { alert('Минимальная сумма — 1.00 USD'); return; }
+      if (isNaN(amount) || amount < 0.10) { alert('Минимальная сумма — 0.10 USDT'); return; }
       const r = await fetch(`${API_BASE}/pay/invoice`, {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ user_id: userId || seq, amount_usd: amount }),
@@ -125,7 +118,7 @@
     });
   });
 
-  // === CATEGORIES ===
+  // Категории
   async function loadCategories(){
     try{
       const r = await fetch(`${API_BASE}/services`);
@@ -141,7 +134,6 @@
       ]);
     }
   }
-
   function renderCategories(items){
     const list = document.getElementById('catsList');
     list.innerHTML='';
@@ -160,22 +152,22 @@
   }
   loadCategories();
 
-  // === SERVICES LIST ===
+  // Услуги
+  const servicesListEl = document.getElementById('servicesList');
   let currentNetwork = null;
-  let currentService = null; // selected in modal
+  let currentService = null;
 
-  btnBackToCats.addEventListener('click', ()=>{ showPage('categories'); });
+  document.getElementById('btnBackToCats').addEventListener('click', ()=>{ showPage('categories'); });
 
   function showPage(name){
     Object.entries(pages).forEach(([k,el])=> el.classList.toggle('active', k===name));
     document.querySelectorAll('.tabbar .tab').forEach(b=> b.classList.toggle('active', b.dataset.tab===name));
   }
 
-  // скелет-лоадер
   function renderServicesSkeleton(rows=4){
-    servicesList.innerHTML = '';
+    servicesListEl.innerHTML='';
     for(let i=0;i<rows;i++){
-      servicesList.insertAdjacentHTML('beforeend', `
+      servicesListEl.insertAdjacentHTML('beforeend', `
         <div class="skeleton">
           <div class="skel-row">
             <div class="skel-avatar"></div>
@@ -200,30 +192,31 @@
       const items = await r.json();
       renderServices(items);
     }catch(_){
-      servicesList.innerHTML = '<div class="empty">Не удалось загрузить услуги</div>';
+      servicesListEl.innerHTML = '<div class="empty">Не удалось загрузить услуги</div>';
     }
   }
 
   function renderServices(items){
-    servicesList.innerHTML = '';
+    servicesListEl.innerHTML = '';
     items.forEach(s=>{
       const row = document.createElement('div');
       row.className = 'service';
+      const sign = curSign((s.currency||currentCurrency).toUpperCase());
       row.innerHTML = `
         <div class="left">
           <div class="name">${s.name}</div>
           <div class="meta">Тип: ${s.type} • Мин: ${s.min} • Макс: ${s.max}</div>
         </div>
         <div class="right">
-          <div class="price">от ${Number(s.rate_client_1000).toFixed(2)} / 1000</div>
+          <div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${sign} / 1000</div>
           <button class="btn" data-id="${s.service}">Купить</button>
         </div>`;
       row.querySelector('button').addEventListener('click', ()=> openOrderModal(s));
-      servicesList.appendChild(row);
+      servicesListEl.appendChild(row);
     });
   }
 
-  // === ORDER MODAL ===
+  // Оформление заказа
   function openOrderModal(svc){
     currentService = svc;
     orderTitle.textContent = `Заказ: ${svc.name}`;
@@ -234,15 +227,13 @@
     updatePrice();
     modal.setAttribute('aria-hidden','false');
   }
-  function closeOrderModal(){
-    modal.setAttribute('aria-hidden','true');
-    currentService = null;
-  }
+  function closeOrderModal(){ modal.setAttribute('aria-hidden','true'); currentService = null; }
   function updatePrice(){
     if(!currentService) return;
     const q = parseInt(inputQty.value||'0',10);
     const price = Math.max(0, Number(currentService.rate_client_1000)*q/1000);
-    priceInfo.textContent = `Цена: ${price.toFixed(2)}`;
+    const sign = curSign(currentCurrency);
+    priceInfo.textContent = `Цена: ${price.toFixed(2)}${sign}`;
   }
   inputQty.addEventListener('input', updatePrice);
   btnCancelOrder.addEventListener('click', closeOrderModal);
@@ -264,7 +255,7 @@
       const j = await r.json();
       closeOrderModal();
       alert(`Заказ создан!\nНомер: ${j.order_id}\nСумма: ${j.cost} ${j.currency}`);
-      await fetchProfile(); // обновим баланс
+      await fetchProfile();
     }catch(e){
       alert('Не удалось создать заказ: ' + (e?.message||e));
     }finally{
@@ -272,7 +263,7 @@
     }
   });
 
-  // Helpers
+  // init tabs
   function initTabs(){
     const tabs = document.querySelectorAll('.tabbar .tab');
     tabs.forEach(b=> b.addEventListener('click', ()=>{ showPage(b.dataset.tab); }));
