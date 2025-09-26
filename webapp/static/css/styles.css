@@ -1,8 +1,8 @@
-/* ===== Slovekiza Mini-App — refreshed UI ===== */
+/* ===== Slovekiza Mini-App UI ===== */
 :root{
-  /* Палитра — спокойная тёмная */
   --bg:#0e1013;
   --bg-2:#12151a;
+
   --surface:#15181d;
   --surface-2:#181c22;
   --elev:#0f1216;
@@ -10,25 +10,21 @@
   --text:#e9edf3;
   --muted:#9aa3af;
 
-  /* Акцент — мягкий красный/коралл */
   --brand:#ff6b6b;
-  --brand-2:#ff7d7d;
 
   --stroke:#222833;
   --stroke-2:#2b3240;
 
   --radius:16px;
-  --radius-sm:12px;
   --shadow:0 8px 24px rgba(0,0,0,.25);
 
-  /* Высоты и отступы */
-  --headerH:80px;        /* ↑ сделал выше */
-  --headerPadY:14px;     /* ↑ вертикальный паддинг внутри хедера */
-  --tabbarH:74px;
-  --tabbarOffset:22px;   /* ↑ отступ таббара от нижнего края */
+  /* геометрия */
+  --sideGap:16px;          /* отступы слева/справа для хедера и таббара */
+  --headerH:80px;          /* высота хедера (увеличена) */
+  --headerPadY:14px;       /* вертикальный паддинг в хедере */
+  --tabbarH:74px;          /* высота таббара */
 }
 
-/* Base */
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
@@ -39,27 +35,30 @@ body{
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
 
-/* ===== Header ===== */
+/* ===== Header (прижат к верху, скругление только снизу) ===== */
 .app-header{
-  position:sticky; top:0; z-index:10; height:var(--headerH);
+  position:fixed;
+  top:0;
+  left:var(--sideGap);
+  right:var(--sideGap);
+  height:var(--headerH);
+
   display:grid; grid-template-columns:1fr auto 1fr;
   align-items:center; gap:12px;
-  padding:var(--headerPadY) 14px;                 /* ↑ воздух внутри */
-  background:rgba(16,18,22,.85);
+  padding:var(--headerPadY) 14px;
+
+  background:rgba(16,18,22,.86);
   backdrop-filter:saturate(140%) blur(8px);
 
-  /* скругление + грани */
   border:1px solid var(--stroke);
-  border-radius:var(--radius);
+  border-radius:0 0 var(--radius) var(--radius); /* <— только нижние углы */
   overflow:hidden;
+  z-index:10;
 }
-
-/* мягкая “полочка” снизу у хедера */
+/* лёгкая линия снизу */
 .app-header::after{
   content:"";
-  position:absolute;
-  left:10px; right:10px; bottom:0;
-  height:1px;
+  position:absolute; left:10px; right:10px; bottom:0; height:1px;
   border-radius:999px;
   background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
   pointer-events:none;
@@ -77,12 +76,11 @@ body{
 .nick-wrap{min-width:0}
 .nick{font-weight:400; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:140px}
 .nick-sub{font-size:9px; color:var(--muted)}
-
 .logo{display:flex; align-items:center; gap:8px; padding:0; background:none; border:none; box-shadow:none;}
 .logo-img{width:18px; height:18px; display:block}
 .logo-text{font-weight:800; letter-spacing:.2px}
 
-/* ===== Wallet chip: авто-ширина ===== */
+/* Кошелёк (автоширина) */
 .hdr-right{
   justify-self:end; align-self:center;
   display:inline-flex; align-items:center; gap:6px;
@@ -94,36 +92,30 @@ body{
 }
 .balance{display:flex; flex-direction:column; align-items:flex-end; line-height:1.05; min-width:0}
 .balance-label{ font-size:10px; letter-spacing:.2px; color:var(--muted) }
-.balance-value{ font-size:12px; font-weight:500; color:#fff }
+.balance-value{ font-size:12px; font-weight:600; color:#fff }
 
-/* Плюс */
 .btn-plus{
   width:24px; height:24px; border-radius:8px;
   border:1px solid var(--stroke); background:#12161c; color:var(--text);
   cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
   padding:0; line-height:0; font-size:0; position:relative;
-  transition:transform .08s, background .2s, border-color .2s;
 }
-.btn-plus::before{
-  content:""; position:absolute; left:-6px; top:4px; bottom:4px; width:1px; background:#242a36;
-}
-.btn-plus svg{ width:18px; height:18px; display:block; pointer-events:none; }
-.btn-plus:hover{ transform:translateY(-1px); background:#161b22 }
-.btn-plus:active{ transform:translateY(0) scale(.98) }
+.btn-plus::before{content:""; position:absolute; left:-6px; top:4px; bottom:4px; width:1px; background:#242a36;}
+.btn-plus svg{width:18px; height:18px; display:block; pointer-events:none;}
 
-/* ===== Content ===== */
+/* ===== App content (учёт фикс. хедера и таббара) ===== */
 .app-main{
-  padding:12px 12px calc(var(--tabbarH) + var(--tabbarOffset) + 12px); /* запас под поднятый таббар */
-  min-height:calc(100dvh - var(--headerH));
+  padding: calc(var(--headerH) + 12px) var(--sideGap)
+           calc(var(--tabbarH) + env(safe-area-inset-bottom) + 16px);
+  min-height:100dvh;
 }
-.page{display:none; height:100%}
+.page{display:none}
 .page.active{display:block}
 
 /* ===== Category cards ===== */
 .cats-list{
   display:flex; flex-direction:column; gap:12px;
-  height:calc(100dvh - var(--headerH) - var(--tabbarH) - var(--tabbarOffset) - 24px);
-  overflow:auto; padding-right:2px;
+  /* пусть скроллится основной документ; у списка — авто-высота */
 }
 .cat{
   display:flex; align-items:center; gap:14px;
@@ -147,18 +139,20 @@ body{
 .cat-name{font-weight:700; font-size:15px}
 .cat-desc{font-size:12px; color:var(--muted)}
 
+/* подпись под списком */
+.cats-list{ padding-bottom: 10px; }
+.cats-list::after{
+  content:"Скоро добавим ещё категорий";
+  display:block; text-align:center; color:var(--muted);
+  font:500 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  opacity:.95; padding:18px 8px 12px;
+}
+
 /* ===== Services list ===== */
 .subheader{display:flex; align-items:center; gap:10px; margin:6px 0 10px}
-.subheader .back{
-  appearance:none; border:1px solid var(--stroke); background:var(--surface-2);
-  color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;
-}
+.subheader .back{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
 .subheader-title{margin:0; font-size:16px; font-weight:800}
-.services-list{
-  display:flex; flex-direction:column; gap:10px;
-  height:calc(100dvh - var(--headerH) - var(--tabbarH) - var(--tabbarOffset) - 56px);
-  overflow:auto;
-}
+.services-list{display:flex; flex-direction:column; gap:10px;}
 .service{
   display:flex; justify-content:space-between; align-items:center; gap:10px;
   padding:14px; border-radius:14px;
@@ -169,111 +163,72 @@ body{
 .service .name{font-weight:700}
 .service .meta{font-size:12px; color:var(--muted)}
 .service .price{font-weight:800; color:var(--brand)}
-.service .btn{
-  appearance:none; border:1px solid var(--stroke); background:var(--surface-2);
-  color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;
-}
+.service .btn{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
 
-/* ===== Skeleton loader (перелив) ===== */
-@keyframes shimmer{ 0%{background-position:-200% 0} 100%{background-position:200% 0} }
-.skeleton{
-  position:relative; overflow:hidden;
-  border-radius:14px; border:1px solid var(--stroke);
-  background:linear-gradient(180deg,#15181d,#111419);
-  height:64px;
-}
-.skeleton::after{
-  content:""; position:absolute; inset:0;
-  background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent);
-  background-size:200% 100%; animation:shimmer 1.4s infinite linear;
-}
+/* ===== Skeleton loader ===== */
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+.skeleton{position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--stroke); background:linear-gradient(180deg,#15181d,#111419); height:64px;}
+.skeleton::after{content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent); background-size:200% 100%; animation:shimmer 1.4s infinite linear;}
 .skel-row{display:flex; align-items:center; gap:12px; padding:14px}
 .skel-avatar{width:42px;height:42px;border-radius:12px;background:#1b2028}
 .skel-lines{flex:1}
 .skel-line{height:10px;border-radius:8px;background:#1b2028;margin:6px 0; width:70%}
 .skel-line.short{width:35%}
 
-/* ===== Bottom Tabbar ===== */
+/* ===== Tabbar (прижат к низу, скругление только сверху) ===== */
 .tabbar{
-  position:fixed; left:0; right:0; bottom:var(--tabbarOffset); z-index:20; height:var(--tabbarH);
-  display:grid; grid-template-columns:repeat(3, 1fr);
-  gap:8px; padding:10px 12px;
+  position:fixed;
+  left:var(--sideGap);
+  right:var(--sideGap);
+  bottom:calc(env(safe-area-inset-bottom)); /* упирается в низ */
+  height:var(--tabbarH);
+
+  display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:10px 12px;
+
   background:rgba(14,16,20,.92);
   backdrop-filter:blur(8px);
 
-  /* скругление + рамка */
   border:1px solid var(--stroke);
-  border-radius:var(--radius);
+  border-radius:var(--radius) var(--radius) 0 0; /* <— только верхние углы */
   overflow:hidden;
+  z-index:20;
 }
-
-/* мягкая линия сверху у таббара */
+/* линия сверху у таббара */
 .tabbar::before{
-  content:"";
-  position:absolute;
-  left:10px; right:10px; top:0;
-  height:1px;
-  border-radius:999px;
-  background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
+  content:""; position:absolute; left:10px; right:10px; top:0; height:1px;
+  border-radius:999px; background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
   pointer-events:none;
 }
+.tab{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:8px 6px; border-radius:12px; background:#14181d; color:#cbd5e1; border:1px solid #202531; font-size:12px; font-weight:600; cursor:pointer; transition:background .2s ease, color .2s ease, border-color .2s ease, transform .08s;}
+.tab:active{transform:scale(.98)} .tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
+.tab .tab-icon{width:20px; height:20px; display:block; opacity:.9} .tab.active .tab-icon{opacity:1}
 
-.tab{
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:6px; padding:8px 6px; border-radius:12px;
-  background:#14181d; color:#cbd5e1; border:1px solid #202531;
-  font-size:12px; font-weight:600; cursor:pointer;
-  transition:background .2s ease, color .2s ease, border-color .2s ease, transform .08s;
-}
-.tab:active{transform:scale(.98)}
-.tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
-.tab .tab-icon{width:20px; height:20px; display:block; opacity:.9}
-.tab.active .tab-icon{opacity:1}
-
-/* ===== Modal (order) ===== */
+/* ===== Modal ===== */
 .modal{position:fixed; inset:0; display:none}
 .modal[aria-hidden="false"]{display:block}
 .modal-backdrop{position:absolute; inset:0; background:rgba(0,0,0,.5)}
-.modal-card{
-  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-  width:min(520px,92vw); background:linear-gradient(180deg,#16191e,#12151a);
-  border:1px solid var(--stroke); border-radius:16px; box-shadow:var(--shadow); padding:16px;
-}
+.modal-card{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(520px,92vw); background:linear-gradient(180deg,#16191e,#12151a); border:1px solid var(--stroke); border-radius:16px; box-shadow:var(--shadow); padding:16px;}
 .modal-card h3{margin:0 0 12px}
 .modal-row{display:flex; flex-direction:column; gap:6px; margin-bottom:10px}
 .modal-row input{background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:10px}
 .modal-info{color:var(--muted); margin:6px 0 12px}
 .modal-actions{display:flex; gap:10px; justify-content:flex-end}
 .btn{cursor:pointer}
-.btn.primary{background:var(--brand); border:none; color:white; border-radius:10px; padding:10px 14px; font-weight:700}
+.btn.primary{background:var(--brand); border:none; color:#fff; border-radius:10px; padding:10px 14px; font-weight:700}
 .btn.secondary{background:var(--surface-2); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:10px 14px}
 
-/* ===== Подпись под списком категорий ===== */
-.cats-list{ padding-bottom:58px; } /* запас над таббаром */
-.cats-list::after{
-  content:"Скоро добавим ещё категорий";
-  display:block;
-  text-align:center;
-  color:var(--muted);
-  font:500 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  opacity:.95;
-  padding:18px 8px 12px;
-}
-
-/* ===== Скрытие скроллбаров (страница + списки) ===== */
+/* ===== Скрываем скроллбары (страница и списки) ===== */
 body, .page, .app-main, .cats-list, .services-list{
-  -ms-overflow-style: none;     /* IE/Edge */
-  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style:none;    /* IE/Edge */
+  scrollbar-width:none;       /* Firefox */
 }
 body::-webkit-scrollbar,
 .page::-webkit-scrollbar,
 .app-main::-webkit-scrollbar,
 .cats-list::-webkit-scrollbar,
-.services-list::-webkit-scrollbar{
-  width:0; height:0;            /* WebKit */
-}
+.services-list::-webkit-scrollbar{ width:0; height:0 }
 
-/* Responsive tweaks */
+/* responsive */
 @media (min-width:520px){
   .nick{max-width:220px}
 }
