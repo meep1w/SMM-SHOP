@@ -1,11 +1,11 @@
 /* Mini-App: категории → список услуг → заказ за внутренний баланс (RUB/USDT-aware) */
 (function () {
   const tg = window.Telegram?.WebApp;
-
   try { tg?.expand?.(); tg?.ready?.(); tg?.MainButton?.hide?.(); tg?.BackButton?.hide?.(); tg?.disableVerticalSwipes?.(); } catch (_) {}
 
   const API_BASE = "/api/v1";
 
+  // ==== DOM ====
   const nicknameEl = document.getElementById('nickname');
   const avatarEl   = document.getElementById('avatar');
   const userSeqEl  = document.getElementById('userSeq');
@@ -18,29 +18,26 @@
     favs:       document.getElementById('page-favs'),
     details:    document.getElementById('page-details'),
   };
-  const catsList = document.getElementById('catsList');
-  const servicesList = document.getElementById('servicesList');
-  const servicesTitle = document.getElementById('servicesTitle');
+  const servicesListEl = document.getElementById('servicesList');
+  const servicesTitle  = document.getElementById('servicesTitle');
 
   const modal = document.getElementById('orderModal');
   const orderTitle = document.getElementById('orderTitle');
-  const inputLink = document.getElementById('inputLink');
-  const inputQty  = document.getElementById('inputQty');
-  const qtyHint   = document.getElementById('qtyHint');
-  const priceInfo = document.getElementById('priceInfo');
+  const inputLink  = document.getElementById('inputLink');
+  const inputQty   = document.getElementById('inputQty');
+  const qtyHint    = document.getElementById('qtyHint');
+  const priceInfo  = document.getElementById('priceInfo');
   const btnCancelOrder = document.getElementById('btnCancelOrder');
   const btnCreateOrder = document.getElementById('btnCreateOrder');
 
-  // ---- Layout tweaks: опускаем хедер и поднимаем таббар
+  // ==== Layout tweaks (опускаем хедер, поднимаем таббар) + оверлей ====
   (function injectLayoutTweaks(){
     const css = `
-      /* лёгкая коррекция вертикали без правок html/css */
       .tabbar { position: fixed; left: 0; right: 0; bottom: 10px !important; }
-      /* пробуем найти блок хедера по распространённым селекторам */
       header, .header, .app-header { margin-top: 6px !important; }
-      /* оверлей пополнения */
+
       #topupOverlay {
-        position: fixed; inset: 0; z-index: 9999; background: rgba(10,12,16,0.92);
+        position: fixed; inset: 0; z-index: 99999; background: rgba(10,12,16,0.92);
         display: none; align-items: center; justify-content: center; padding: 24px;
         backdrop-filter: blur(4px);
       }
@@ -48,10 +45,11 @@
       .topup-card {
         width: 100%; max-width: 440px; background: #14171f; border-radius: 20px;
         box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 28px; text-align: center;
-        color: #e6e8ee; border: 1px solid rgba(255,255,255,0.04);
+        color: #e6e8ee; border: 1px solid rgba(255,255,255,0.06);
       }
       .topup-icon {
         width: 88px; height: 88px; margin: 0 auto 16px auto; border-radius: 50%;
+        background: radialGradient(#2ed47a,#1a9f55,#117a3f);
         background: radial-gradient(110px 110px at 30% 30%, #2ed47a 0%, #1a9f55 60%, #117a3f 100%);
         display: grid; place-items: center; box-shadow: 0 10px 30px rgba(46,212,122,0.35), inset 0 0 18px rgba(255,255,255,0.15);
       }
@@ -73,7 +71,6 @@
     document.head.appendChild(style);
   })();
 
-  // ---- Overlay DOM
   let overlay, overlayAmount;
   (function ensureOverlay(){
     overlay = document.getElementById('topupOverlay');
@@ -92,8 +89,7 @@
           <div class="topup-sub">Баланс пополнен. Средства уже доступны для оформления заказов.</div>
           <div class="topup-amount" id="topupAmount"></div>
           <button type="button" class="topup-ok" id="topupOkBtn">Окей</button>
-        </div>
-      `;
+        </div>`;
       document.body.appendChild(overlay);
     }
     overlayAmount = document.getElementById('topupAmount');
@@ -105,12 +101,13 @@
   function showTopupOverlay(amount, currency){
     try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_) {}
     try { if (navigator.vibrate) navigator.vibrate([30, 20, 30]); } catch(_) {}
-    if (overlayAmount) overlayAmount.textContent = `+${Number(amount||0).toFixed(2)} ${currency || ''}`.trim();
+    const val = (typeof amount === 'number' ? amount : parseFloat(amount||'0')) || 0;
+    overlayAmount.textContent = `+${val.toFixed(2)} ${currency || ''}`.trim();
     overlay.setAttribute('aria-hidden','false');
   }
   function hideTopupOverlay(){ overlay.setAttribute('aria-hidden','true'); }
 
-  // ---- Tabs
+  // ==== Tabs (если есть) ====
   const tabs = document.querySelectorAll('.tabbar .tab');
   tabs.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -120,24 +117,19 @@
     });
   });
 
-  // Telegram user id (для привязки)
+  // ==== Идентификация ====
   let userId = null;
   try { userId = tg?.initDataUnsafe?.user?.id || null; } catch (_) {}
 
-  // Ник из URL (?n=...)
   function getQueryNick() {
-    try {
-      const qs = new URLSearchParams(window.location.search);
-      const n = qs.get('n');
-      return n ? decodeURIComponent(n) : null;
-    } catch (_) { return null; }
+    try { const qs = new URLSearchParams(window.location.search); const n = qs.get('n'); return n ? decodeURIComponent(n) : null; }
+    catch (_) { return null; }
   }
   const urlNick = getQueryNick();
-  nicknameEl.textContent = urlNick || 'Гость';
+  if (nicknameEl) nicknameEl.textContent = urlNick || 'Гость';
 
-  // Аватар
-  try { const photo = tg?.initDataUnsafe?.user?.photo_url; if (photo) avatarEl.src = photo; } catch (_) {}
-  if (!avatarEl.src) {
+  try { const photo = tg?.initDataUnsafe?.user?.photo_url; if (photo && avatarEl) avatarEl.src = photo; } catch (_) {}
+  if (avatarEl && !avatarEl.src) {
     avatarEl.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80">
         <defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
@@ -149,27 +141,25 @@
       </svg>`);
   }
 
-  // helper: символ валюты
   function curSign(c){ return c === 'RUB' ? ' ₽' : (c === 'USD' ? ' $' : ` ${c}`); }
-
-  // стабильный #
   function stableHashId(x){let h=0,s=String(x||'');for(let i=0;i<s.length;i++){h=((h<<5)-h+s.charCodeAt(i))|0;}h=Math.abs(h);return (h%100000)+1;}
   let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||urlNick||'guest');
-  userSeqEl.textContent = seq;
+  if (userSeqEl) userSeqEl.textContent = seq;
 
-  // профиль / валюта / баланс
+  // ==== Профиль / баланс ====
   let currentCurrency = 'RUB';
-  let lastBalance = 0;     // числом, для сравнения при авто-рефреше
-  let topupTimer = null;   // сторожок после инвойса
+  let lastBalance = 0;            // последний известный баланс
+  let lastPopupTs = 0;            // анти-спам для оверлея
+  let topupTimer = null;          // сторожок после открытия инвойса
   let topupTries = 0;
 
   function setBalanceView(value, currency){
     currentCurrency = (currency || 'RUB').toUpperCase();
     const num = Number(value||0);
-    const grew = num > lastBalance + 1e-6; // увеличился ли баланс
+    balanceEl && (balanceEl.textContent = `${num.toFixed(2)}${curSign(currentCurrency)}`);
+    const prev = lastBalance;
     lastBalance = num;
-    balanceEl.textContent = `${lastBalance.toFixed(2)}${curSign(currentCurrency)}`;
-    return grew;
+    return { grew: num > prev + 1e-6, delta: Math.max(0, num - prev) };
   }
 
   async function fetchProfile(){
@@ -179,24 +169,39 @@
       const r = await fetch(`${API_BASE}/user?${params.toString()}`);
       if(!r.ok) throw 0;
       const p = await r.json(); // {nick, balance, currency, seq}
-      if (p.nick) nicknameEl.textContent = p.nick;
-      if (p.seq){ seq = p.seq; userSeqEl.textContent = p.seq; localStorage.setItem('smm_user_seq', String(p.seq)); }
-      const grew = setBalanceView(p.balance || 0, p.currency || 'RUB');
-      return { profile: p, grew };
+      if (p.nick && nicknameEl) nicknameEl.textContent = p.nick;
+      if (p.seq){ seq = p.seq; userSeqEl && (userSeqEl.textContent = p.seq); localStorage.setItem('smm_user_seq', String(p.seq)); }
+      const cmp = setBalanceView(p.balance || 0, p.currency || 'RUB');
+      return { profile: p, ...cmp };
     }catch(_){
-      setBalanceView(0, 'RUB');
-      return { profile: null, grew: false };
+      const cmp = setBalanceView(0, 'RUB');
+      return { profile: null, ...cmp };
     }
   }
+  // первичная загрузка
   fetchProfile();
 
-  // автообновление при возврате в мини-аппу + попап при росте баланса
+  function maybePopup(delta, currency){
+    const now = Date.now();
+    if (delta > 0.009 && now - lastPopupTs > 1200) {
+      lastPopupTs = now;
+      showTopupOverlay(delta, currency || currentCurrency);
+    }
+  }
+
+  // Возврат в мини-аппу: и focus, и visibilitychange (надёжнее в Telegram)
   window.addEventListener('focus', async () => {
-    const { profile, grew } = await fetchProfile();
-    if (grew) showTopupOverlay(profile?.balance, profile?.currency);
+    const { delta, profile } = await fetchProfile();
+    maybePopup(delta, profile?.currency);
+  });
+  document.addEventListener('visibilitychange', async () => {
+    if (!document.hidden) {
+      const { delta, profile } = await fetchProfile();
+      maybePopup(delta, profile?.currency);
+    }
   });
 
-  // сторожок пополнения — опрос профиля после открытия инвойса
+  // Сторожок после открытия инвойса
   function startTopupWatcher(){
     if (topupTimer) { clearTimeout(topupTimer); topupTimer = null; }
     topupTries = 0;
@@ -204,9 +209,9 @@
       topupTries += 1;
       const before = lastBalance;
       const { profile } = await fetchProfile();
-      if (lastBalance > before + 1e-6) {
-        try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_) {}
-        showTopupOverlay(profile?.balance, profile?.currency || currentCurrency);
+      const delta = Math.max(0, lastBalance - before);
+      if (delta > 0.009) {
+        maybePopup(delta, profile?.currency);
         return;
       }
       if (topupTries < 24) { // ~2 минуты по 5 сек
@@ -217,7 +222,7 @@
   }
 
   // Пополнение — min 0.10 USDT
-  btnTopup.addEventListener('click', async () => {
+  btnTopup?.addEventListener('click', async () => {
     try {
       const amountStr = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
       if (!amountStr) return;
@@ -231,21 +236,19 @@
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
       (tg?.openLink ? tg.openLink(j.pay_url) : window.open(j.pay_url,'_blank'));
-      // запустим сторожок: вернёшься из CryptoBot — баланс обновится и покажется поп-ап
       startTopupWatcher();
     } catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
 
-  // Back to categories (если есть кнопка с id=btnBackToCats в верстке)
-  const backBtn = document.getElementById('btnBackToCats');
-  if (backBtn) backBtn.addEventListener('click', ()=>{ showPage('categories'); });
+  // ==== Навигация категорий/услуг (без изменений в логике) ====
   function showPage(name){
-    Object.entries(pages).forEach(([k,el])=> el.classList.toggle('active', k===name));
+    Object.entries(pages).forEach(([k,el])=> el?.classList.toggle('active', k===name));
     document.querySelectorAll('.tabbar .tab').forEach(b=> b.classList.toggle('active', b.dataset.tab===name));
   }
 
-  // Категории
   async function loadCategories(){
+    const list = document.getElementById('catsList');
+    if (!list) return;
     try{
       const r = await fetch(`${API_BASE}/services`);
       const items = await r.json();
@@ -259,30 +262,37 @@
         {id:'facebook',name:'Facebook',desc:'лайки, подписчики'},
       ]);
     }
-  }
-  function renderCategories(items){
-    const list = document.getElementById('catsList');
-    if (!list) return;
-    list.innerHTML='';
-    items.forEach(c=>{
-      const a=document.createElement('a');
-      a.href='#'; a.className='cat'; a.dataset.cat=c.id;
-      a.innerHTML = `
-        <div class="cat-icon"><img src="static/img/${c.id}.svg" alt=""></div>
-        <div class="cat-body">
-          <div class="cat-name">${c.name}</div>
-          <div class="cat-desc">${c.desc}${c.count?` • ${c.count}`:''}</div>
-        </div>`;
-      a.addEventListener('click',e=>{e.preventDefault(); openServices(c.id,c.name);});
-      list.appendChild(a);
-    });
+    function renderCategories(items){
+      list.innerHTML='';
+      items.forEach(c=>{
+        const a=document.createElement('a');
+        a.href='#'; a.className='cat'; a.dataset.cat=c.id;
+        a.innerHTML = `
+          <div class="cat-icon"><img src="static/img/${c.id}.svg" alt=""></div>
+          <div class="cat-body">
+            <div class="cat-name">${c.name}</div>
+            <div class="cat-desc">${c.desc}${c.count?` • ${c.count}`:''}</div>
+          </div>`;
+        a.addEventListener('click',e=>{e.preventDefault(); openServices(c.id,c.name);});
+        list.appendChild(a);
+      });
+    }
   }
   loadCategories();
 
-  // Услуги
-  const servicesListEl = document.getElementById('servicesList');
-  let currentNetwork = null;
-  let currentService = null;
+  async function openServices(network, title){
+    if (servicesTitle) servicesTitle.textContent = title;
+    showPage('services');
+    renderServicesSkeleton(4);
+    try{
+      const r = await fetch(`${API_BASE}/services/${network}`);
+      if(!r.ok) throw 0;
+      const items = await r.json();
+      renderServices(items);
+    }catch(_){
+      servicesListEl && (servicesListEl.innerHTML = '<div class="empty">Не удалось загрузить услуги</div>');
+    }
+  }
 
   function renderServicesSkeleton(rows=4){
     if (!servicesListEl) return;
@@ -297,23 +307,7 @@
               <div class="skel-line short"></div>
             </div>
           </div>
-        </div>
-      `);
-    }
-  }
-
-  async function openServices(network, title){
-    currentNetwork = network;
-    if (servicesTitle) servicesTitle.textContent = title;
-    showPage('services');
-    renderServicesSkeleton(4);
-    try{
-      const r = await fetch(`${API_BASE}/services/${network}`);
-      if(!r.ok) throw 0;
-      const items = await r.json();
-      renderServices(items);
-    }catch(_){
-      if (servicesListEl) servicesListEl.innerHTML = '<div class="empty">Не удалось загрузить услуги</div>';
+        </div>`);
     }
   }
 
@@ -338,30 +332,25 @@
     });
   }
 
-  // Оформление заказа
   function openOrderModal(svc){
-    currentService = svc;
+    if (!modal) return;
     if (orderTitle) orderTitle.textContent = `Заказ: ${svc.name}`;
     if (inputLink) inputLink.value = '';
-    if (inputQty) {
-      inputQty.value = Math.max( svc.min, 100 );
-      inputQty.min = svc.min; inputQty.max = svc.max;
-    }
+    if (inputQty) { inputQty.value = Math.max( svc.min, 100 ); inputQty.min = svc.min; inputQty.max = svc.max; }
     if (qtyHint) qtyHint.textContent = `(мин ${svc.min} • макс ${svc.max})`;
     updatePrice();
-    if (modal) modal.setAttribute('aria-hidden','false');
+    modal.setAttribute('aria-hidden','false');
   }
-  function closeOrderModal(){ if (modal) modal.setAttribute('aria-hidden','true'); currentService = null; }
+  function closeOrderModal(){ modal?.setAttribute('aria-hidden','true'); }
   function updatePrice(){
-    if(!currentService || !priceInfo || !inputQty) return;
+    if(!priceInfo || !inputQty || !currentService) return;
     const q = parseInt(inputQty.value||'0',10);
     const price = Math.max(0, Number(currentService.rate_client_1000)*q/1000);
-    const sign = curSign(currentCurrency);
-    priceInfo.textContent = `Цена: ${price.toFixed(2)}${sign}`;
+    priceInfo.textContent = `Цена: ${price.toFixed(2)}${curSign(currentCurrency)}`;
   }
+  let currentService = null;
   inputQty?.addEventListener('input', updatePrice);
   btnCancelOrder?.addEventListener('click', closeOrderModal);
-
   btnCreateOrder?.addEventListener('click', async ()=>{
     if(!currentService) return;
     const link = (inputLink?.value||'').trim();
@@ -386,11 +375,4 @@
       btnCreateOrder.disabled = false; btnCreateOrder.textContent = 'Оплатить';
     }
   });
-
-  // init tabs
-  function initTabs(){
-    const tabs = document.querySelectorAll('.tabbar .tab');
-    tabs.forEach(b=> b.addEventListener('click', ()=>{ showPage(b.dataset.tab); }));
-  }
-  initTabs();
 })();
