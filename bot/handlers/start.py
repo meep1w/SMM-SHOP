@@ -7,8 +7,8 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 from aiogram.enums import ParseMode
 
-from bot.keyboards.common import kb_register
-from bot.keyboards.common import kb_main_menu
+from bot.keyboards.common import kb_register          # кнопка регистрации (как было)
+from bot.keyboards.common import kb_main_menu              # ⬅️ ГЛАВНОЕ МЕНЮ из common.py
 from bot.storage.users import is_registered, get_nick
 from bot.utils.messaging import send_photo_with_caption_and_kb
 from bot.config import GROUP_URL, PUBLIC_CHAT_URL, SCHOOL_URL
@@ -40,7 +40,7 @@ async def on_start(message: Message) -> None:
         await send_photo_with_caption_and_kb(
             message,
             caption,
-            kb_main_menu(nick),
+            kb_main_menu(nick),                         # ⬅️ прокидываем ник в мини-аппу
             parse_mode=ParseMode.HTML,
         )
         return
