@@ -1,6 +1,6 @@
 # server/main.py
 # -*- coding: utf-8 -*-
-import os, time, re, json, hmac, hashlib
+import os, time, re, json, hmac, hashlib, logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -8,7 +8,9 @@ from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
-# load .env
+# ---------- init ----------
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
 try:
     from dotenv import load_dotenv
     ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -22,19 +24,15 @@ VEX_KEY = os.getenv("VEXBOOST_KEY", "").strip()
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 
-# Валюта баланса/витрины
-CURRENCY = os.getenv("CURRENCY", "USD").strip().upper() or "USD"
+CURRENCY = os.getenv("CURRENCY", "RUB").strip().upper() or "RUB"
 MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER", "5.0"))
 
-# CryptoBot
 CRYPTOBOT_API_KEY = os.getenv("CRYPTOBOT_API_KEY", "").strip()
 CRYPTOBOT_BASE = os.getenv("CRYPTOBOT_BASE", "https://pay.crypt.bot/api").strip().rstrip("/")
 MIN_TOPUP_USD = float(os.getenv("CRYPTOBOT_MIN_TOPUP_USD", "0.10"))
-
-# Курс USD→RUB
 FX_CACHE_TTL = int(os.getenv("FX_CACHE_TTL", "600"))
 
-app = FastAPI(title="SMMShop Proxy", version="0.5")
+app = FastAPI(title="SMMShop API", version="0.6")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,49 +44,54 @@ app.add_middleware(
 
 _client = httpx.AsyncClient(timeout=20.0)
 
-# ===== internal storage (json) =====
+# ---------- storage (json) ----------
 DATA_DIR = ROOT_DIR / "server" / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 USERS_JSON  = DATA_DIR / "users.json"
 ORDERS_JSON = DATA_DIR / "orders.json"
 PAYLOG_JSON = DATA_DIR / "paylog.json"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+CREDITS_JSON = DATA_DIR / "credited_invoices.json"
 
 _users: Dict[str, Dict[str, Any]] = {}
 _orders: Dict[str, Any] = {}
+_credited: Dict[str, float] = {}  # invoice_id -> amount credited in shop currency
 
 def _load_users():
     global _users
-    try:
-        _users = json.loads(USERS_JSON.read_text("utf-8"))
-    except Exception:
-        _users = {}
+    try: _users = json.loads(USERS_JSON.read_text("utf-8"))
+    except Exception: _users = {}
 
 def _save_users():
     USERS_JSON.write_text(json.dumps(_users, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def _load_orders():
     global _orders
-    try:
-        _orders = json.loads(ORDERS_JSON.read_text("utf-8"))
-    except Exception:
-        _orders = {"seq": 0, "items": []}
+    try: _orders = json.loads(ORDERS_JSON.read_text("utf-8"))
+    except Exception: _orders = {"seq": 0, "items": []}
 
 def _save_orders():
     ORDERS_JSON.write_text(json.dumps(_orders, ensure_ascii=False, indent=2), encoding="utf-8")
 
+def _load_credited():
+    global _credited
+    try: _credited = json.loads(CREDITS_JSON.read_text("utf-8"))
+    except Exception: _credited = {}
+
+def _save_credited():
+    CREDITS_JSON.write_text(json.dumps(_credited, ensure_ascii=False, indent=2), encoding="utf-8")
+
+_load_users(); _load_orders(); _load_credited()
+
 def _next_order_id() -> int:
-    if not _orders: _load_orders()
     _orders["seq"] = int(_orders.get("seq", 0)) + 1
     _save_orders()
     return _orders["seq"]
 
 def _next_user_seq() -> int:
-    if not _users: return 1
     try: return max(int(v.get("seq") or 0) for v in _users.values()) + 1
     except Exception: return 1
 
 def get_or_create_profile(user_id: int, nick: Optional[str]=None) -> Dict[str, Any]:
-    if not _users: _load_users()
     key = str(user_id)
     if key not in _users:
         _users[key] = {
@@ -101,7 +104,6 @@ def get_or_create_profile(user_id: int, nick: Optional[str]=None) -> Dict[str, A
         if nick and not _users[key].get("nick"):
             _users[key]["nick"] = nick
             _save_users()
-        # если сменили CURRENCY в .env — синхронизируем для новых открытий
         if _users[key].get("currency") != CURRENCY:
             _users[key]["currency"] = CURRENCY
             _save_users()
@@ -123,63 +125,41 @@ def debit_user(user_id: int, amount: float):
     _save_users()
     return p
 
-# simple cache & FX cache
-_cache: Dict[str, Dict[str, Any]] = {}
+# ---------- FX ----------
 _fx_cache: Dict[str, Dict[str, Any]] = {}
 
-def _get_cache(key: str, ttl_sec: int):
-    rec = _cache.get(key)
-    if rec and (time.time() - rec["ts"] < ttl_sec):
-        return rec["data"]
-    return None
-
-def _set_cache(key: str, data: Any):
-    _cache[key] = {"data": data, "ts": time.time()}
-
-def _get_fx_cache(key: str, ttl_sec: int) -> Optional[float]:
+def _fx_get(key: str) -> Optional[float]:
     rec = _fx_cache.get(key)
-    if rec and (time.time() - rec["ts"] < ttl_sec):
+    if rec and (time.time() - rec["ts"] < FX_CACHE_TTL):
         return float(rec["rate"])
     return None
 
-def _set_fx_cache(key: str, rate: float):
+def _fx_put(key: str, rate: float):
     _fx_cache[key] = {"rate": float(rate), "ts": time.time()}
 
-# FX: USD→RUB (используем USD≈USDT)
 async def fx_usd_rub() -> float:
     if CURRENCY != "RUB":
         return 1.0
-    cached = _get_fx_cache("USD_RUB", FX_CACHE_TTL)
-    if cached:
-        return cached
-    # 1) exchangerate.host (бесплатно)
-    try:
-        url = "https://api.exchangerate.host/latest?base=USD&symbols=RUB"
-        r = await _client.get(url)
-        j = r.json()
-        rate = float(j["rates"]["RUB"])
-        if rate > 0:
-            _set_fx_cache("USD_RUB", rate)
-            return rate
-    except Exception:
-        pass
-    # 2) open.er-api.com — резерв
-    try:
-        url = "https://open.er-api.com/v6/latest/USD"
-        r = await _client.get(url)
-        j = r.json()
-        rate = float(j["rates"]["RUB"])
-        if rate > 0:
-            _set_fx_cache("USD_RUB", rate)
-            return rate
-    except Exception:
-        pass
-    # 3) последний шанс — если уже есть кеш, он бы вернулся выше; иначе дефолт
+    cached = _fx_get("USD_RUB")
+    if cached: return cached
+    for url in [
+        "https://api.exchangerate.host/latest?base=USD&symbols=RUB",
+        "https://open.er-api.com/v6/latest/USD",
+    ]:
+        try:
+            r = await _client.get(url)
+            j = r.json()
+            rate = float(j["rates"]["RUB"])
+            if rate > 0:
+                _fx_put("USD_RUB", rate)
+                return rate
+        except Exception:
+            pass
     rate = 100.0
-    _set_fx_cache("USD_RUB", rate)
+    _fx_put("USD_RUB", rate)
     return rate
 
-# grouping utils
+# ---------- VEX services ----------
 NETWORKS = ["telegram","tiktok","instagram","youtube","facebook"]
 NETWORK_KEYWORDS = {
     "telegram":  [r"\btelegram\b", r"\btg\b"],
@@ -195,19 +175,18 @@ DISPLAY = {
     "youtube":   {"id":"youtube",   "name":"YouTube",   "desc":"просмотры, подписки"},
     "facebook":  {"id":"facebook",  "name":"Facebook",  "desc":"лайки, подписчики"},
 }
+
 def detect_network(name: str, category: str) -> Optional[str]:
     txt = f"{name} {category}".lower()
-    for net, patterns in NETWORK_KEYWORDS.items():
-        for p in patterns:
+    for net, pats in NETWORK_KEYWORDS.items():
+        for p in pats:
             if re.search(p, txt):
                 return net
     return None
 
-# VEX services
 async def vex_services() -> List[Dict[str, Any]]:
     if not VEX_KEY: raise HTTPException(500, "VEXBOOST_KEY is not configured")
-    url = f"{API_BASE}?action=services&key={VEX_KEY}"
-    r = await _client.get(url)
+    r = await _client.get(f"{API_BASE}?action=services&key={VEX_KEY}")
     if r.status_code != 200: raise HTTPException(502, "Upstream error (services)")
     try: data = r.json()
     except Exception: raise HTTPException(502, "Bad JSON from upstream")
@@ -215,10 +194,21 @@ async def vex_services() -> List[Dict[str, Any]]:
     return data
 
 def client_rate_usd_per_1k(rate_supplier_1000: float) -> float:
-    # наценка × больше 0, округление до цента
     return round(float(rate_supplier_1000) * MARKUP_MULTIPLIER + 1e-9, 2)
 
-# ===== routes =====
+# ---------- caching ----------
+_cache: Dict[str, Dict[str, Any]] = {}
+
+def _get_cache(key: str, ttl_sec: int):
+    rec = _cache.get(key)
+    if rec and (time.time() - rec["ts"] < ttl_sec):
+        return rec["data"]
+    return None
+
+def _set_cache(key: str, data: Any):
+    _cache[key] = {"data": data, "ts": time.time()}
+
+# ---------- routes ----------
 @app.get("/api/v1/ping")
 async def ping(): return {"ok": True}
 
@@ -248,17 +238,17 @@ async def api_services_by_network(network: str):
     if cached: return cached
 
     raw = await vex_services()
-    fx = await fx_usd_rub()  # 1 если не RUB
+    fx = await fx_usd_rub()
     items = []
     for s in raw:
         net = detect_network(str(s.get("name","")), str(s.get("category","")))
         if net != network: continue
         try:
-            rate_sup = float(s.get("rate", 0.0))  # USD/1000 у поставщика
+            rate_sup = float(s.get("rate", 0.0))
         except Exception:
             rate_sup = 0.0
         rate_client_usd = client_rate_usd_per_1k(rate_sup)
-        rate_client_view = rate_client_usd * (fx if CURRENCY == "RUB" else 1.0)
+        rate_view = rate_client_usd * (fx if CURRENCY == "RUB" else 1.0)
         items.append({
             "service": int(s.get("service")),
             "name": str(s.get("name","")),
@@ -267,7 +257,7 @@ async def api_services_by_network(network: str):
             "max": int(s.get("max", 0)),
             "refill": bool(s.get("refill", False)),
             "cancel": bool(s.get("cancel", False)),
-            "rate_client_1000": round(rate_client_view, 2),  # в валюте магазина
+            "rate_client_1000": round(rate_view, 2),
             "currency": CURRENCY,
         })
     items.sort(key=lambda x: (x["rate_client_1000"], x["min"]))
@@ -276,10 +266,6 @@ async def api_services_by_network(network: str):
 
 @app.post("/api/v1/order/create")
 async def create_order(payload: Dict[str, Any] = Body(...)):
-    """
-    payload = { user_id:int, service:int, link:str, quantity:int }
-    Списывает внутренний баланс (в валюте магазина) и создаёт заказ в VEXBOOST.
-    """
     user_id = int(payload.get("user_id") or 0)
     service_id = int(payload.get("service") or 0)
     link = (payload.get("link") or "").strip()
@@ -301,46 +287,40 @@ async def create_order(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(400, f"Количество должно быть от {min_q} до {max_q}")
 
     try:
-        base_usd = float(service_obj.get("rate") or 0.0)  # USD/1000
+        base_usd = float(service_obj.get("rate") or 0.0)
     except Exception:
         base_usd = 0.0
-    fx = await fx_usd_rub()  # 1 если не RUB
+    fx = await fx_usd_rub()
     rate_client_usd = client_rate_usd_per_1k(base_usd)
-    rate_client_view = rate_client_usd * (fx if CURRENCY == "RUB" else 1.0)
-    cost = round(rate_client_view * quantity / 1000.0 + 1e-9, 2)
+    rate_view = rate_client_usd * (fx if CURRENCY == "RUB" else 1.0)
+    cost = round(rate_view * quantity / 1000.0 + 1e-9, 2)
     if cost <= 0:
         raise HTTPException(400, "Неверная цена для услуги")
 
-    # списываем баланс в валюте магазина
     debit_user(user_id, cost)
 
-    # создаём заказ у поставщика
     try:
-        # ссылка кодируется через QueryParams-хак
         url = f"{API_BASE}?action=add&service={service_id}&link={httpx.QueryParams({'u':link})['u']}&quantity={quantity}&key={VEX_KEY}"
         r = await _client.get(url)
         j = r.json()
         supplier_order = int(j.get("order"))
     except Exception as e:
-        # откат
         credit_user(user_id, cost)
         raise HTTPException(502, f"Supplier error: {e}")
 
-    if not _orders: _load_orders()
     oid = _next_order_id()
-    order_rec = {
+    _orders["items"].append({
         "id": oid, "user_id": user_id, "service": service_id,
         "link": link, "quantity": quantity,
         "cost": cost, "currency": CURRENCY,
         "supplier_order": supplier_order, "status": "Awaiting",
         "ts": int(time.time()),
-    }
-    _orders["items"].append(order_rec)
+    })
     _save_orders()
 
     return {"order_id": oid, "supplier_order": supplier_order, "cost": cost, "currency": CURRENCY, "status": "Awaiting"}
 
-# ---- CryptoBot invoice + webhook ----
+# ---------- payments ----------
 @app.post("/api/v1/pay/invoice")
 async def create_invoice(payload: Dict[str, Any] = Body(...)):
     user_id = int(payload.get("user_id") or 0)
@@ -374,6 +354,16 @@ def _hmac_ok(raw_body: bytes, token: str, signature: str) -> bool:
     except Exception:
         return False
 
+def _log_pay(payload: Dict[str, Any]):
+    try:
+        log = []
+        if PAYLOG_JSON.exists():
+            log = json.loads(PAYLOG_JSON.read_text("utf-8")) or []
+        log.append(payload)
+        PAYLOG_JSON.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
 @app.post("/api/v1/cryptobot/webhook")
 async def cryptobot_webhook(request: Request):
     raw = await request.body()
@@ -383,48 +373,56 @@ async def cryptobot_webhook(request: Request):
     except Exception:
         data = {}
 
-    # лог
-    try:
-        log = []
-        if PAYLOG_JSON.exists():
-            log = json.loads(PAYLOG_JSON.read_text("utf-8")) or []
-        log.append({"ts": int(time.time()), "ok": True, "sig": bool(sig), "data": data})
-        PAYLOG_JSON.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+    # логируем всё подряд
+    _log_pay({"ts": int(time.time()), "headers": {"sig": bool(sig)}, "data": data})
 
-    if CRYPTOBOT_API_KEY and sig and not _hmac_ok(raw, CRYPTOBOT_API_KEY, sig):
+    # проверка подписи (если заголовок присутствует)
+    if sig and CRYPTOBOT_API_KEY and not _hmac_ok(raw, CRYPTOBOT_API_KEY, sig):
         raise HTTPException(400, "bad signature")
 
-    # извлечение payload и суммы
-    def read(path, default=None):
-        cur = data
-        for k in path:
-            if isinstance(cur, dict) and k in cur: cur = cur[k]
-            else: return default
-        return cur
+    # ожидаемый формат: update_type=invoice_paid, invoice.status=paid
+    inv = (data.get("invoice")
+           or (data.get("result") or {}).get("invoice")
+           or data.get("result")
+           or {})
+    status = str(inv.get("status") or data.get("status") or "").lower()
+    update_type = str(data.get("update_type") or "").lower()
 
-    payload_s = read(["payload"]) or read(["result","payload"]) or read(["invoice","payload"]) or ""
-    amount = read(["amount"]) or read(["result","amount"]) or read(["invoice","amount"]) or 0
-    asset  = (read(["asset"])  or read(["result","asset"])  or read(["invoice","asset"])  or "USDT").upper()
+    if update_type and update_type != "invoice_paid":
+        return {"ok": True, "skip": f"update_type={update_type}"}
+    if status and status not in ("paid", "finished", "completed"):
+        return {"ok": True, "skip": f"status={status}"}
+
+    invoice_id = str(inv.get("invoice_id") or inv.get("id") or "")
+    payload_s = inv.get("payload") or data.get("payload") or ""
+    amount = float(inv.get("amount") or data.get("amount") or 0)
+    asset = str(inv.get("asset") or data.get("asset") or "USDT").upper()
 
     try:
         payload = json.loads(payload_s) if isinstance(payload_s, str) else (payload_s or {})
     except Exception:
         payload = {}
-
     user_id = int(payload.get("user_id") or 0)
-    if not user_id: return {"ok": True, "skip": "no user_id"}
 
-    amount_usd = float(amount or 0)  # считаем USDT≈USD
-    if amount_usd > 0:
-        # конвертируем по текущему курсу в валюту магазина
-        if CURRENCY == "RUB":
-            fx = await fx_usd_rub()
-            credited = round(amount_usd * fx, 2)
-        else:
-            credited = round(amount_usd, 2)
-        credit_user(user_id, credited)
-        return {"ok": True, "credited": credited, "currency": CURRENCY, "user_id": user_id}
+    if not user_id or amount <= 0:
+        return {"ok": True, "skip": "no user_id or zero amount"}
 
-    return {"ok": True}
+    # идемпотентность
+    if invoice_id:
+        if invoice_id in _credited:
+            return {"ok": True, "already": True, "invoice_id": invoice_id}
+    # конвертация в валюту витрины
+    if CURRENCY == "RUB":
+        fx = await fx_usd_rub()
+        credited = round(amount * fx, 2)
+    else:
+        credited = round(amount, 2)
+
+    profile = credit_user(user_id, credited)
+
+    if invoice_id:
+        _credited[invoice_id] = credited
+        _save_credited()
+
+    logging.info(f"Credited {credited} {CURRENCY} to user {user_id} (invoice {invoice_id})")
+    return {"ok": True, "credited": credited, "currency": CURRENCY, "user_id": user_id, "invoice_id": invoice_id}
