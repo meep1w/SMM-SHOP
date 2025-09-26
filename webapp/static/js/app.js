@@ -35,18 +35,27 @@
   const btnCreateOrder = document.getElementById('btnCreateOrder');
 
   // --- User init (id, nick, avatar) ---
-  let userId = null, nick = null;
+  let userId = null;
+  try { userId = tg?.initDataUnsafe?.user?.id || null; } catch (_) {}
+
+  // ник передаём из бота: WEBAPP_URL?...&n=<urlencodedNick>
+  function getQueryNick() {
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      const n = qs.get('n');
+      return n ? decodeURIComponent(n) : null;
+    } catch (_) { return null; }
+  }
+  const urlNick = getQueryNick();
+
+  // первичное отображение
+  nicknameEl.textContent = urlNick || 'Гость';
+
+  // аватар из Telegram (если есть)
   try {
-    userId = tg?.initDataUnsafe?.user?.id || null;
-    nick = tg?.initDataUnsafe?.user?.username
-        || [tg?.initDataUnsafe?.user?.first_name, tg?.initDataUnsafe?.user?.last_name].filter(Boolean).join(' ')
-        || null;
     const photo = tg?.initDataUnsafe?.user?.photo_url;
     if (photo) avatarEl.src = photo;
   } catch (_) {}
-  if (!nick) nick = localStorage.getItem('smm_nick') || 'Гость';
-  nicknameEl.textContent = nick;
-
   if (!avatarEl.src) {
     avatarEl.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80">
@@ -59,19 +68,28 @@
       </svg>`);
   }
 
-  // seq
+  // стабильный № пользователя (для отображения #n)
   function stableHashId(x){let h=0,s=String(x||'');for(let i=0;i<s.length;i++){h=((h<<5)-h+s.charCodeAt(i))|0;}h=Math.abs(h);return (h%100000)+1;}
-  let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||nick);
+  let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||urlNick||'guest');
   userSeqEl.textContent = seq;
 
-  // profile & balance from our API
+  // профиль/баланс с сервера
   async function fetchProfile(){
     try{
-      const qs = new URLSearchParams({ user_id: String(userId || seq), nick: nick || '' }).toString();
-      const r = await fetch(`${API_BASE}/user?${qs}`);
+      const params = new URLSearchParams({ user_id: String(userId || seq) });
+      // ВАЖНО: отправляем ник только если пришёл из URL (регистрация в боте).
+      if (urlNick) params.set('nick', urlNick);
+
+      const r = await fetch(`${API_BASE}/user?${params.toString()}`);
       if(!r.ok) throw 0;
-      const p = await r.json();
+      const p = await r.json(); // {nick, balance, currency, seq}
+
+      // если на сервере уже хранится ник — показываем его
+      if (p.nick) nicknameEl.textContent = p.nick;
+
+      // обновим #n, если сервер выдал свой порядковый
       if(p.seq){ seq = p.seq; userSeqEl.textContent = p.seq; localStorage.setItem('smm_user_seq', String(p.seq)); }
+
       balanceEl.textContent = Number(p.balance||0).toFixed(2);
     }catch(_){
       balanceEl.textContent = "0.00";
@@ -79,6 +97,7 @@
   }
   fetchProfile();
 
+  // пополнение
   btnTopup.addEventListener('click', async () => {
     try {
       const amountStr = prompt('Сумма пополнения, USD (мин. 1.00):', '1.00');
@@ -124,7 +143,8 @@
   }
 
   function renderCategories(items){
-    catsList.innerHTML='';
+    const list = document.getElementById('catsList');
+    list.innerHTML='';
     items.forEach(c=>{
       const a=document.createElement('a');
       a.href='#'; a.className='cat'; a.dataset.cat=c.id;
@@ -135,7 +155,7 @@
           <div class="cat-desc">${c.desc}${c.count?` • ${c.count}`:''}</div>
         </div>`;
       a.addEventListener('click',e=>{e.preventDefault(); openServices(c.id,c.name);});
-      catsList.appendChild(a);
+      list.appendChild(a);
     });
   }
   loadCategories();
@@ -173,7 +193,7 @@
     currentNetwork = network;
     servicesTitle.textContent = title;
     showPage('services');
-    renderServicesSkeleton(4); // 🔥 красивый лоадер
+    renderServicesSkeleton(4);
     try{
       const r = await fetch(`${API_BASE}/services/${network}`);
       if(!r.ok) throw 0;
@@ -252,7 +272,7 @@
     }
   });
 
-  // Tabs default
+  // Helpers
   function initTabs(){
     const tabs = document.querySelectorAll('.tabbar .tab');
     tabs.forEach(b=> b.addEventListener('click', ()=>{ showPage(b.dataset.tab); }));
