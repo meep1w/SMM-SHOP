@@ -69,8 +69,17 @@
   let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||urlNick||'guest');
   userSeqEl.textContent = seq;
 
-  // профиль
+  // профиль / валюта / баланс
   let currentCurrency = 'RUB';
+  let lastBalance = 0;     // числом, для сравнения при авто-рефреше
+  let topupTimer = null;   // сторожок после инвойса
+  let topupTries = 0;
+
+  function setBalanceView(value, currency){
+    currentCurrency = (currency || 'RUB').toUpperCase();
+    lastBalance = Number(value || 0);
+    balanceEl.textContent = `${lastBalance.toFixed(2)}${curSign(currentCurrency)}`;
+  }
 
   async function fetchProfile(){
     try{
@@ -81,14 +90,35 @@
       const p = await r.json(); // {nick, balance, currency, seq}
       if (p.nick) nicknameEl.textContent = p.nick;
       if (p.seq){ seq = p.seq; userSeqEl.textContent = p.seq; localStorage.setItem('smm_user_seq', String(p.seq)); }
-      currentCurrency = (p.currency || 'RUB').toUpperCase();
-      balanceEl.textContent = `${Number(p.balance||0).toFixed(2)}${curSign(currentCurrency)}`;
+      setBalanceView(p.balance || 0, p.currency || 'RUB');
     }catch(_){
-      currentCurrency = 'RUB';
-      balanceEl.textContent = `0.00${curSign(currentCurrency)}`;
+      setBalanceView(0, 'RUB');
     }
   }
   fetchProfile();
+
+  // автообновление при возврате в мини-аппу
+  window.addEventListener('focus', () => { fetchProfile(); });
+
+  // сторожок пополнения — опрос профиля после открытия инвойса
+  function startTopupWatcher(){
+    if (topupTimer) { clearTimeout(topupTimer); topupTimer = null; }
+    topupTries = 0;
+    const tick = async () => {
+      topupTries += 1;
+      const before = lastBalance;
+      await fetchProfile();
+      if (lastBalance > before + 1e-6) {
+        try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_) {}
+        try { alert('Баланс пополнен ✅'); } catch(_) {}
+        return;
+      }
+      if (topupTries < 24) { // ~2 минуты по 5 сек
+        topupTimer = setTimeout(tick, 5000);
+      }
+    };
+    topupTimer = setTimeout(tick, 5000);
+  }
 
   // Пополнение — min 0.10 USDT
   btnTopup.addEventListener('click', async () => {
@@ -105,6 +135,8 @@
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
       (tg?.openLink ? tg.openLink(j.pay_url) : window.open(j.pay_url,'_blank'));
+      // запустим сторожок: вернёшься из CryptoBot — баланс обновится
+      startTopupWatcher();
     } catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
 
