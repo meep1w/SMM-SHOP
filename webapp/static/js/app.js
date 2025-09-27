@@ -1,5 +1,6 @@
 /* Slovekiza Mini-App
- * - Плавные Lottie-иконки таббара (с фолбэком на статичные)
+ * - Плавные Lottie-иконки таббара (с фолбэком на статичные/GIF)
+ * - Стабильный запуск GIF (cache-busting) и возврат к статике
  * - Пополнение через CryptoBot (инвойс)
  * - Поп-ап «Оплата прошла успешно» по server-side флагу topup_delta
  * - Категории/услуги/создание заказа
@@ -158,8 +159,11 @@
     }catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
 
-  // ==== Таббар с Lottie ====
-  const lottieMap = new Map(); // btn -> lottieInstance
+  // ==== Таббар: Lottie (если есть) ИЛИ стабильные GIF ====
+  const lottieMap = new Map();           // btn -> lottieInstance
+  const gifTimers = new WeakMap();       // img -> timeoutId
+  const TAB_GIF_DEFAULT_MS = 1100;       // дефолтная длительность GIF (можно менять)
+
   function pageIdByTabName(name){
     if (name === 'catalog' || name === 'categories') return 'page-categories';
     if (name === 'favs' || name === 'favorites')     return 'page-favs';
@@ -176,20 +180,21 @@
       'page-favs':       pages.favs,
       'page-refs':       pages.refs,
       'page-details':    pages.details,
-    }).forEach(el => { if (el) el.classList.remove('active'); });
+    }).forEach(el => { if (el) el?.classList.remove('active'); });
     const el = document.getElementById(targetId);
     if (el) el.classList.add('active');
     try { window.scrollTo({top:0, behavior:'instant'}); } catch(_){}
   }
+
+  // 1) Инициализация Lottie (если подключишь lottie-web)
   function initLottieTabs(){
     const hasLottieLib = !!window.lottie;
     document.querySelectorAll('.tabbar .tab').forEach((btn)=>{
-      const iconBox = btn.querySelector('.tab-lottie');
+      const iconBox = btn.querySelector('.tab-lottie'); // будет работать, если заменишь <img> на контейнер
       if (!iconBox) return;
 
       const fallback = iconBox.getAttribute('data-fallback');
       if (fallback) iconBox.style.backgroundImage = `url("${fallback}")`;
-
       if (!hasLottieLib) return; // останется фолбэк
 
       const jsonUrl = iconBox.getAttribute('data-lottie');
@@ -209,17 +214,74 @@
       anim.addEventListener('complete', ()=> anim.goToAndStop(0, true));
     });
   }
+
+  // 2) Прелоад статичных и анимированных GIF
+  function preloadTabIcons(){
+    document.querySelectorAll('.tabbar .tab .tab-icon').forEach(img=>{
+      const s = img.dataset.static;
+      const a = img.dataset.anim;
+      if (s) { const i = new Image(); i.src = s; }
+      if (a) { const i = new Image(); i.src = a; }
+    });
+  }
+
+  // 3) Стабильный запуск GIF с cache-busting + откат на статику
+  function playTabGif(img){
+    const animUrl   = img?.dataset?.anim;
+    const staticUrl = img?.dataset?.static || img?.src;
+    if (!animUrl) return;
+
+    // сбить предыдущий таймер
+    const prev = gifTimers.get(img);
+    if (prev) clearTimeout(prev);
+
+    // перезапустить GIF за счёт ?t=timestamp (обход кэша)
+    const bust = (animUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+    img.src = animUrl + bust;
+
+    // длительность можно задать через data-ms="1000" или data-duration
+    const msAttr = parseInt(img.dataset.ms || img.dataset.duration || '', 10);
+    const ms = Number.isFinite(msAttr) ? msAttr : TAB_GIF_DEFAULT_MS;
+
+    const tid = setTimeout(()=> { img.src = staticUrl; }, ms);
+    gifTimers.set(img, tid);
+  }
+
+  // 4) Активация вкладки: включить нужную страницу, стиль, анимацию
   function activateTab(btn){
-    document.querySelectorAll('.tabbar .tab').forEach(b=> b.classList.toggle('active', b===btn));
+    document.querySelectorAll('.tabbar .tab').forEach(b=>{
+      const active = (b === btn);
+      b.classList.toggle('active', active);
+
+      const lottie = lottieMap.get(b);
+      const img = b.querySelector('.tab-icon');
+
+      if (active){
+        if (lottie) { lottie.goToAndPlay(0, true); }
+        else if (img) { playTabGif(img); }
+      } else {
+        // неактивной вкладке вернуть статику
+        if (!lottie && img && img.dataset.static) {
+          const prev = gifTimers.get(img);
+          if (prev) clearTimeout(prev);
+          img.src = img.dataset.static;
+        }
+        if (lottie) { lottie.goToAndStop(0, true); }
+      }
+    });
+
     const name = btn?.dataset?.tab || 'catalog';
     showPageByTabName(name);
-    const anim = lottieMap.get(btn);
-    if (anim){ anim.goToAndPlay(0, true); }
   }
+
+  // 5) Навесить клики и старт
   document.querySelectorAll('.tabbar .tab').forEach(btn=>{
     btn.addEventListener('click', ()=> activateTab(btn));
   });
+
+  preloadTabIcons();
   initLottieTabs();
+
   // стартовая вкладка — ищем catalog|categories
   const startBtn = document.querySelector('.tabbar .tab[data-tab="catalog"]')
       || document.querySelector('.tabbar .tab[data-tab="categories"]')
