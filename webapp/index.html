@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Slovekiza — Магазин SMM</title>
-  <link rel="stylesheet" href="static/css/styles.css?v=11">
+  <link rel="stylesheet" href="static/css/styles.css?v=12">
   <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script defer src="static/js/app.js?v=11"></script>
+  <script defer src="static/js/app.js?v=12"></script>
 </head>
 <body>
 
@@ -17,7 +17,7 @@
     <img id="avatar" class="avatar" src="" alt="">
     <div class="nick-wrap">
       <div class="nick" id="nickname">Гость</div>
-      <div class="nick-sub"><span id="userSeq">STATIC #—</span></div>
+      <div class="nick-sub"><span id="userSeq">#—</span></div>
     </div>
   </div>
 
@@ -37,7 +37,7 @@
 
 <!-- ===== Content ===== -->
 <main class="app-main" id="appMain">
-  <!-- Категории -->
+  <!-- Каталог (категории) -->
   <section id="page-categories" class="page active">
     <div class="cats-list" id="catsList"></div>
   </section>
@@ -51,23 +51,53 @@
     <div class="services-list" id="servicesList"></div>
   </section>
 
-  <!-- Избранное/Детализация — заглушки -->
-  <section id="page-favs" class="page"><div class="empty">Избранное появится здесь.</div></section>
-  <section id="page-details" class="page"><div class="empty">История заказов появится здесь.</div></section>
+  <!-- Избранное / Рефералы / Детализация -->
+  <section id="page-favs" class="page">
+    <div class="empty">Избранное появится здесь.</div>
+  </section>
+  <section id="page-refs" class="page">
+    <div class="empty">Реферальная система скоро будет доступна.</div>
+  </section>
+  <section id="page-details" class="page">
+    <div class="empty">История заказов появится здесь.</div>
+  </section>
 </main>
 
-<!-- ===== Bottom Tabbar ===== -->
+<!-- ===== Bottom Tabbar (4 вкладки + GIF-анимация на клик) ===== -->
 <nav class="tabbar" id="tabbar">
-  <button class="tab active" data-tab="categories" aria-label="Категории">
-    <img class="tab-icon" src="static/img/tab-categories.svg" alt="">
-    <span>Категории</span>
+  <button class="tab active" data-tab="catalog" aria-label="Каталог">
+    <img class="tab-icon"
+         src="static/img/tab-catalog.svg"
+         data-static="static/img/tab-catalog.svg"
+         data-anim="static/img/tab-catalog.gif"
+         alt="">
+    <span>Каталог</span>
   </button>
+
   <button class="tab" data-tab="favs" aria-label="Избранное">
-    <img class="tab-icon" src="static/img/tab-favorites.svg" alt="">
+    <img class="tab-icon"
+         src="static/img/tab-favorites.svg"
+         data-static="static/img/tab-favorites.svg"
+         data-anim="static/img/tab-favorites.gif"
+         alt="">
     <span>Избранное</span>
   </button>
+
+  <button class="tab" data-tab="refs" aria-label="Рефералы">
+    <img class="tab-icon"
+         src="static/img/tab-referrals.svg"
+         data-static="static/img/tab-referrals.svg"
+         data-anim="static/img/tab-referrals.gif"
+         alt="">
+    <span>Рефералы</span>
+  </button>
+
   <button class="tab" data-tab="details" aria-label="Детализация">
-    <img class="tab-icon" src="static/img/tab-details.svg" alt="">
+    <img class="tab-icon"
+         src="static/img/tab-details.svg"
+         data-static="static/img/tab-details.svg"
+         data-anim="static/img/tab-details.gif"
+         alt="">
     <span>Детализация</span>
   </button>
 </nav>

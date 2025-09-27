@@ -1,4 +1,4 @@
-/* Mini-App UI + топап поп-ап (надёжный, сервер даёт topup_delta) */
+/* Mini-App UI + поп-ап пополнения + таббар с анимацией иконок (GIF) */
 (function () {
   const tg = window.Telegram?.WebApp;
   try { tg?.expand?.(); tg?.ready?.(); tg?.MainButton?.hide?.(); tg?.BackButton?.hide?.(); tg?.disableVerticalSwipes?.(); } catch (_) {}
@@ -15,10 +15,11 @@
   const btnBackToCats = document.getElementById('btnBackToCats');
 
   const pages = {
-    categories: document.getElementById('page-categories'),
-    services:   document.getElementById('page-services'),
-    favs:       document.getElementById('page-favs'),
-    details:    document.getElementById('page-details'),
+    catalog:   document.getElementById('page-categories'), // каталог = категории
+    services:  document.getElementById('page-services'),
+    favs:      document.getElementById('page-favs'),
+    refs:      document.getElementById('page-refs'),
+    details:   document.getElementById('page-details'),
   };
   const servicesListEl = document.getElementById('servicesList');
   const servicesTitle  = document.getElementById('servicesTitle');
@@ -32,7 +33,7 @@
   const btnCancelOrder = document.getElementById('btnCancelOrder');
   const btnCreateOrder = document.getElementById('btnCreateOrder');
 
-  // layout tweaks + overlay
+  /* ---------- Оверлей «Оплата прошла успешно» ---------- */
   (function injectLayoutTweaks(){
     const css = `
       .tabbar { position: fixed; left: 0; right: 0; }
@@ -84,7 +85,7 @@
     overlay.setAttribute('aria-hidden','false');
   }
 
-  // helpers / identity
+  /* ---------- Идентификация и профиль ---------- */
   function curSign(c){ return c==='RUB'?' ₽':(c==='USD'?' $':` ${c}`); }
   let userId = null; try { userId = tg?.initDataUnsafe?.user?.id || null; } catch(_) {}
   function urlNick(){ try{const p=new URLSearchParams(location.search);const v=p.get('n');return v?decodeURIComponent(v):null;}catch(_){return null;} }
@@ -97,11 +98,10 @@
   let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||nickFromUrl||'guest');
   userSeqEl && (userSeqEl.textContent = `#${seq}`);
 
-  // balance state
+  // баланс
   let currentCurrency = 'RUB';
   let lastBalance = 0;
 
-  // fetch profile (читает topup_delta от сервера)
   async function fetchProfile() {
     try {
       const qp = new URLSearchParams({ user_id: String(userId || seq), consume_topup: '1' });
@@ -116,9 +116,7 @@
       lastBalance = Number(p.balance || 0);
       balanceEl && (balanceEl.textContent = `${lastBalance.toFixed(2)}${curSign(currentCurrency)}`);
 
-      if (p.topup_delta && Number(p.topup_delta) > 0) {
-        showTopupOverlay(Number(p.topup_delta), (p.topup_currency || currentCurrency));
-      }
+      if (p.topup_delta && Number(p.topup_delta) > 0) showTopupOverlay(Number(p.topup_delta), (p.topup_currency || currentCurrency));
       return p;
     } catch(_) {
       currentCurrency = 'RUB'; lastBalance = 0;
@@ -130,7 +128,7 @@
   window.addEventListener('focus', fetchProfile);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchProfile(); });
 
-  // Пополнение
+  /* ---------- Пополнение ---------- */
   btnTopup?.addEventListener('click', async ()=>{
     try{
       const s = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
@@ -148,22 +146,37 @@
     }catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
 
-  // Навигация (табы) — фиксируем переключение
+  /* ---------- Навигация: 4 вкладки + анимация GIF ---------- */
   function showPage(name){
     Object.entries(pages).forEach(([k,el])=> el?.classList.toggle('active', k===name));
     document.querySelectorAll('.tabbar .tab').forEach(b=> b.classList.toggle('active', b.dataset.tab===name));
     window.scrollTo({top:0, behavior:'instant'});
   }
+  function playTabAnim(btn){
+    const img = btn.querySelector('.tab-icon');
+    if (!img) return;
+    const anim = img.dataset.anim;
+    const stat = img.dataset.static || img.src;
+    if (!anim) return;
+    // перезапустить gif (cache-busting) и вернуть статичную через ~1.1s
+    const prev = img.src;
+    img.src = anim + '?t=' + Date.now();
+    setTimeout(()=>{ img.src = stat; }, 1100);
+    // если статичная была кастомная — вернуть её
+    if (prev.endsWith('.svg')) img.dataset.static = prev;
+  }
   document.querySelectorAll('.tabbar .tab').forEach(btn=>{
-    btn.addEventListener('click', ()=> showPage(btn.dataset.tab));
+    btn.addEventListener('click', ()=>{
+      playTabAnim(btn);
+      showPage(btn.dataset.tab);
+    });
   });
-  btnBackToCats?.addEventListener('click', ()=> showPage('categories'));
-  showPage('categories');
+  btnBackToCats?.addEventListener('click', ()=> showPage('catalog'));
+  showPage('catalog');
 
-  // Профиль (заглушка)
   profileBtn?.addEventListener('click', ()=> alert('Профиль скоро добавим 😉'));
 
-  // Категории / услуги
+  /* ---------- Категории / услуги ---------- */
   async function openServices(network, title){
     if (servicesTitle) servicesTitle.textContent = title;
     showPage('services'); renderServicesSkeleton();
@@ -179,20 +192,21 @@
         </div></div>`);
     }
   }
+  function curSignTxt(c){ return curSign((c||currentCurrency).toUpperCase()); }
   function renderServices(items){
     if (!servicesListEl) return; servicesListEl.innerHTML = '';
     items.forEach(s=>{
       const row=document.createElement('div'); row.className='service';
       row.innerHTML=`<div class="left"><div class="name">${s.name}</div>
         <div class="meta">Тип: ${s.type} • Мин: ${s.min} • Макс: ${s.max}</div></div>
-        <div class="right"><div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSign((s.currency||currentCurrency).toUpperCase())} / 1000</div>
+        <div class="right"><div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSignTxt(s.currency)} / 1000</div>
         <button class="btn" data-id="${s.service}">Купить</button></div>`;
       row.querySelector('button').addEventListener('click', ()=> openOrderModal(s));
       servicesListEl.appendChild(row);
     });
   }
 
-  // Оформление заказа (как было)
+  /* ---------- Оформление заказа ---------- */
   let currentService=null;
   function openOrderModal(svc){
     if (!modal) return;
@@ -229,7 +243,7 @@
     finally{ btnCreateOrder.disabled=false; btnCreateOrder.textContent='Оплатить'; }
   });
 
-  // Категории
+  /* ---------- Категории ---------- */
   async function loadCategories(){
     const list=document.getElementById('catsList'); if(!list) return;
     try{ const r=await fetch(`${API_BASE}/services`); render(await r.json()); }

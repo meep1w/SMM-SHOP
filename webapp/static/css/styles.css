@@ -28,13 +28,13 @@ body{
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
 
-/* ===== Header (во всю ширину, прижат к верху, без логотипа) ===== */
+/* ===== Header ===== */
 .app-header{
   position:fixed; top:0; left:0; right:0; z-index:10;
   height:var(--headerH);
 
   display:grid;
-  grid-template-columns:1fr auto;         /* центр убрали */
+  grid-template-columns:1fr auto;         /* без центральной колонки */
   align-items:end;
   gap:12px;
 
@@ -52,26 +52,24 @@ body{
   background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
   pointer-events:none;
 }
-
 .hdr-left,.hdr-right{display:flex; align-items:center; gap:10px}
 .hdr-left{min-width:0; cursor:pointer}
-.avatar{ width:32px; height:32px; border-radius:50%; object-fit:cover; background:linear-gradient(135deg,#23262d,#1b1e24); border:1px solid var(--stroke); }
+.avatar{ width:30px; height:30px; border-radius:50%; object-fit:cover; background:linear-gradient(135deg,#23262d,#1b1e24); border:1px solid var(--stroke); }
 .nick-wrap{min-width:0}
 .nick{font-weight:600; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px}
 .nick-sub{font-size:10px; color:var(--muted)}
 
-/* правая часть — просто текст + акцентный плюс */
+/* правая часть — баланс + акцентный плюс */
 .hdr-right{ gap:10px }
-.balance{ display:flex; flex-direction:column; align-items:flex-start; line-height:1.05 }
+.balance{ display:flex; flex-direction:column; align-items:flex-end; line-height:1.05 }
 .balance-label{ font-size:10px; letter-spacing:.2px; color:var(--muted) }
-.balance-value{ font-size:14px; font-weight:500; color:#fff }
-
-/* плюс — отдельно, не в капсуле */
+.balance-value{ font-size:18px; font-weight:800; color:#fff }
 .btn-plus{
-  width:32px; height:32px; border-radius:8px; border:0; cursor:pointer;
+  width:32px; height:32px; border-radius:10px; border:0; cursor:pointer;
   display:inline-grid; place-items:center;
   color:#fff;
   background:linear-gradient(180deg,var(--brand) 0%, var(--brand-d) 100%);
+  box-shadow:0 8px 18px rgba(255,107,107,.35);
   transition:transform .06s ease, filter .2s ease;
 }
 .btn-plus:active{ transform:translateY(1px) }
@@ -80,7 +78,7 @@ body{
 /* ===== Контент ===== */
 .app-main{
   padding: calc(var(--headerH) + 12px) 16px
-           calc(var(--tabbarH) + env(safe-area-inset-bottom) + 16px);
+  calc(var(--tabbarH) + env(safe-area-inset-bottom) + 16px);
   min-height:100dvh;
 }
 .page{display:none}
@@ -143,11 +141,11 @@ body{
 .skel-line{height:10px;border-radius:8px;background:#1b2028;margin:6px 0; width:70%}
 .skel-line.short{width:35%}
 
-/* ===== Tabbar (во всю ширину, прижат к низу) ===== */
+/* ===== Tabbar (4 вкладки, во всю ширину, прижат к низу) ===== */
 .tabbar{
   position:fixed; left:0; right:0; bottom:env(safe-area-inset-bottom); z-index:20;
   height:var(--tabbarH);
-  display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:10px 12px 100px 12px;
+  display:grid; grid-template-columns:repeat(4,1fr); gap:8px; padding:10px 12px;
   background:rgba(14,16,20,.92); backdrop-filter:blur(8px);
   border:1px solid var(--stroke);
   border-radius:var(--radius) var(--radius) 0 0;
@@ -158,9 +156,17 @@ body{
   border-radius:999px; background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
   pointer-events:none;
 }
-.tab{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:8px 6px; border-radius:12px; background:#14181d; color:#cbd5e1; border:1px solid #202531; font-size:12px; font-weight:600; cursor:pointer; transition:background .2s ease, color .2s ease, border-color .2s ease, transform .08s;}
-.tab:active{transform:scale(.98)} .tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
-.tab .tab-icon{width:20px; height:20px; display:block; opacity:.9} .tab.active .tab-icon{opacity:1}
+.tab{
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:6px; padding:8px 6px; border-radius:12px;
+  background:#14181d; color:#cbd5e1; border:1px solid #202531;
+  font-size:12px; font-weight:600; cursor:pointer;
+  transition:background .2s ease, color .2s ease, border-color .2s ease, transform .08s;
+}
+.tab:active{transform:scale(.98)}
+.tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
+.tab .tab-icon{width:22px; height:22px; display:block; image-rendering:auto}
+.tab.active .tab-icon{opacity:1}
 
 /* ===== Modal ===== */
 .modal{position:fixed; inset:0; display:none}
