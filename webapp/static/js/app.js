@@ -1,18 +1,12 @@
 /* Slovekiza Mini-App
- * - Пополнение через CryptoBot (инвойс)
- * - Поп-ап «Оплата прошла успешно» по server-side флагу topup_delta
- * - Категории / Услуги / Полная страница создания заказа
- * - Избранное синхронизировано с сервером
+ * Пополнение (CryptoBot), поп-ап об успешной оплате,
+ * Категории/Услуги/Оформление заказа,
+ * Избранное (в БД и localStorage),
+ * Рефералка: ссылка, статистика, последние начисления.
  */
 (function () {
   const tg = window.Telegram?.WebApp;
-  try {
-    tg?.expand?.();
-    tg?.ready?.();
-    tg?.MainButton?.hide?.();
-    tg?.BackButton?.hide?.();
-    tg?.disableVerticalSwipes?.();
-  } catch (_) {}
+  try { tg?.expand?.(); tg?.ready?.(); tg?.MainButton?.hide?.(); tg?.BackButton?.hide?.(); tg?.disableVerticalSwipes?.(); } catch (_) {}
 
   const API_BASE = "/api/v1";
 
@@ -24,12 +18,12 @@
   const btnTopup   = document.getElementById('btnTopup');
 
   const pages = {
-    catalog:   document.getElementById('page-categories'),
-    services:  document.getElementById('page-services'),
-    favs:      document.getElementById('page-favs'),
-    refs:      document.getElementById('page-refs'),
-    details:   document.getElementById('page-details'),
-    service:   document.getElementById('page-service'),
+    catalog:  document.getElementById('page-categories'),
+    services: document.getElementById('page-services'),
+    favs:     document.getElementById('page-favs'),
+    refs:     document.getElementById('page-refs'),
+    details:  document.getElementById('page-details'),
+    service:  document.getElementById('page-service'),
   };
 
   const catsListEl     = document.getElementById('catsList');
@@ -42,10 +36,11 @@
   const serviceDetailsEl   = document.getElementById('serviceDetails');
   const btnBackToServices  = document.getElementById('btnBackToServices');
 
-  // ==== Helpers ====
+  // helpers
   function curSign(c){ return c==='RUB'?' ₽':(c==='USD'?' $':` ${c}`); }
+  function qs(name){ try{ return new URLSearchParams(location.search).get(name) } catch(_){ return null } }
 
-  // ==== Topup overlay ====
+  // ==== Overlay success topup ====
   function showTopupOverlay(delta, currency){
     const id='topupOverlay';
     let overlay = document.getElementById(id);
@@ -75,15 +70,12 @@
     overlay.style.display = 'flex';
   }
 
-  // ==== Profile ====
+  // ==== Identity ====
   let userId = null; try { userId = tg?.initDataUnsafe?.user?.id || null; } catch(_) {}
-  function urlNick(){ try{const p=new URLSearchParams(location.search);const v=p.get('n');return v?decodeURIComponent(v):null;}catch(_){return null;} }
-  const nickFromUrl = urlNick();
+  const nickFromUrl = (function(){ try{const v=qs('n'); return v?decodeURIComponent(v):null}catch(_){return null} })();
+  const refFromUrl  = (function(){ try{const v=qs('ref')||qs('r'); return v?parseInt(v,10):null }catch(_){ return null } })();
   if (nicknameEl) nicknameEl.textContent = nickFromUrl || 'Гость';
-  try {
-    const photo = tg?.initDataUnsafe?.user?.photo_url;
-    if (photo && avatarEl) avatarEl.src = photo;
-  } catch(_){}
+  try { const photo = tg?.initDataUnsafe?.user?.photo_url; if (photo && avatarEl) avatarEl.src = photo; } catch(_){}
   if (avatarEl && !avatarEl.src) {
     avatarEl.src='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect fill="#1b1e24" width="80" height="80" rx="40"/><circle cx="40" cy="33" r="15" fill="#2a2f36"/><path d="M15 66c5-12 18-18 25-18s20 6 25 18" fill="#2a2f36"/></svg>');
   }
@@ -98,17 +90,13 @@
     try {
       const qp = new URLSearchParams({ user_id: String(userId || seq), consume_topup: '1' });
       if (nickFromUrl) qp.set('nick', nickFromUrl);
+      if (refFromUrl)  qp.set('ref', String(refFromUrl));
       const r = await fetch(`${API_BASE}/user?${qp.toString()}`);
       if (!r.ok) throw 0;
       const p = await r.json();
 
       if (p.nick && nicknameEl) nicknameEl.textContent = p.nick;
-      if (p.seq){
-        seq = p.seq;
-        if (userSeqEl) userSeqEl.textContent = `#${p.seq}`;
-        localStorage.setItem('smm_user_seq', String(p.seq));
-      }
-
+      if (p.seq){ seq = p.seq; if (userSeqEl) userSeqEl.textContent = `#${p.seq}`; localStorage.setItem('smm_user_seq', String(p.seq)); }
       currentCurrency = (p.currency || 'RUB').toUpperCase();
       lastBalance = Number(p.balance || 0);
       if (balanceEl) balanceEl.textContent = `${lastBalance.toFixed(2)}${curSign(currentCurrency)}`;
@@ -118,8 +106,7 @@
       }
       return p;
     } catch(_){
-      currentCurrency = 'RUB';
-      lastBalance = 0;
+      currentCurrency = 'RUB'; lastBalance = 0;
       if (balanceEl) balanceEl.textContent = '0.00' + curSign('RUB');
       return null;
     }
@@ -129,7 +116,7 @@
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchProfile(); });
 
   // ==== Topup ====
-  btnTopup?.addEventListener('click', async ()=>{
+  btnTopup?.addEventListener('click', async ()=> {
     try{
       const s = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
       if(!s) return;
@@ -165,8 +152,10 @@
   }
   function activateTab(btn){
     document.querySelectorAll('.tabbar .tab').forEach(b=> b.classList.toggle('active', b===btn));
-    showPageByTabName(btn?.dataset?.tab || 'catalog');
-    if (btn?.dataset?.tab === 'favs') renderFavs();
+    const tab = btn?.dataset?.tab || 'catalog';
+    showPageByTabName(tab);
+    if (tab === 'favs') renderFavs();
+    if (tab === 'refs') renderRefs();
   }
   document.querySelectorAll('.tabbar .tab').forEach(btn=> btn.addEventListener('click', ()=> activateTab(btn)));
   const startBtn = document.querySelector('.tabbar .tab[data-tab="catalog"]')
@@ -174,7 +163,7 @@
                  || document.querySelector('.tabbar .tab');
   if (startBtn) activateTab(startBtn);
 
-  // ==== Категории/услуги ====
+  // ==== Catalog / Services ====
   let currentNetwork = null;
   let servicesAll = [];
 
@@ -198,9 +187,7 @@
     catsListEl.innerHTML = '';
     items.forEach(c=>{
       const a = document.createElement('a');
-      a.href = '#';
-      a.className = 'cat';
-      a.dataset.cat = c.id;
+      a.href = '#'; a.className = 'cat'; a.dataset.cat = c.id;
       a.innerHTML = `
         <div class="cat-icon"><img src="static/img/${c.id}.svg" alt=""></div>
         <div class="cat-body">
@@ -244,7 +231,7 @@
     }
   }
 
-  // Поиск в категории
+  // search
   function applyServicesFilter(){
     const q = (servicesSearchEl?.value || '').trim().toLowerCase();
     const filtered = !q ? servicesAll : servicesAll.filter(s => {
@@ -264,6 +251,7 @@
     items.forEach(s=>{
       const row = document.createElement('div');
       row.className = 'service';
+      row.style.marginBottom = '10px'; // чуть больше воздуха между карточками
       row.innerHTML = `
         <div class="left">
           <div class="name">${s.name}</div>
@@ -279,65 +267,49 @@
     });
   }
 
-  // ===== Избранное — сервер (с локальным кэшем на оффлайн) =====
-  function favCacheLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]') } catch(_){ return [] } }
-  function favCacheSave(arr){ localStorage.setItem('smm_favs', JSON.stringify(arr||[])); }
+  // ==== Favorites local (UI) + server persist ====
+  function favLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]') } catch(_){ return [] } }
+  function favSave(arr){ localStorage.setItem('smm_favs', JSON.stringify(arr||[])); }
+  function favHas(id){ return favLoad().some(x => x.id === id); }
+  function favAddLocal(item){ const a = favLoad(); if (!a.some(x=>x.id===item.id)) { a.push(item); favSave(a); } }
+  function favRemoveLocal(id){ favSave(favLoad().filter(x=>x.id!==id)); }
 
-  async function favFetchServer(){
-    const uid = (userId || seq);
-    const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
-    if (!r.ok) throw 0;
-    const items = await r.json();
-    favCacheSave(items.map(s => ({ id: s.service, name: s.name, network: s.network, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency })));
-    return items;
+  async function favPersistAdd(id){
+    try{ await fetch(`${API_BASE}/favorites`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: userId||seq, service_id:id})}); }catch(_){}
+  }
+  async function favPersistDel(id){
+    try{ await fetch(`${API_BASE}/favorites/${id}?user_id=${encodeURIComponent(userId||seq)}`, {method:'DELETE'});}catch(_){}
   }
 
-  async function favAddServer(serviceId){
-    const r = await fetch(`${API_BASE}/favorites`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ user_id: (userId || seq), service_id: serviceId })
-    });
-    if (!r.ok) throw new Error(await r.text());
-  }
-
-  async function favRemoveServer(serviceId){
-    const url = `${API_BASE}/favorites?user_id=${encodeURIComponent(userId||seq)}&service_id=${encodeURIComponent(serviceId)}`;
-    const r = await fetch(url, { method:'DELETE' });
-    if (!r.ok) throw new Error(await r.text());
-  }
-
-  async function renderFavs(){
-    const box = pages.favs?.querySelector('.fav-list') || (()=>{ const d=document.createElement('div'); d.className='fav-list'; pages.favs?.appendChild(d); return d; })();
+  function renderFavs(){
+    const box = pages.favs?.querySelector('.fav-list') || (()=>{ const div=document.createElement('div'); div.className='fav-list'; pages.favs.innerHTML=''; pages.favs.appendChild(div); return div; })();
     box.innerHTML = '<div class="empty">Загрузка…</div>';
-    let items = [];
-    try { items = await favFetchServer(); }
-    catch {
-      items = favCacheLoad().map(s => ({
-        service: s.id, name: s.name, network:s.network, min:s.min||1, max:s.max||100000, rate_client_1000:s.rate||0, currency:s.currency||'RUB'
-      }));
-    }
-
-    if (!items.length){ box.innerHTML = '<div class="empty">Избранных услуг пока нет.</div>'; return; }
-
-    box.innerHTML = '';
-    items.forEach(s=>{
-      const row = document.createElement('div');
-      row.className = 'service';
-      row.innerHTML = `
-        <div class="left">
-          <div class="name">${s.name}</div>
-          <div class="meta">ID: ${s.service}${s.network ? ' • ' + s.network : ''}</div>
-        </div>
-        <div class="right">
-          <div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</div>
-          <button class="btn" data-id="${s.service}">Открыть</button>
-        </div>`;
-      row.querySelector('button').addEventListener('click', ()=> openServicePage(s));
-      box.appendChild(row);
-    });
+    // грузим с сервера — вкладка «Избранное» привязана к базе
+    fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(userId||seq)}`)
+      .then(r=>r.json())
+      .then(items=>{
+        box.innerHTML='';
+        if(!items.length){ box.innerHTML='<div class="empty">Избранных услуг пока нет.</div>'; return; }
+        items.forEach(s=>{
+          const row = document.createElement('div');
+          row.className = 'service';
+          row.style.marginBottom='10px';
+          row.innerHTML = `
+            <div class="left">
+              <div class="name">${s.name}</div>
+              <div class="meta">Сервис ID: ${s.service}${s.network ? ' • ' + s.network : ''}</div>
+            </div>
+            <div class="right">
+              <button class="btn" data-id="${s.service}">Открыть</button>
+            </div>`;
+          row.querySelector('button').addEventListener('click', ()=> openServicePage(s));
+          box.appendChild(row);
+        });
+      })
+      .catch(()=>{ box.innerHTML='<div class="empty">Не удалось загрузить избранное</div>'; });
   }
 
-  // ===== Полная страница услуги =====
+  // ==== Service page ====
   function presetValues(min, max){
     const base = [100, 500, 1000, 2500, 5000, 10000];
     const arr = base.filter(q => q>=min && q<=max);
@@ -350,7 +322,7 @@
   }
   function priceFor(q, s){ return Math.max(0, Number(s.rate_client_1000||0) * Number(q||0) / 1000); }
 
-  async function openServicePage(s){
+  function openServicePage(s){
     if (!s) return;
     const min = Number(s.min||1), max = Number(s.max||100000);
     const presets = presetValues(min, max);
@@ -471,21 +443,19 @@
       alert('Промокод принят (визуально). Скидка будет применена при обработке заказа.');
     });
 
-    // актуальный статус в избранном
-    const isFav = await (async()=>{
-      try{ const list = await favFetchServer(); return list.some(x=>Number(x.service)===Number(s.service)); }
-      catch { return (favCacheLoad().some(x=>x.id===s.service)); }
+    // избранное: сервер + локально
+    (async ()=>{
+      const isFav = favHas(s.service);
+      favToggle.checked = isFav;
     })();
-    favToggle.checked = isFav;
 
     favToggle.addEventListener('change', async ()=>{
-      try{
-        if (favToggle.checked) await favAddServer(s.service);
-        else await favRemoveServer(s.service);
-        try { await favFetchServer(); } catch(_){}
-      }catch(e){
-        favToggle.checked = !favToggle.checked;
-        alert('Не удалось обновить избранное: ' + (e?.message||e));
+      if (favToggle.checked){
+        favAddLocal({ id: s.service, name: s.name, network: currentNetwork, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency, _raw:s });
+        await favPersistAdd(s.service);
+      } else {
+        favRemoveLocal(s.service);
+        await favPersistDel(s.service);
       }
     });
 
@@ -521,32 +491,96 @@
   btnBackToCats?.addEventListener('click', ()=> showPageByTabName('catalog'));
   btnBackToServices?.addEventListener('click', ()=> showPageByTabName('services'));
 
+  // ==== Referrals Page ====
+  async function renderRefs(){
+    const root = pages.refs;
+    if (!root) return;
+    root.innerHTML = '<div class="empty">Загрузка…</div>';
+
+    try{
+      const r = await fetch(`${API_BASE}/referrals?user_id=${encodeURIComponent(userId||seq)}`);
+      if (!r.ok) throw 0;
+      const s = await r.json();
+
+      const link = s.invite_link || '';
+      const copy = async () => {
+        try{
+          await navigator.clipboard.writeText(link);
+          alert('Ссылка скопирована');
+        }catch(_){ prompt('Скопируйте ссылку', link); }
+      };
+      const share = () => {
+        if (navigator.share){
+          navigator.share({ title:'Slovekiza', text:'Мой инвайт', url:link }).catch(()=>copy());
+        } else copy();
+      };
+
+      const recent = (s.recent||[]).map(it=>{
+        const date = new Date((it.ts||0) * 1000);
+        const d = date.toLocaleString('ru-RU', {hour12:false});
+        return `<div class="service" style="margin-bottom:10px">
+          <div class="left"><div class="name">От: ${it.nick||'-'}</div>
+          <div class="meta">${d} • ставка ${it.rate_percent}%</div></div>
+          <div class="right"><div class="price">+${Number(it.amount||0).toFixed(2)}${curSign(s.currency)}</div></div>
+        </div>`;
+      }).join('') || '<div class="empty">Начислений пока нет.</div>';
+
+      root.innerHTML = `
+        <div class="svc">
+          <div class="card">
+            <div class="label">Реферальная программа</div>
+            <div class="desc">
+              Получайте <b>${s.percent}%</b> от каждого пополнения приглашённых.<br>
+              После <b>${s.threshold}</b> активных рефералов ставка повышается до <b>20%</b>.
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="label">Ваша ссылка</div>
+            <div style="display:flex; gap:8px; align-items:center">
+              <input id="refLink" type="text" value="${link}" readonly
+                     style="flex:1; background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:12px; padding:12px">
+              <button class="chip" id="refCopy">Копировать</button>
+              <button class="chip" id="refShare">Поделиться</button>
+            </div>
+          </div>
+
+          <div class="card summary">
+            <div class="sum-row"><span>Рефералов всего</span><b>${s.referred_total}</b></div>
+            <div class="sum-row"><span>Активных (с пополнением)</span><b>${s.referred_active}</b></div>
+            <div class="sum-row"><span>Текущая ставка</span><b>${s.percent}%</b></div>
+            <div class="sum-row"><span>Заработано</span><b>${Number(s.earned_total||0).toFixed(2)}${curSign(s.currency)}</b></div>
+          </div>
+
+          <div class="card">
+            <div class="label">Последние начисления</div>
+            ${recent}
+          </div>
+        </div>
+      `;
+
+      root.querySelector('#refCopy')?.addEventListener('click', copy);
+      root.querySelector('#refShare')?.addEventListener('click', share);
+    }catch(_){
+      root.innerHTML = '<div class="empty">Не удалось загрузить рефералку.</div>';
+    }
+  }
+
   // ==== Start ====
   loadCategories();
 
-  // ==== Поднятие таббара при клавиатуре ====
+  // ==== Keyboard lift ====
   (function keyboardLift(){
     const root = document.documentElement;
     function applyKbInset(px){ const v = px > 40 ? px : 0; root.style.setProperty('--kb', v + 'px'); }
     if (window.visualViewport){
       const vv = window.visualViewport;
-      const handler = () => {
-        const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-        applyKbInset(inset);
-      };
-      vv.addEventListener('resize', handler);
-      vv.addEventListener('scroll', handler);
-      handler();
+      const handler = () => { const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop); applyKbInset(inset); };
+      vv.addEventListener('resize', handler); vv.addEventListener('scroll', handler); handler();
     }
     try{
       const tg = window.Telegram?.WebApp;
-      tg?.onEvent?.('viewportChanged', (e)=>{
-        const vh = (e && (e.height || e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
-        if (!vh) return;
-        const inset = Math.max(0, window.innerHeight - vh);
-        applyKbInset(inset);
-      });
+      tg?.onEvent?.('viewportChanged', (e)=>{ const vh = (e && (e.height || e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height; if (!vh) return; const inset = Math.max(0, window.innerHeight - vh); applyKbInset(inset); });
     }catch(_){}
   })();
-
 })();
