@@ -141,32 +141,53 @@ body{
 .skel-line.short{width:35%}
 
 /* ===== Tabbar (4 вкладки, во всю ширину, прижат к низу) ===== */
+/* ===== Simple Tabbar (no per-button borders) ===== */
 .tabbar{
   position:fixed; left:0; right:0; bottom:env(safe-area-inset-bottom); z-index:20;
   height:var(--tabbarH);
-  display:grid; grid-template-columns:repeat(4,1fr); gap:8px; padding:10px 12px 100px 12px;
-  background:rgba(14,16,20,.92); backdrop-filter:blur(8px);
+  display:grid; grid-template-columns:repeat(4,1fr);
+  gap:0; padding:10px 12px 100px 12px;
+  background:rgba(14,16,20,.92);
+  backdrop-filter:blur(8px) saturate(140%);
   border:1px solid var(--stroke);
   border-radius:var(--radius) var(--radius) 0 0;
   overflow:hidden;
 }
 .tabbar::before{
   content:""; position:absolute; left:10px; right:10px; top:0; height:1px;
-  border-radius:999px; background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
+  border-radius:999px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);
   pointer-events:none;
 }
-.tab{
+
+/* Кнопки — без рамок и «карточек» */
+.tabbar .tab{
+  position:relative;
   display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:6px; padding:8px 6px; border-radius:12px;
-  background:#14181d; color:#cbd5e1; border:1px solid #202531;
-  font-size:12px; font-weight:600; cursor:pointer;
-  transition:background .2s ease, color .2s ease, border-color .2s ease, transform .08s;
+  gap:6px;
+  padding:8px 6px;
+  border:0 !important;
+  background:transparent !important;
+  border-radius:12px;            /* только для ховера/актива */
+  color: var(--text);
+  font-size:10px; font-weight:300;
+  cursor:pointer;
+  transition:background .2s ease,color .2s ease,transform .08s ease,opacity .2s ease;
 }
-.tab:active{transform:scale(.98)}
-.tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
-.tab .tab-icon{width:22px; height:22px; display:block; image-rendering:auto}
-.tab .tab-vid{width:22px;height:22px;display:none;object-fit:contain;pointer-events:none}
-.tab.active .tab-icon{opacity:1}
+.tabbar .tab:active{ transform:scale(.98) }
+.tabbar .tab:hover{ background:rgba(255,255,255,.035) }   /* мягкий hover */
+
+.tabbar .tab .tab-icon{ width:20px; height:20px; display:block; opacity:.9 }
+.tabbar .tab span{ white-space:nowrap }
+
+/* Активная — без бордера, только мягкая подложка */
+.tabbar .tab.active{
+  color:var(--text);
+  background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), 0 6px 16px rgba(0,0,0,.18);
+}
+.tabbar .tab.active .tab-icon{ opacity:1 }
+
 
 /* ===== Modal ===== */
 .modal{position:fixed; inset:0; display:none}
