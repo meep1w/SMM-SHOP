@@ -1,44 +1,33 @@
 # -*- coding: utf-8 -*-
-import json
-import time
-from typing import Dict, Any, Optional
+"""
+Заменяет JSON-хранилище на Postgres.
+Использует ту же переменную DATABASE_URL, что и сервер.
+"""
+import os, time
+from typing import Optional
+from sqlalchemy.orm import Session
+from server.db import SessionLocal, User, stable_seq
 
-from bot.config import USERS_JSON, ensure_runtime_dirs
-
-_users_cache: Dict[str, Dict[str, Any]] = {}
-
-def _load() -> None:
-    """Загрузка users.json в память."""
-    global _users_cache
-    ensure_runtime_dirs()
-    try:
-        with open(USERS_JSON, "r", encoding="utf-8") as f:
-            _users_cache = json.load(f) or {}
-    except Exception:
-        _users_cache = {}
-
-def _save() -> None:
-    """Сохранение кеша в users.json."""
-    ensure_runtime_dirs()
-    with open(USERS_JSON, "w", encoding="utf-8") as f:
-        json.dump(_users_cache, f, ensure_ascii=False, indent=2)
+def _db() -> Session:
+    return SessionLocal()
 
 def is_registered(user_id: int) -> bool:
-    """Проверка, зарегистрирован ли пользователь."""
-    if not _users_cache:
-        _load()
-    return str(user_id) in _users_cache
+    with _db() as s:
+        u = s.query(User).filter(User.tg_id==user_id).one_or_none()
+        return bool(u and u.nick)
 
 def get_nick(user_id: int) -> Optional[str]:
-    """Получить ник пользователя, если есть."""
-    if not _users_cache:
-        _load()
-    rec = _users_cache.get(str(user_id))
-    return (rec or {}).get("nick")
+    with _db() as s:
+        u = s.query(User).filter(User.tg_id==user_id).one_or_none()
+        return u.nick if u and u.nick else None
 
 def set_registered(user_id: int, nick: str) -> None:
-    """Отметить пользователя как зарегистрированного и сохранить ник."""
-    if not _users_cache:
-        _load()
-    _users_cache[str(user_id)] = {"nick": nick, "ts": int(time.time())}
-    _save()
+    ts = int(time.time())
+    with _db() as s:
+        u = s.query(User).filter(User.tg_id==user_id).one_or_none()
+        if not u:
+            u = User(tg_id=user_id, seq=stable_seq(user_id), nick=nick, currency=os.getenv("CURRENCY","RUB"), balance=0.0,
+                     created_at=ts, updated_at=ts, last_seen_at=ts)
+            s.add(u); s.commit()
+        else:
+            u.nick = nick; u.updated_at = ts; u.last_seen_at = ts; s.commit()

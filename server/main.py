@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
-import os, time, re, json, hmac, hashlib, logging
-from typing import List, Dict, Any, Optional
+import os, time, json, logging
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Body, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import httpx
+from sqlalchemy.orm import Session
+
+from .db import Base, engine, SessionLocal, User, Service, Favorite, Order, Topup, stable_seq
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -17,8 +21,8 @@ try:
 except Exception:
     ROOT_DIR = Path(__file__).resolve().parents[1]
 
-API_BASE = "https://vexboost.ru/api/v2"
-VEX_KEY = os.getenv("VEXBOOST_KEY", "").strip()
+API_BASE = os.getenv("VEXBOOST_BASE", "https://vexboost.ru/api/v2").strip()
+VEX_KEY  = os.getenv("VEXBOOST_KEY", "").strip()
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
@@ -26,132 +30,44 @@ origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 CURRENCY = os.getenv("CURRENCY", "RUB").strip().upper() or "RUB"
 MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER", "5.0"))
 
-CRYPTOBOT_API_KEY = os.getenv("CRYPTOBOT_API_KEY", "").strip()
-CRYPTOBOT_BASE = os.getenv("CRYPTOBOT_BASE", "https://pay.crypt.bot/api").strip().rstrip("/")
-MIN_TOPUP_USD = float(os.getenv("CRYPTOBOT_MIN_TOPUP_USD", "0.10"))
+# CryptoBot — берём обе переменные (на скрине была опечатка)
+CRYPTOBOT_API_KEY  = os.getenv("CRYPTOBOT_API_KEY") or os.getenv("CRYPTOPBOT_API_KEY") or ""
+CRYPTOBOT_BASE     = os.getenv("CRYPTOBOT_BASE") or os.getenv("CRYPTOPBOT_BASE") or "https://pay.crypt.bot/api"
+CRYPTOBOT_MIN_TOPUP_USD = float(os.getenv("CRYPTOBOT_MIN_TOPUP_USD", os.getenv("CRYPTOPBOT_MIN_TOPUP_USD", "0.10")))
+
 FX_CACHE_TTL = int(os.getenv("FX_CACHE_TTL", "600"))
 
-app = FastAPI(title="SMMShop API", version="0.8")
+NETWORKS = ["telegram","tiktok","instagram","youtube","facebook"]
+DISPLAY = {
+    "telegram":  {"id":"telegram",  "name":"Telegram",  "desc":"подписчики, просмотры"},
+    "tiktok":    {"id":"tiktok",    "name":"TikTok",    "desc":"просмотры, фолловеры"},
+    "instagram": {"id":"instagram", "name":"Instagram", "desc":"подписчики, лайки"},
+    "youtube":   {"id":"youtube",   "name":"YouTube",   "desc":"просмотры, подписки"},
+    "facebook":  {"id":"facebook",  "name":"Facebook",  "desc":"лайки, подписчики"},
+}
 
+# --- app ---
+app = FastAPI(title="SMMShop API", version="2.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if origins == ["*"] else origins,
+    allow_origins=origins or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-_client = httpx.AsyncClient(timeout=20.0)
+_client = httpx.AsyncClient(timeout=30.0)
 
-# --- storage ---
-DATA_DIR = ROOT_DIR / "server" / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-USERS_JSON  = DATA_DIR / "users.json"
-ORDERS_JSON = DATA_DIR / "orders.json"
-PAYLOG_JSON = DATA_DIR / "paylog.json"
-CREDITS_JSON = DATA_DIR / "credited_invoices.json"
-
-_users: Dict[str, Dict[str, Any]] = {}
-_orders: Dict[str, Any] = {}
-_credited: Dict[str, float] = {}
-
-def _load_users():
-    global _users
-    try: _users = json.loads(USERS_JSON.read_text("utf-8"))
-    except Exception: _users = {}
-
-def _save_users():
-    USERS_JSON.write_text(json.dumps(_users, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def _load_orders():
-    global _orders
-    try: _orders = json.loads(ORDERS_JSON.read_text("utf-8"))
-    except Exception: _orders = {"seq": 0, "items": []}
-
-def _save_orders():
-    ORDERS_JSON.write_text(json.dumps(_orders, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def _load_credited():
-    global _credited
-    try: _credited = json.loads(CREDITS_JSON.read_text("utf-8"))
-    except Exception: _credited = {}
-
-def _save_credited():
-    CREDITS_JSON.write_text(json.dumps(_credited, ensure_ascii=False, indent=2), encoding="utf-8")
-
-_load_users(); _load_orders(); _load_credited()
-
-def _next_order_id() -> int:
-    _orders["seq"] = int(_orders.get("seq", 0)) + 1
-    _save_orders()
-    return _orders["seq"]
-
-def _next_user_seq() -> int:
-    try: return max(int(v.get("seq") or 0) for v in _users.values()) + 1
-    except Exception: return 1
-
-def _ensure_topup_obj(p: Dict[str, Any]):
-    if "topup" not in p or not isinstance(p["topup"], dict):
-        p["topup"] = {"delta": 0.0, "currency": CURRENCY, "ts": 0, "unseen": False}
-
-def get_or_create_profile(user_id: int, nick: Optional[str]=None) -> Dict[str, Any]:
-    key = str(user_id)
-    if key not in _users:
-        _users[key] = {
-            "user_id": user_id,
-            "nick": nick or None,
-            "balance": 0.0,
-            "currency": CURRENCY,
-            "seq": _next_user_seq(),
-            "ts": int(time.time()),
-            "topup": {"delta": 0.0, "currency": CURRENCY, "ts": 0, "unseen": False},
-        }
-        _save_users()
-    else:
-        if nick and not _users[key].get("nick"):
-            _users[key]["nick"] = nick
-            _save_users()
-        if _users[key].get("currency") != CURRENCY:
-            _users[key]["currency"] = CURRENCY
-            _save_users()
-        _ensure_topup_obj(_users[key])
-    return _users[key]
-
-def credit_user(user_id: int, amount: float):
-    p = get_or_create_profile(user_id)
-    p["balance"] = round(float(p.get("balance", 0.0)) + float(amount), 2)
-    _ensure_topup_obj(p)
-    # накапливаем «непрочитанное» пополнение
-    if p["topup"].get("unseen"):
-        p["topup"]["delta"] = round(float(p["topup"].get("delta", 0.0)) + float(amount), 2)
-    else:
-        p["topup"]["delta"] = round(float(amount), 2)
-        p["topup"]["unseen"] = True
-    p["topup"]["currency"] = CURRENCY
-    p["topup"]["ts"] = int(time.time())
-    _save_users()
-    return p
-
-def debit_user(user_id: int, amount: float):
-    p = get_or_create_profile(user_id)
-    cur = float(p.get("balance", 0.0))
-    new = round(cur - float(amount), 2)
-    if new < -1e-6:
-        raise HTTPException(400, "Недостаточно средств")
-    p["balance"] = new
-    _save_users()
-    return p
-
-# --- FX ---
+# --- FX cache ---
 _fx_cache: Dict[str, Dict[str, Any]] = {}
-def _fx_get(key: str) -> Optional[float]:
-    rec = _fx_cache.get(key)
-    if rec and (time.time() - rec["ts"] < FX_CACHE_TTL):
-        return float(rec["rate"])
-    return None
-def _fx_put(key: str, rate: float): _fx_cache[key] = {"rate": float(rate), "ts": time.time()}
+def _fx_get(k: str) -> Optional[float]:
+    obj = _fx_cache.get(k)
+    if not obj: return None
+    if time.time() - obj.get("t", 0) > FX_CACHE_TTL: return None
+    return float(obj.get("v", 0))
+def _fx_put(k: str, v: float) -> None:
+    _fx_cache[k] = {"v": float(v), "t": time.time()}
 async def fx_usd_rub() -> float:
-    if CURRENCY != "RUB": return 1.0
     cached = _fx_get("USD_RUB")
     if cached: return cached
     for url in [
@@ -160,291 +76,231 @@ async def fx_usd_rub() -> float:
     ]:
         try:
             r = await _client.get(url)
-            rate = float(r.json()["rates"]["RUB"])
-            if rate > 0: _fx_put("USD_RUB", rate); return rate
-        except Exception: pass
-    rate = 100.0; _fx_put("USD_RUB", rate); return rate
+            data = r.json()
+            v = float(data["rates"]["RUB"])
+            if v > 0:
+                _fx_put("USD_RUB", v)
+                return v
+        except Exception:
+            continue
+    _fx_put("USD_RUB", 100.0); return 100.0
 
-# --- VEX services ---
-NETWORKS = ["telegram","tiktok","instagram","youtube","facebook"]
-NETWORK_KEYWORDS = {
-    "telegram":  [r"\btelegram\b", r"\btg\b"],
-    "tiktok":    [r"\btik\s*tok\b", r"\btiktok\b"],
-    "instagram": [r"\binstagram\b", r"\binsta\b", r"\big\b"],
-    "youtube":   [r"\byou\s*tube\b", r"\byt\b"],
-    "facebook":  [r"\bfacebook\b", r"\bfb\b", r"\bmeta\b"],
-}
-DISPLAY = {
-    "telegram":  {"id":"telegram",  "name":"Telegram",  "desc":"подписчики, просмотры"},
-    "tiktok":    {"id":"tiktok",    "name":"TikTok",    "desc":"просмотры, фолловеры"},
-    "instagram": {"id":"instagram", "name":"Instagram", "desc":"подписчики, лайки"},
-    "youtube":   {"id":"youtube",   "name":"YouTube",   "desc":"просмотры, подписки"},
-    "facebook":  {"id":"facebook",  "name":"Facebook",  "desc":"лайки, подписчики"},
-}
-def detect_network(name: str, category: str) -> Optional[str]:
-    txt = f"{name} {category}".lower()
-    for net, pats in NETWORK_KEYWORDS.items():
-        for p in pats:
-            if re.search(p, txt): return net
-    return None
+def client_rate_view_per_1k(base_usd_per_1k: float, fx: float) -> float:
+    usd_client = float(base_usd_per_1k) * MARKUP_MULTIPLIER
+    if CURRENCY == "RUB": return usd_client * fx
+    return usd_client
 
-async def vex_services() -> List[Dict[str, Any]]:
-    if not VEX_KEY: raise HTTPException(500, "VEXBOOST_KEY is not configured")
-    r = await _client.get(f"{API_BASE}?action=services&key={VEX_KEY}")
-    if r.status_code != 200: raise HTTPException(502, "Upstream error (services)")
-    try: data = r.json()
-    except Exception: raise HTTPException(502, "Bad JSON from upstream")
-    if not isinstance(data, list): raise HTTPException(502, "Unexpected response format")
+def db() -> Session: return SessionLocal()
+def ensure_user(db: Session, tg_id: int, nick: Optional[str]=None) -> User:
+    u = db.query(User).filter(User.tg_id==tg_id).one_or_none()
+    if u:
+        if nick and not u.nick: u.nick = nick
+        u.last_seen_at = int(time.time()); db.commit(); return u
+    u = User(tg_id=tg_id, seq=stable_seq(tg_id), nick=nick, currency=CURRENCY, balance=0.0, last_seen_at=int(time.time()))
+    db.add(u); db.commit(); db.refresh(u)
+    for sid in (2127, 2453, 2454): db.merge(Favorite(user_id=u.id, service_id=sid))
+    db.commit(); return u
+
+class UserOut(BaseModel):
+    seq: int; nick: Optional[str] = None; currency: str = CURRENCY; balance: float = 0.0
+    topup_delta: float = 0.0; topup_currency: str = "USD"
+class CreateOrderIn(BaseModel):
+    user_id: int; service: int; link: str; quantity: int; promo_code: Optional[str] = None
+
+async def vex_services_raw() -> List[Dict[str, Any]]:
+    if not VEX_KEY: raise HTTPException(500, "VEXBOOST_KEY not set")
+    url = f"{API_BASE}?action=services&key={VEX_KEY}"
+    r = await _client.get(url); r.raise_for_status()
+    data = r.json()
+    if not isinstance(data, list): raise HTTPException(502, "Unexpected services payload")
     return data
 
-def client_rate_usd_per_1k(rate_supplier_1000: float) -> float:
-    return round(float(rate_supplier_1000) * MARKUP_MULTIPLIER + 1e-9, 2)
-
-# --- cache ---
-_cache: Dict[str, Dict[str, Any]] = {}
-def _get_cache(key: str, ttl_sec: int):
-    rec = _cache.get(key)
-    if rec and (time.time() - rec["ts"] < ttl_sec): return rec["data"]
+def _detect_network(name: str, category: str) -> Optional[str]:
+    t = f"{name} {category}".lower()
+    if "telegram" in t or "tg " in t: return "telegram"
+    if "tiktok" in t or "tik tok" in t: return "tiktok"
+    if "instagram" in t or "insta" in t or "ig " in t: return "instagram"
+    if "youtube" in t or "you tube" in t or "yt " in t: return "youtube"
+    if "facebook" in t or "fb " in t or "meta" in t: return "facebook"
     return None
-def _set_cache(key: str, data: Any): _cache[key] = {"data": data, "ts": time.time()}
 
-# --- routes ---
+async def sync_services_into_db():
+    raw = await vex_services_raw()
+    fx = await fx_usd_rub()
+    with db() as s:
+        for it in raw:
+            sid = int(it.get("service")); name = it.get("name") or f"Service {sid}"
+            type_ = it.get("type"); cat = it.get("category") or ""
+            min_ = int(it.get("min") or 0); max_ = int(it.get("max") or 0)
+            base_rate_usd = float(it.get("rate") or 0.0)
+            rate_view = client_rate_view_per_1k(base_rate_usd, fx)
+            net = _detect_network(name, cat) or "telegram"
+            obj = s.query(Service).get(sid)
+            if not obj:
+                obj = Service(id=sid, network=net, name=name, type=type_, min=min_, max=max_, rate_client_1000=rate_view,
+                              currency=CURRENCY, description=cat, active=True); s.add(obj)
+            else:
+                obj.network = net; obj.name = name; obj.type = type_; obj.min = min_; obj.max = max_
+                obj.rate_client_1000 = rate_view; obj.currency = CURRENCY; obj.description = cat; obj.active = True
+        s.commit()
+
+@app.on_event("startup")
+async def _startup():
+    try:
+        Base.metadata.create_all(bind=engine)
+        await sync_services_into_db()
+    except Exception as e:
+        logging.exception("Startup sync failed: %s", e)
+
 @app.get("/api/v1/ping")
 async def ping(): return {"ok": True}
 
-@app.get("/api/v1/user")
-async def api_user(
-    user_id: int,
-    nick: Optional[str] = None,
-    consume_topup: int = Query(1, description="1=сразу гасим непрочитанное пополнение"),
-):
-    p = get_or_create_profile(user_id, nick=nick)
-    _ensure_topup_obj(p)
-    resp = {
-        "user_id": p["user_id"],
-        "nick": p.get("nick"),
-        "balance": p.get("balance", 0.0),
-        "currency": p.get("currency", CURRENCY),
-        "seq": p.get("seq", 0),
-    }
-    if p["topup"].get("unseen") and float(p["topup"].get("delta", 0)) > 0:
-        resp["topup_delta"] = float(p["topup"]["delta"])
-        resp["topup_currency"] = p["topup"].get("currency", CURRENCY)
+@app.get("/api/v1/user", response_model=UserOut)
+async def api_user(user_id: int = Query(...), consume_topup: int = 0, nick: Optional[str]=None):
+    with db() as s:
+        u = ensure_user(s, user_id, nick=nick)
+        delta = 0.0
         if consume_topup:
-            p["topup"]["delta"] = 0.0
-            p["topup"]["unseen"] = False
-            _save_users()
-    return resp
+            pays = s.query(Topup).filter(Topup.user_id==u.id, Topup.status=="paid", Topup.applied==False).all()
+            for t in pays: delta += float(t.amount_usd or 0.0); t.applied = True
+            if delta > 0:
+                add = delta if CURRENCY=="USD" else (delta * (await fx_usd_rub()))
+                u.balance = float(u.balance or 0.0) + round(add, 2)
+            s.commit()
+        return UserOut(seq=u.seq, nick=u.nick, currency=u.currency, balance=float(u.balance or 0.0),
+                       topup_delta=round(delta, 6), topup_currency="USD")
 
 @app.get("/api/v1/services")
 async def api_services():
-    cached = _get_cache("services_grouped", ttl_sec=600)
-    if cached: return cached
-    raw = await vex_services()
-    groups: Dict[str, Dict[str, Any]] = {k: {**DISPLAY[k], "count": 0} for k in DISPLAY}
-    for s in raw:
-        net = detect_network(str(s.get("name","")), str(s.get("category","")))
-        if net in groups: groups[net]["count"] += 1
-    result = [groups[k] for k in ["telegram","tiktok","instagram","youtube","facebook"]]
-    _set_cache("services_grouped", result)
-    return result
+    with db() as s:
+        groups = {k: {**DISPLAY[k], "count": 0} for k in DISPLAY}
+        for it in s.query(Service).filter(Service.active==True).all():
+            if it.network in groups: groups[it.network]["count"] += 1
+        return [groups[k] for k in ["telegram","tiktok","instagram","youtube","facebook"]]
 
 @app.get("/api/v1/services/{network}")
 async def api_services_by_network(network: str):
     if network not in NETWORKS: raise HTTPException(404, "Unknown network")
-    cache_key = f"services_{network}_{CURRENCY}"
-    cached = _get_cache(cache_key, ttl_sec=300)
-    if cached: return cached
+    with db() as s:
+        items = s.query(Service).filter(Service.network==network, Service.active==True).order_by(Service.id.asc()).all()
+        return [{
+            "service": it.id, "network": it.network, "name": it.name, "type": it.type,
+            "min": it.min, "max": it.max, "rate_client_1000": float(it.rate_client_1000 or 0.0),
+            "currency": it.currency or CURRENCY, "description": it.description or ""
+        } for it in items]
 
-    raw = await vex_services()
-    fx = await fx_usd_rub()
-    items = []
-    for s in raw:
-        net = detect_network(str(s.get("name","")), str(s.get("category","")))
-        if net != network: continue
-        try: rate_sup = float(s.get("rate", 0.0))
-        except Exception: rate_sup = 0.0
-        rate_client_usd = client_rate_usd_per_1k(rate_sup)
-        rate_view = rate_client_usd * (fx if CURRENCY == "RUB" else 1.0)
-        items.append({
-            "service": int(s.get("service")),
-            "name": str(s.get("name","")),
-            "type": str(s.get("type","")),
-            "min": int(s.get("min", 0)),
-            "max": int(s.get("max", 0)),
-            "refill": bool(s.get("refill", False)),
-            "cancel": bool(s.get("cancel", False)),
-            "rate_client_1000": round(rate_view, 2),
-            "currency": CURRENCY,
-        })
-    items.sort(key=lambda x: (x["rate_client_1000"], x["min"]))
-    _set_cache(cache_key, items)
-    return items
+# ---- Favorites
+@app.get("/api/v1/favorites")
+async def fav_list(user_id: int = Query(...)):
+    with db() as s:
+        u = ensure_user(s, user_id)
+        rows = s.query(Service).join(Favorite, Favorite.service_id==Service.id)\
+                               .filter(Favorite.user_id==u.id).all()
+        return [{
+            "service": it.id, "network": it.network, "name": it.name, "type": it.type,
+            "min": it.min, "max": it.max, "rate_client_1000": float(it.rate_client_1000 or 0.0),
+            "currency": it.currency or CURRENCY, "description": it.description or ""
+        } for it in rows]
 
+class FavIn(BaseModel):
+    user_id: int; service_id: int
+
+@app.post("/api/v1/favorites", status_code=204)
+async def fav_add(body: FavIn):
+    with db() as s:
+        u = ensure_user(s, body.user_id)
+        s.merge(Favorite(user_id=u.id, service_id=int(body.service_id))); s.commit()
+
+@app.delete("/api/v1/favorites/{service_id}", status_code=204)
+async def fav_del(service_id: int, user_id: int = Query(...)):
+    with db() as s:
+        u = ensure_user(s, user_id)
+        s.query(Favorite).filter(Favorite.user_id==u.id, Favorite.service_id==service_id).delete(); s.commit()
+
+# ---- Order create
 @app.post("/api/v1/order/create")
-async def create_order(payload: Dict[str, Any] = Body(...)):
-    user_id = int(payload.get("user_id") or 0)
-    service_id = int(payload.get("service") or 0)
-    link = (payload.get("link") or "").strip()
-    quantity = int(payload.get("quantity") or 0)
-    if user_id <= 0 or service_id <= 0 or not link or quantity <= 0:
-        raise HTTPException(400, "Bad payload")
+async def api_order_create(body: CreateOrderIn):
+    with db() as s:
+        u = ensure_user(s, body.user_id)
+        svc = s.query(Service).get(int(body.service))
+        if not svc: raise HTTPException(404, "service not found")
+        if body.quantity < (svc.min or 0) or body.quantity > (svc.max or 0):
+            raise HTTPException(400, f"Количество должно быть от {svc.min} до {svc.max}")
+        cost = round(float(svc.rate_client_1000 or 0.0) * body.quantity / 1000.0, 2)
+        if float(u.balance or 0.0) < cost: raise HTTPException(402, "Недостаточно средств")
 
-    services_all = await vex_services()
-    service_obj = next((s for s in services_all if int(s.get("service")) == service_id), None)
-    if not service_obj: raise HTTPException(404, "Service not found")
+        url = f"{API_BASE}?action=add&service={svc.id}&link={httpx.QueryParams({'u': body.link})['u']}&quantity={int(body.quantity)}&key={VEX_KEY}"
+        try:
+            r = await _client.get(url); supplier_order = int(r.json().get("order"))
+        except Exception as e:
+            raise HTTPException(502, f"Supplier error: {e}")
 
-    min_q = int(service_obj.get("min", 0))
-    max_q = int(service_obj.get("max", 0))
-    if quantity < min_q or quantity > max_q:
-        raise HTTPException(400, f"Количество должно быть от {min_q} до {max_q}")
+        u.balance = float(u.balance or 0.0) - cost
+        o = Order(user_id=u.id, service_id=svc.id, quantity=int(body.quantity), link=body.link,
+                  cost=cost, currency=svc.currency or CURRENCY, status="Awaiting", provider_id=str(supplier_order))
+        s.add(o); s.commit(); s.refresh(o)
+        return {"order_id": o.id, "cost": cost, "currency": o.currency, "status": o.status}
 
-    try: base_usd = float(service_obj.get("rate") or 0.0)
-    except Exception: base_usd = 0.0
-    fx = await fx_usd_rub()
-    rate_client_usd = client_rate_usd_per_1k(base_usd)
-    rate_view = rate_client_usd * (fx if CURRENCY == "RUB" else 1.0)
-    cost = round(rate_view * quantity / 1000.0 + 1e-9, 2)
-    if cost <= 0: raise HTTPException(400, "Неверная цена для услуги")
-
-    debit_user(user_id, cost)
-
-    try:
-        url = f"{API_BASE}?action=add&service={service_id}&link={httpx.QueryParams({'u':link})['u']}&quantity={quantity}&key={VEX_KEY}"
-        r = await _client.get(url)
-        supplier_order = int(r.json().get("order"))
-    except Exception as e:
-        credit_user(user_id, cost)  # откат
-        raise HTTPException(502, f"Supplier error: {e}")
-
-    oid = _next_order_id()
-    _orders["items"].append({
-        "id": oid, "user_id": user_id, "service": service_id,
-        "link": link, "quantity": quantity,
-        "cost": cost, "currency": CURRENCY,
-        "supplier_order": supplier_order, "status": "Awaiting",
-        "ts": int(time.time()),
-    })
-    _save_orders()
-    return {"order_id": oid, "supplier_order": supplier_order, "cost": cost, "currency": CURRENCY, "status": "Awaiting"}
-
-# --- payments ---
+# ---- Invoice create
 @app.post("/api/v1/pay/invoice")
-async def create_invoice(payload: Dict[str, Any] = Body(...)):
+async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
+    if not CRYPTOBOT_API_KEY:
+        return {"error": "CryptoBot not configured"}, 501
+    amount = float(payload.get("amount_usd") or 0.0)
+    if amount < CRYPTOBOT_MIN_TOPUP_USD:
+        raise HTTPException(400, f"Минимальная сумма — {CRYPTOBOT_MIN_TOPUP_USD} USDT")
     user_id = int(payload.get("user_id") or 0)
-    amount_usd = float(payload.get("amount_usd") or 0)
-    if user_id <= 0: raise HTTPException(400, "user_id is required")
-    if amount_usd < MIN_TOPUP_USD: raise HTTPException(400, f"Minimum top-up is {MIN_TOPUP_USD:.2f} USD")
-    if not CRYPTOBOT_API_KEY: raise HTTPException(501, "CryptoBot integration is not configured")
+    if user_id <= 0: raise HTTPException(400, "user_id required")
 
-    url = f"{CRYPTOBOT_BASE}/createInvoice"
-    headers = {"Crypto-Pay-API-Token": CRYPTOBOT_API_KEY}
-    data = {
-        "asset": "USDT",
-        "amount": round(amount_usd, 2),
-        "description": "Пополнение баланса в магазине SlovekinzShop",
-        "payload": json.dumps({"user_id": user_id, "type": "topup"}),
-        "allow_comments": False,
-        "allow_anonymous": True,
-    }
-    r = await _client.post(url, headers=headers, data=data)
-    j = r.json()
-    pay_url = (j.get("result") or {}).get("pay_url")
-    if not pay_url: raise HTTPException(502, f"Unexpected CryptoBot response: {j}")
+    link = f"{CRYPTOBOT_BASE}/createInvoice"
+    headers = {"Content-Type": "application/json", "Crypto-Pay-API-Token": CRYPTOBOT_API_KEY}
+    body = {"asset": "USDT", "amount": round(amount, 2), "payload": str(user_id), "description": "SMMShop topup"}
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        r = await c.post(link, headers=headers, json=body)
+        js = r.json()
+    if isinstance(js.get("result"), dict) and js["result"].get("pay_url"):
+        pay_url = js["result"]["pay_url"]
+    elif isinstance(js.get("invoice"), dict) and js["invoice"].get("pay_url"):
+        pay_url = js["invoice"]["pay_url"]
+    else:
+        raise HTTPException(502, f"CryptoBot error: {js}")
+
+    with db() as s:
+        u = ensure_user(s, user_id)
+        t = Topup(user_id=u.id, provider="cryptobot", invoice_id=str(js.get("result",{}).get("invoice_id","")),
+                  amount_usd=amount, currency="USD", status="created", applied=False, pay_url=pay_url)
+        s.add(t); s.commit()
     return {"pay_url": pay_url}
 
-def _hmac_ok(raw_body: bytes, token: str, signature: str) -> bool:
-    try:
-        mac = hmac.new(token.encode(), raw_body, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(mac, (signature or "").lower())
-    except Exception:
-        return False
-
-def _log_pay(payload: Dict[str, Any]):
-    try:
-        log = []
-        if PAYLOG_JSON.exists():
-            log = json.loads(PAYLOG_JSON.read_text("utf-8")) or []
-        log.append(payload)
-        PAYLOG_JSON.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
+# ---- Webhook
 def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
-    if isinstance(data.get("invoice"), dict):
-        inv = data["invoice"]
-    elif isinstance(data.get("result"), dict) and isinstance(data["result"].get("invoice"), dict):
-        inv = data["result"]["invoice"]
-    elif isinstance(data.get("result"), dict):
-        inv = data["result"]
-    elif isinstance(data.get("payload"), dict) and ("status" in data["payload"]):
-        inv = data["payload"]
-    else:
-        inv = {}
-    out = {
+    if isinstance(data.get("invoice"), dict): inv = data["invoice"]
+    elif isinstance(data.get("result"), dict) and isinstance(data["result"].get("invoice"), dict): inv = data["result"]["invoice"]
+    elif isinstance(data.get("result"), dict): inv = data["result"]
+    elif isinstance(data.get("payload"), dict) and ("status" in data["payload"]): inv = data["payload"]
+    else: inv = {}
+    return {
         "invoice_id": inv.get("invoice_id") or inv.get("id") or "",
         "status": str(inv.get("status") or "").lower(),
         "amount": inv.get("amount") or inv.get("paid_amount") or 0,
         "asset": (inv.get("asset") or "USDT").upper(),
         "payload": inv.get("payload") or data.get("payload") or "",
     }
-    try: out["amount"] = float(out["amount"])
-    except Exception: out["amount"] = 0.0
-    return out
 
 @app.post("/api/v1/cryptobot/webhook")
 async def cryptobot_webhook(request: Request):
     raw = await request.body()
-    sig = request.headers.get("X-Crypto-Pay-Signature") or ""
     try: data = json.loads(raw.decode("utf-8"))
     except Exception: data = {}
-
-    _log_pay({"ts": int(time.time()), "headers": {"sig": bool(sig)}, "data": data})
-
-    if sig and CRYPTOBOT_API_KEY and not _hmac_ok(raw, CRYPTOBOT_API_KEY, sig):
-        raise HTTPException(400, "bad signature")
-
-    update_type = str(data.get("update_type") or "").lower()
-    if update_type and update_type != "invoice_paid":
-        return {"ok": True, "skip": f"update_type={update_type}"}
-
     inv = _extract_invoice(data)
-    status = inv["status"]
-    amount = float(inv["amount"] or 0)
-    invoice_id = str(inv["invoice_id"] or "")
-    asset = inv["asset"]
-
-    if status and status not in ("paid", "finished", "completed"):
-        return {"ok": True, "skip": f"status={status}"}
-    if amount <= 0:
-        return {"ok": True, "skip": "zero amount"}
-
-    payload_raw = inv["payload"]
-    if isinstance(payload_raw, str):
-        try: payload = json.loads(payload_raw)
-        except Exception: payload = {}
-    elif isinstance(payload_raw, dict):
-        payload = payload_raw
-    else:
-        payload = {}
-
-    user_id = int(payload.get("user_id") or 0)
-    if not user_id:
-        return {"ok": True, "skip": "no user_id in payload"}
-
-    if invoice_id and invoice_id in _credited:
-        return {"ok": True, "already": True, "invoice_id": invoice_id}
-
-    if CURRENCY == "RUB":
-        fx = await fx_usd_rub()
-        credited = round(amount * fx, 2)
-    else:
-        credited = round(amount, 2)
-
-    credit_user(user_id, credited)
-    if invoice_id:
-        _credited[invoice_id] = credited
-        _save_credited()
-
-    logging.info(f"Credited {credited} {CURRENCY} to user {user_id} (invoice {invoice_id})")
-    return {"ok": True, "credited": credited, "currency": CURRENCY, "user_id": user_id, "invoice_id": invoice_id}
+    if inv["status"] not in ("paid", "finished", "success"):
+        return {"ok": True}
+    try: user_id = int(inv.get("payload") or 0)
+    except Exception: return {"ok": True}
+    amount = float(inv.get("amount") or 0.0)
+    with db() as s:
+        u = ensure_user(s, user_id)
+        t = Topup(user_id=u.id, provider="cryptobot", invoice_id=str(inv.get("invoice_id","")),
+                  amount_usd=amount, currency="USD", status="paid", applied=False, pay_url=None)
+        s.add(t); s.commit()
+    return {"ok": True}
