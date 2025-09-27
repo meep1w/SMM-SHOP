@@ -54,16 +54,16 @@ body{
 }
 .hdr-left,.hdr-right{display:flex; align-items:center; gap:10px}
 .hdr-left{min-width:0; cursor:pointer}
-.avatar{ width:30px; height:30px; border-radius:50%; object-fit:cover; background:linear-gradient(135deg,#23262d,#1b1e24); border:1px solid var(--stroke); }
+.avatar{ width:32px; height:32px; border-radius:50%; object-fit:cover; background:linear-gradient(135deg,#23262d,#1b1e24); border:1px solid var(--stroke); }
 .nick-wrap{min-width:0}
 .nick{font-weight:600; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px}
 .nick-sub{font-size:10px; color:var(--muted)}
 
 /* правая часть — баланс + акцентный плюс */
 .hdr-right{ gap:10px }
-.balance{ display:flex; flex-direction:column; align-items:flex-end; line-height:1.05 }
+.balance{ display:flex; flex-direction:column; align-items:flex-start; line-height:1.05 }
 .balance-label{ font-size:10px; letter-spacing:.2px; color:var(--muted) }
-.balance-value{ font-size:18px; font-weight:800; color:#fff }
+.balance-value{ font-size:12px; font-weight:500; color:#fff }
 .btn-plus{
   width:32px; height:32px; border-radius:10px; border:0; cursor:pointer;
   display:inline-grid; place-items:center;
