@@ -116,7 +116,7 @@ body{
 /* ===== Сервисы ===== */
 .subheader{display:flex; align-items:center; gap:10px; margin:6px 0 10px}
 .subheader .back{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
-.subheader-title{margin:0; font-size:16px; font-weight:800}
+.subheader-title{margin:0; font-size:16px; font-weight:600}
 
 /* Поиск в шапке услуг */
 .subheader .search{
@@ -171,13 +171,13 @@ body{
 .svc .qty{display:flex; flex-direction:column; gap:6px; align-items:flex-start;
   border:1px solid var(--stroke); border-radius:12px; padding:12px;
   background:linear-gradient(180deg,#14181e,#10141a); cursor:pointer}
-.svc .qty .num{font-weight:800}
+.svc .qty .num{font-weight:600; color: #ffffff}
 .svc .qty .price{font-size:12px; color:var(--muted)}
 .svc .qty.active{outline:2px solid rgba(255,255,255,.14); background:linear-gradient(180deg,#17202a,#12171d)}
 
 /* Поле ручного ввода количества + чипы */
 .svc .qty-input{display:flex; flex-direction:column; gap:8px}
-.svc .qty-input input{background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:12px; padding:12px}
+.svc .qty-input input{background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:12px; padding:12px; margin-top: 10px}
 .svc .chips{display:flex; gap:8px}
 .svc .chip{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text);
   border-radius:10px; padding:8px 10px; cursor:pointer; font-size:12px}
@@ -215,7 +215,7 @@ body{
 /* Итого + кнопка */
 .svc .summary{display:flex; flex-direction:column; gap:10px}
 .svc .sum-row{display:flex; align-items:center; justify-content:space-between; font-size:14px}
-.svc .sum-row b{font-weight:800}
+.svc .sum-row b{font-weight:600}
 .svc .btn-primary{width:100%; padding:12px 16px; border-radius:14px; border:0; cursor:pointer;
   background:linear-gradient(180deg,#ff6b6b 0%, #ff3e3e 100%); color:#fff; font:700 14px/1 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
 
