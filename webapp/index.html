@@ -4,38 +4,32 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Slovekiza — Магазин SMM</title>
-  <link rel="stylesheet" href="static/css/styles.css?v=9">
+  <link rel="stylesheet" href="static/css/styles.css?v=11">
   <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script defer src="static/js/app.js?v=9"></script>
-
+  <script defer src="static/js/app.js?v=11"></script>
 </head>
 <body>
 
 <!-- ===== Header ===== -->
 <header class="app-header" id="appHeader">
-  <div class="hdr-left">
+  <!-- Кликабельная зона профиля -->
+  <div class="hdr-left" id="profileBtn" role="button" tabindex="0" aria-label="Профиль">
     <img id="avatar" class="avatar" src="" alt="">
     <div class="nick-wrap">
       <div class="nick" id="nickname">Гость</div>
-      <div class="nick-sub">#<span id="userSeq">—</span></div>
+      <div class="nick-sub"><span id="userSeq">#—</span></div>
     </div>
   </div>
 
-  <div class="hdr-center">
-    <div class="logo">
-      <img src="static/img/logo.svg" alt="Slovekiza" class="logo-img">
-    </div>
-  </div>
-
+  <!-- Справа — баланс и плюс -->
   <div class="hdr-right">
     <div class="balance">
       <span class="balance-label">Баланс</span>
-      <span class="balance-value" id="balanceValue">0.00</span>
+      <span class="balance-value" id="balanceValue">0.00 ₽</span>
     </div>
-    <!-- Плюс как SVG-иконка -->
     <button class="btn-plus" id="btnTopup" aria-label="Пополнить" title="Пополнить">
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-        <path fill="#ffffff" fill-rule="evenodd" d="M10 5a1 1 0 0 1 1 1v3h3a1 1 0 1 1 0 2h-3v3a1 1 0 1 1-2 0v-3H6a1 1 0 1 1 0-2h3V6a1 1 0 0 1 1-1" clip-rule="evenodd"/>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" aria-hidden="true">
+        <path fill="currentColor" fill-rule="evenodd" d="M10 5a1 1 0 0 1 1 1v3h3a1 1 0 1 1 0 2h-3v3a1 1 0 1 1-2 0v-3H6a1 1 0 1 1 0-2h3V6a1 1 0 0 1 1-1" clip-rule="evenodd"/>
       </svg>
     </button>
   </div>

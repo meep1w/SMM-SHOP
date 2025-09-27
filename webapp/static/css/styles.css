@@ -5,19 +5,17 @@
 
   --text:#e9edf3; --muted:#9aa3af;
 
-  /* Акцент */
-  --brand:#ff6b6b;               /* основной */
-  --brand-d:#e25a5a;             /* pressed */
+  --brand:#ff6b6b;           /* акцент */
+  --brand-d:#e25a5a;
 
   --stroke:#222833; --stroke-2:#2b3240;
 
   --radius:16px; --shadow:0 8px 24px rgba(0,0,0,.25);
 
-  /* геометрия */
-  --headerH:84px;                /* хедер выше */
-  --headerPadTop:6px;            /* опускание контента */
+  --headerH:84px;
+  --headerPadTop:6px;
   --headerPadBottom:18px;
-  --tabbarH:74px;                /* таббар */
+  --tabbarH:74px;
 }
 
 *{box-sizing:border-box}
@@ -30,67 +28,57 @@ body{
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
 
-/* ===== HEADER (во всю ширину, прижат к верху, скругление только снизу) ===== */
+/* ===== Header (во всю ширину, прижат к верху, без логотипа) ===== */
 .app-header{
   position:fixed; top:0; left:0; right:0; z-index:10;
   height:var(--headerH);
-  display:grid; grid-template-columns:1fr auto; /* логотип убрали */
-  align-items:end; gap:12px;
+
+  display:grid;
+  grid-template-columns:1fr auto;         /* центр убрали */
+  align-items:end;
+  gap:12px;
+
   padding:var(--headerPadTop) 16px var(--headerPadBottom);
   background:rgba(16,18,22,.88);
   backdrop-filter:saturate(140%) blur(8px);
+
   border:1px solid var(--stroke);
   border-radius:0 0 var(--radius) var(--radius);
   overflow:hidden;
 }
-/* тонкая линия снизу */
 .app-header::after{
-  content:"";
-  position:absolute; left:10px; right:10px; bottom:0; height:1px;
+  content:""; position:absolute; left:10px; right:10px; bottom:0; height:1px;
   border-radius:999px;
   background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
   pointer-events:none;
 }
 
-/* левая кликабельная зона профиля */
-.hdr-left{
-  min-width:0;
-  display:flex; align-items:center; gap:10px;
-  cursor:pointer;
-}
-.hdr-left:active{ transform:translateY(1px) }
-.avatar{
-  width:30px; height:30px; border-radius:50%; object-fit:cover;
-  background:linear-gradient(135deg,#23262d,#1b1e24);
-  border:1px solid var(--stroke);
-}
+.hdr-left,.hdr-right{display:flex; align-items:center; gap:10px}
+.hdr-left{min-width:0; cursor:pointer}
+.avatar{ width:30px; height:30px; border-radius:50%; object-fit:cover; background:linear-gradient(135deg,#23262d,#1b1e24); border:1px solid var(--stroke); }
 .nick-wrap{min-width:0}
 .nick{font-weight:600; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px}
 .nick-sub{font-size:10px; color:var(--muted)}
 
-/* правая часть — баланс + плюс (без «капсулы») */
-.hdr-right{
-  display:flex; align-items:flex-end; gap:10px;
-}
-.balance{
-  display:flex; flex-direction:column; align-items:flex-end; line-height:1.05;
-}
+/* правая часть — просто текст + акцентный плюс */
+.hdr-right{ gap:10px }
+.balance{ display:flex; flex-direction:column; align-items:flex-end; line-height:1.05 }
 .balance-label{ font-size:10px; letter-spacing:.2px; color:var(--muted) }
 .balance-value{ font-size:18px; font-weight:800; color:#fff }
 
-/* Кнопка + в акцентном стиле */
+/* плюс — отдельно, не в капсуле */
 .btn-plus{
-  width:32px; height:32px; border-radius:10px;
-  border:0; cursor:pointer;
+  width:32px; height:32px; border-radius:10px; border:0; cursor:pointer;
   display:inline-grid; place-items:center;
+  color:#fff;
   background:linear-gradient(180deg,var(--brand) 0%, var(--brand-d) 100%);
   box-shadow:0 8px 18px rgba(255,107,107,.35);
   transition:transform .06s ease, filter .2s ease;
 }
 .btn-plus:active{ transform:translateY(1px) }
-.btn-plus svg{ width:18px; height:18px; color:#fff; display:block }
+.btn-plus svg{ width:18px; height:18px; display:block }
 
-/* ===== CONTENT (отступы с учётом фикс. шапки и таббара) ===== */
+/* ===== Контент ===== */
 .app-main{
   padding: calc(var(--headerH) + 12px) 16px
            calc(var(--tabbarH) + env(safe-area-inset-bottom) + 16px);
@@ -99,7 +87,7 @@ body{
 .page{display:none}
 .page.active{display:block}
 
-/* ===== КАТЕГОРИИ ===== */
+/* ===== Категории ===== */
 .cats-list{display:flex; flex-direction:column; gap:12px;}
 .cat{
   display:flex; align-items:center; gap:14px;
@@ -107,7 +95,7 @@ body{
   background:linear-gradient(180deg,#15181d,#111419);
   border:1px solid var(--stroke);
   box-shadow:0 6px 18px rgba(0,0,0,.18);
-  color:var(--text); text-decoration:none;
+  text-decoration:none; color:var(--text);
   transition:transform .08s ease, border-color .2s ease, background .2s ease;
 }
 .cat:hover{transform:translateY(-1.5px); border-color:var(--stroke-2)}
@@ -129,7 +117,7 @@ body{
   opacity:.95; padding:18px 8px 12px;
 }
 
-/* ===== СЕРВИСЫ (когда откроем категорию) ===== */
+/* ===== Сервисы ===== */
 .subheader{display:flex; align-items:center; gap:10px; margin:6px 0 10px}
 .subheader .back{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
 .subheader-title{margin:0; font-size:16px; font-weight:800}
@@ -143,17 +131,25 @@ body{
 .service .left{display:flex; flex-direction:column; gap:4px}
 .service .name{font-weight:700}
 .service .meta{font-size:12px; color:var(--muted)}
-.service .price{font-weight:800; color:var(--brand)}
+.service .price{font-weight:800; color:#ff6b6b}
 .service .btn{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
 
-/* ===== TABBAR (во всю ширину, прижат к низу, скругление только сверху) ===== */
+/* ===== Skeleton ===== */
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+.skeleton{position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--stroke); background:linear-gradient(180deg,#15181d,#111419); height:64px;}
+.skeleton::after{content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent); background-size:200% 100%; animation:shimmer 1.4s infinite linear;}
+.skel-row{display:flex; align-items:center; gap:12px; padding:14px}
+.skel-avatar{width:42px;height:42px;border-radius:12px;background:#1b2028}
+.skel-lines{flex:1}
+.skel-line{height:10px;border-radius:8px;background:#1b2028;margin:6px 0; width:70%}
+.skel-line.short{width:35%}
+
+/* ===== Tabbar (во всю ширину, прижат к низу) ===== */
 .tabbar{
   position:fixed; left:0; right:0; bottom:env(safe-area-inset-bottom); z-index:20;
   height:var(--tabbarH);
-  display:grid; grid-template-columns:repeat(3,1fr);
-  gap:8px; padding:10px 12px;
-  background:rgba(14,16,20,.92);
-  backdrop-filter:blur(8px);
+  display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:10px 12px;
+  background:rgba(14,16,20,.92); backdrop-filter:blur(8px);
   border:1px solid var(--stroke);
   border-radius:var(--radius) var(--radius) 0 0;
   overflow:hidden;
@@ -163,48 +159,27 @@ body{
   border-radius:999px; background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
   pointer-events:none;
 }
-.tab{
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:6px; padding:8px 6px; border-radius:12px;
-  background:#14181d; color:#cbd5e1; border:1px solid #202531;
-  font-size:12px; font-weight:600; cursor:pointer;
-  transition:background .2s ease, color .2s ease, border-color .2s ease, transform .08s;
-}
-.tab:active{transform:scale(.98)}
-.tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
-.tab .tab-icon{width:20px; height:20px; display:block; opacity:.9}
-.tab.active .tab-icon{opacity:1}
+.tab{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:8px 6px; border-radius:12px; background:#14181d; color:#cbd5e1; border:1px solid #202531; font-size:12px; font-weight:600; cursor:pointer; transition:background .2s ease, color .2s ease, border-color .2s ease, transform .08s;}
+.tab:active{transform:scale(.98)} .tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
+.tab .tab-icon{width:20px; height:20px; display:block; opacity:.9} .tab.active .tab-icon{opacity:1}
 
-/* ===== SUCCESS OVERLAY ===== */
-#topupOverlay{position:fixed; inset:0; z-index:9999; background:rgba(10,12,16,.92); display:none; align-items:center; justify-content:center; padding:24px; backdrop-filter:blur(4px);}
-#topupOverlay[aria-hidden="false"]{display:flex;}
-#topupOverlay .topup-card{width:100%; max-width:440px; background:#14171f; border-radius:20px; box-shadow:0 10px 30px rgba(0,0,0,.5); padding:28px; text-align:center; color:#e6e8ee; border:1px solid rgba(255,255,255,.06);}
-#topupOverlay .topup-icon{width:88px;height:88px;margin:0 auto 16px;border-radius:50%;background:radial-gradient(110px 110px at 30% 30%,#2ed47a 0%,#1a9f55 60%,#117a3f 100%);display:grid;place-items:center;box-shadow:0 10px 30px rgba(46,212,122,.35), inset 0 0 18px rgba(255,255,255,.15);}
-#topupOverlay .topup-icon svg{width:44px;height:44px;color:#fff;}
-#topupOverlay .topup-title{font:600 20px/1.3 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:6px 0 8px;}
-#topupOverlay .topup-sub{font:400 14px/1.5 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#a8afbd;margin-bottom:18px;}
-#topupOverlay .topup-amount{font:600 16px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#e6e8ee;margin-bottom:16px;}
-#topupOverlay .topup-ok{width:100%;padding:12px 16px;border-radius:14px;border:0;cursor:pointer;background:linear-gradient(180deg,#2b81f7 0%,#1f6cdc 100%);color:#fff;font:600 15px/1 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;box-shadow:0 8px 20px rgba(43,129,247,.35);}
-#topupOverlay .topup-ok:active{transform:translateY(1px)}
-
-/* ===== МОДАЛКА ПОПОЛНЕНИЯ ===== */
-#payModal{position:fixed; inset:0; z-index:9998; display:none; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.55); backdrop-filter:blur(2px);}
-#payModal[aria-hidden="false"]{display:flex;}
-.pay-card{width:min(420px,92vw); background:linear-gradient(180deg,#16191e,#12151a); border:1px solid var(--stroke); border-radius:16px; box-shadow:var(--shadow); padding:16px;}
-.pay-card h3{margin:0 0 8px}
-.pay-row{display:flex; flex-direction:column; gap:6px; margin:8px 0 14px}
-.pay-row input{background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:12px}
-.pay-actions{display:flex; gap:10px; justify-content:flex-end}
+/* ===== Modal ===== */
+.modal{position:fixed; inset:0; display:none}
+.modal[aria-hidden="false"]{display:block}
+.modal-backdrop{position:absolute; inset:0; background:rgba(0,0,0,.5)}
+.modal-card{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(520px,92vw); background:linear-gradient(180deg,#16191e,#12151a); border:1px solid var(--stroke); border-radius:16px; box-shadow:var(--shadow); padding:16px;}
+.modal-card h3{margin:0 0 12px}
+.modal-row{display:flex; flex-direction:column; gap:6px; margin-bottom:10px}
+.modal-row input{background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:10px}
+.modal-info{color:var(--muted); margin:6px 0 12px}
+.modal-actions{display:flex; gap:10px; justify-content:flex-end}
 .btn{cursor:pointer}
 .btn.primary{background:var(--brand); border:none; color:#fff; border-radius:10px; padding:10px 14px; font-weight:700}
 .btn.secondary{background:var(--surface-2); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:10px 14px}
 
-/* ===== Скрываем скроллбары ===== */
-body, .page, .app-main, .cats-list, .services-list{
-  -ms-overflow-style:none; scrollbar-width:none;
-}
-body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar,
-.cats-list::-webkit-scrollbar, .services-list::-webkit-scrollbar{ width:0; height:0 }
+/* ===== Скрыть все скроллбары ===== */
+body, .page, .app-main, .cats-list, .services-list{ -ms-overflow-style:none; scrollbar-width:none; }
+body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar, .cats-list::-webkit-scrollbar, .services-list::-webkit-scrollbar{ width:0; height:0 }
 
-/* responsive */
+/* Responsive */
 @media (min-width:520px){ .nick{max-width:220px} }
