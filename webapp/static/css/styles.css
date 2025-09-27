@@ -34,7 +34,7 @@ body{
   height:var(--headerH);
 
   display:grid;
-  grid-template-columns:1fr auto;         /* без центральной колонки */
+  grid-template-columns:1fr auto;
   align-items:end;
   gap:12px;
 
@@ -77,7 +77,7 @@ body{
 /* ===== Контент ===== */
 .app-main{
   padding: calc(var(--headerH) + 12px) 16px
-  calc(var(--tabbarH) + env(safe-area-inset-bottom) + 16px);
+           calc(var(--tabbarH) + env(safe-area-inset-bottom) + 24px);  /* +24, чтобы низ не прятался */
   min-height:100dvh;
 }
 .page{display:none}
@@ -118,7 +118,7 @@ body{
 .subheader .back{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
 .subheader-title{margin:0; font-size:16px; font-weight:800}
 
-/* ---- Новый: поиск в шапке услуг ---- */
+/* Поиск в шапке услуг */
 .subheader .search{
   margin-left:auto;
   display:flex; align-items:center; gap:8px;
@@ -134,14 +134,14 @@ body{
 .subheader .search input::placeholder{color:var(--muted)}
 .subheader .search input:focus{outline:none}
 
-/* ---- Список услуг ---- */
+/* Список услуг */
 .services-list{display:flex; flex-direction:column; gap:10px;}
 .service{
   display:flex; justify-content:space-between; align-items:center; gap:10px;
   padding:14px; border-radius:14px;
   background:linear-gradient(180deg,#15181d,#111419);
   border:1px solid var(--stroke);
-  cursor:pointer;                                   /* вся карточка кликабельна */
+  cursor:pointer;
   transition:transform .08s ease, border-color .2s ease, background .2s ease;
 }
 .service:hover{ transform:translateY(-1px); border-color:var(--stroke-2) }
@@ -156,15 +156,69 @@ body{
   border-radius:10px; padding:8px 10px; cursor:pointer;
 }
 
-/* ===== Страница отдельной услуги (новая) ===== */
+/* ===== Страница отдельной услуги ===== */
 .service-details{display:flex; flex-direction:column; gap:12px}
-.service-details .card{
+.svc{display:flex; flex-direction:column; gap:14px}
+.svc .card{
   background:linear-gradient(180deg,#15181d,#111419);
   border:1px solid var(--stroke);
   border-radius:14px; padding:14px;
 }
-.service-details .title{font-weight:800; font-size:16px; margin:0 0 6px}
-.service-details .meta{font-size:12px; color:var(--muted)}
+.svc .label{font-size:12px; color:var(--muted); margin-bottom:8px}
+
+/* Пресеты количества */
+.svc .qty-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:10px}
+.svc .qty{display:flex; flex-direction:column; gap:6px; align-items:flex-start;
+  border:1px solid var(--stroke); border-radius:12px; padding:12px;
+  background:linear-gradient(180deg,#14181e,#10141a); cursor:pointer}
+.svc .qty .num{font-weight:800}
+.svc .qty .price{font-size:12px; color:var(--muted)}
+.svc .qty.active{outline:2px solid rgba(255,255,255,.14); background:linear-gradient(180deg,#17202a,#12171d)}
+
+/* Поле ручного ввода количества + чипы */
+.svc .qty-input{display:flex; flex-direction:column; gap:8px}
+.svc .qty-input input{background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:12px; padding:12px}
+.svc .chips{display:flex; gap:8px}
+.svc .chip{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text);
+  border-radius:10px; padding:8px 10px; cursor:pointer; font-size:12px}
+
+/* Ссылка и промокод */
+.svc .field{display:flex; flex-direction:column; gap:8px}
+.svc .field input[type="url"], .svc .field input[type="text"]{
+  background:var(--elev); border:1px solid var(--stroke); color:var(--text);
+  border-radius:12px; padding:12px
+}
+.svc .field .error{font-size:12px; color:#ff6b6b; display:none}
+.svc .field .error.show{display:block}
+
+.svc .promo-toggle{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text);
+  border-radius:10px; padding:8px 10px; cursor:pointer; width:max-content; margin-top:8px}
+.svc .promo-wrap{display:none; gap:8px; align-items:center; margin-top:10px}
+.svc .promo-wrap.show{display:flex}
+.svc .promo-wrap input{flex:1; min-width:0; background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:12px; padding:12px}
+.svc .promo-wrap .chip{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:#6ea8ff;
+  border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:600}
+
+/* Итого + кнопка */
+.svc .summary{display:flex; flex-direction:column; gap:10px}
+.svc .sum-row{display:flex; align-items:center; justify-content:space-between; font-size:14px}
+.svc .sum-row b{font-weight:800}
+.svc .btn-primary{width:100%; padding:12px 16px; border-radius:14px; border:0; cursor:pointer;
+  background:linear-gradient(180deg,#2b81f7 0%,#1f6cdc 100%); color:#fff; font:700 14px/1 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+
+/* Описание */
+.svc .desc{font-size:12px; color:var(--muted)}
+
+/* Избранное */
+.svc .fav-row{display:flex; align-items:center; justify-content:space-between}
+.svc .fav-left{display:flex; align-items:center; gap:8px}
+.svc .heart{width:16px; height:16px; display:inline-block; filter:grayscale(1) brightness(1.5)}
+.svc .switch{position:relative; width:46px; height:26px}
+.svc .switch input{opacity:0; width:0; height:0}
+.svc .slider{position:absolute; cursor:pointer; inset:0; background:#2a2f36; border-radius:50px; transition:.2s}
+.svc .slider:before{content:""; position:absolute; height:20px; width:20px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s}
+.svc .switch input:checked + .slider{background:#3b82f6}
+.svc .switch input:checked + .slider:before{transform:translateX(20px)}
 
 /* ===== Skeleton ===== */
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
@@ -176,13 +230,12 @@ body{
 .skel-line{height:10px;border-radius:8px;background:#1b2028;margin:6px 0; width:70%}
 .skel-line.short{width:35%}
 
-/* ===== Tabbar (4 вкладки, во всю ширину, прижат к низу) ===== */
-/* ===== Simple Tabbar (no per-button borders) ===== */
+/* ===== Tabbar ===== */
 .tabbar{
   position:fixed; left:0; right:0; bottom:env(safe-area-inset-bottom); z-index:20;
   height:var(--tabbarH);
   display:grid; grid-template-columns:repeat(4,1fr);
-  gap:0; padding:10px 12px 100px 12px;
+  gap:0; padding:10px 12px 12px 12px;  /* было 100px снизу — убрал */
   background:rgba(14,16,20,.92);
   backdrop-filter:blur(8px) saturate(140%);
   border:1px solid var(--stroke);
@@ -196,7 +249,7 @@ body{
   pointer-events:none;
 }
 
-/* Кнопки — без рамок и «карточек» */
+/* Кнопки */
 .tabbar .tab{
   position:relative;
   display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -204,26 +257,22 @@ body{
   padding:8px 6px;
   border:0 !important;
   background:transparent !important;
-  border-radius:12px;            /* только для ховера/актива */
+  border-radius:12px;
   color: var(--text);
   font-size:10px; font-weight:300;
   cursor:pointer;
   transition:background .2s ease,color .2s ease,transform .08s ease,opacity .2s ease;
 }
 .tabbar .tab:active{ transform:scale(.98) }
-.tabbar .tab:hover{ background:rgba(255,255,255,.035) }   /* мягкий hover */
-
+.tabbar .tab:hover{ background:rgba(255,255,255,.035) }
 .tabbar .tab .tab-icon{ width:20px; height:20px; display:block; opacity:.9 }
 .tabbar .tab span{ white-space:nowrap }
-
-/* Активная — без бордера, только мягкая подложка */
 .tabbar .tab.active{
   color:var(--text);
   background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.06), 0 6px 16px rgba(0,0,0,.18);
 }
 .tabbar .tab.active .tab-icon{ opacity:1 }
-
 
 /* ===== Modal ===== */
 .modal{position:fixed; inset:0; display:none}
@@ -239,7 +288,7 @@ body{
 .btn.primary{background:var(--brand); border:none; color:#fff; border-radius:10px; padding:10px 14px; font-weight:700}
 .btn.secondary{background:var(--surface-2); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:10px 14px}
 
-/* ===== Скрыть все скроллбары ===== */
+/* Скрыть скроллбары */
 body, .page, .app-main, .cats-list, .services-list{ -ms-overflow-style:none; scrollbar-width:none; }
 body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar, .cats-list::-webkit-scrollbar, .services-list::-webkit-scrollbar{ width:0; height:0 }
 
