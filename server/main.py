@@ -47,7 +47,7 @@ DISPLAY = {
 }
 
 # --- app ---
-app = FastAPI(title="SMMShop API", version="2.0")
+app = FastAPI(title="SMMShop API", version="2.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins or ["*"],
@@ -157,6 +157,11 @@ class CreateOrderIn(BaseModel):
     promo_code: Optional[str] = None
 
 
+class RegisterIn(BaseModel):
+    user_id: int
+    nick: str
+
+
 # --- VEXBOOST ----
 async def vex_services_raw() -> List[Dict[str, Any]]:
     if not VEX_KEY:
@@ -252,14 +257,33 @@ async def ping():
     return {"ok": True}
 
 
+# Проверка наличия пользователя (без автосоздания)
+@app.get("/api/v1/user/exists")
+async def api_user_exists(user_id: int = Query(...)):
+    with db() as s:
+        exists = s.query(User.id).filter(User.tg_id == user_id).first() is not None
+        return {"exists": exists}
+
+
+# Профиль: можно выключить автосоздание
 @app.get("/api/v1/user", response_model=UserOut)
 async def api_user(
     user_id: int = Query(...),
     consume_topup: int = 0,
     nick: Optional[str] = None,
+    autocreate: int = 1,  # 1 — как раньше; 0 — без создания (вернёт 404)
 ):
     with db() as s:
-        u = ensure_user(s, user_id, nick=nick)
+        u = s.query(User).filter(User.tg_id == user_id).one_or_none()
+        if not u:
+            if not autocreate:
+                raise HTTPException(404, "user_not_found")
+            u = ensure_user(s, user_id, nick=nick)
+        else:
+            if nick and not u.nick:
+                u.nick = nick
+                s.commit()
+
         delta = 0.0
         if consume_topup:
             pays = (
@@ -282,6 +306,26 @@ async def api_user(
             topup_delta=round(delta, 6),
             topup_currency="USD",
         )
+
+
+# Регистрация (ник должен быть уникальным)
+@app.post("/api/v1/register")
+async def api_register(body: RegisterIn):
+    nick = (body.nick or "").strip()
+    if not (3 <= len(nick) <= 32):
+        raise HTTPException(400, "Ник должен быть от 3 до 32 символов")
+    with db() as s:
+        if s.query(User.id).filter(User.nick == nick).first():
+            raise HTTPException(409, "Ник уже занят")
+        u = s.query(User).filter(User.tg_id == body.user_id).one_or_none()
+        if not u:
+            u = ensure_user(s, body.user_id, nick=nick)
+        else:
+            if u.nick:
+                raise HTTPException(409, "Профиль уже создан")
+            u.nick = nick
+            s.commit()
+        return {"ok": True, "seq": u.seq, "nick": u.nick}
 
 
 @app.get("/api/v1/services")
@@ -387,8 +431,13 @@ async def api_order_create(body: CreateOrderIn):
 
         # VEXBOOST create order
         try:
-            # безопасное кодирование ссылки
-            qp = httpx.QueryParams({"action": "add", "service": svc.id, "link": body.link, "quantity": int(body.quantity), "key": VEX_KEY})
+            qp = httpx.QueryParams({
+                "action": "add",
+                "service": svc.id,
+                "link": body.link,
+                "quantity": int(body.quantity),
+                "key": VEX_KEY
+            })
             url = f"{API_BASE}?{qp}"
             r = await _client.get(url)
             supplier_order = int(r.json().get("order"))

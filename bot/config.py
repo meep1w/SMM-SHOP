@@ -31,9 +31,8 @@ REVIEWS_URL     = os.getenv("REVIEWS_URL",     "https://t.me/slovekinzhopfeedbac
 
 # ── картинки для сообщений ────────────────────────────────────────────────────
 ASSETS_DIR        = BASE_DIR / "assets"
-WELCOME_IMG_LOCAL = ASSETS_DIR / "welcome.jpg"  # приветственный экран
-MENU_IMG_LOCAL    = ASSETS_DIR / "menu.jpg"     # главное меню (если используешь)
-
+WELCOME_IMG = BASE_DIR / "assets" / "welcome.jpg"
+MENU_IMG    = BASE_DIR / "assets" / "menu.jpg"
 # Фолбэк-картинка, если локального файла нет (необязательно)
 WELCOME_IMAGE_URL = os.getenv(
     "WELCOME_IMAGE_URL",
