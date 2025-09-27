@@ -2,7 +2,7 @@
  * - Таббар: MP4 (предпочтительно) → GIF (фолбэк) → статика; опционально Lottie
  * - Пополнение через CryptoBot (инвойс)
  * - Поп-ап «Оплата прошла успешно» по server-side флагу topup_delta
- * - Категории/услуги/создание заказа
+ * - Категории/услуги/страница создания заказа
  */
 (function () {
   const tg = window.Telegram?.WebApp;
@@ -29,7 +29,7 @@
     favs:      document.getElementById('page-favs'),
     refs:      document.getElementById('page-refs'),
     details:   document.getElementById('page-details'),
-    service:   document.getElementById('page-service'),   // новая страница сервиса
+    service:   document.getElementById('page-service'),     // новая страница сервиса
   };
 
   const catsListEl     = document.getElementById('catsList');
@@ -43,7 +43,7 @@
   const serviceDetailsEl   = document.getElementById('serviceDetails');
   const btnBackToServices  = document.getElementById('btnBackToServices');
 
-  // ==== CSS-инъекции для оверлея и таб-видео ====
+  // ==== CSS-инъекции (оверлей, таб-видео и страница сервиса) ====
   (function injectCSS(){
     const css = `
       #topupOverlay{position:fixed;inset:0;z-index:99999;background:rgba(10,12,16,.92);
@@ -63,6 +63,60 @@
         box-shadow:0 8px 20px rgba(43,129,247,.35)}
       .topup-ok:active{transform:translateY(1px)}
       .tab .tab-vid{width:22px;height:22px;display:none;object-fit:contain;pointer-events:none}
+
+      /* ====== Страница сервиса ====== */
+      .svc{display:flex; flex-direction:column; gap:14px}
+      .svc .card{background:linear-gradient(180deg,#15181d,#111419); border:1px solid var(--stroke);
+        border-radius:14px; padding:14px}
+      .svc .head{display:flex; align-items:flex-start; gap:10px}
+      .svc .head .ico{width:36px; height:36px; border-radius:10px; display:grid; place-items:center;
+        background:linear-gradient(180deg,#1a1e24,#14181e); border:1px solid var(--stroke)}
+      .svc .title{margin:0; font-weight:800; font-size:16px}
+      .svc .label{font-size:12px; color:var(--muted); margin-bottom:8px}
+
+      .svc .qty-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:10px}
+      .svc .qty{display:flex; flex-direction:column; gap:6px; align-items:flex-start;
+        border:1px solid var(--stroke); border-radius:12px; padding:12px;
+        background:linear-gradient(180deg,#14181e,#10141a); cursor:pointer}
+      .svc .qty .num{font-weight:800}
+      .svc .qty .price{font-size:12px; color:var(--muted)}
+      .svc .qty.active{outline:2px solid rgba(255,255,255,.14); background:linear-gradient(180deg,#17202a,#12171d)}
+
+      .svc .qty-input{display:flex; flex-direction:column; gap:8px}
+      .svc .qty-input input{background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:12px; padding:12px}
+      .svc .chips{display:flex; gap:8px}
+      .svc .chip{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text);
+        border-radius:10px; padding:8px 10px; cursor:pointer; font-size:12px}
+
+      .svc .field{display:flex; flex-direction:column; gap:8px}
+      .svc .field input[type="url"], .svc .field input[type="text"]{background:var(--elev); border:1px solid var(--stroke); color:var(--text);
+        border-radius:12px; padding:12px}
+      .svc .field .error{font-size:12px; color:#ff6b6b; display:none}
+      .svc .field .error.show{display:block}
+
+      .svc .promo-toggle{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text);
+        border-radius:10px; padding:8px 10px; cursor:pointer; width:max-content}
+      .svc .promo-wrap{display:none; gap:8px; align-items:center}
+      .svc .promo-wrap.show{display:flex}
+      .svc .promo-wrap input{flex:1; min-width:0}
+
+      .svc .summary{display:flex; flex-direction:column; gap:10px}
+      .svc .sum-row{display:flex; align-items:center; justify-content:space-between; font-size:14px}
+      .svc .sum-row b{font-weight:800}
+      .svc .btn-primary{width:100%; padding:12px 16px; border-radius:14px; border:0; cursor:pointer;
+        background:linear-gradient(180deg,#2b81f7 0%,#1f6cdc 100%); color:#fff; font:700 14px/1 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+
+      .svc .desc{font-size:12px; color:var(--muted)}
+
+      .svc .fav-row{display:flex; align-items:center; justify-content:space-between}
+      .svc .fav-left{display:flex; align-items:center; gap:8px}
+      .svc .heart{width:16px; height:16px; display:inline-block; filter:grayscale(1) brightness(1.5)}
+      .svc .switch{position:relative; width:46px; height:26px}
+      .svc .switch input{opacity:0; width:0; height:0}
+      .svc .slider{position:absolute; cursor:pointer; inset:0; background:#2a2f36; border-radius:50px; transition:.2s}
+      .svc .slider:before{content:""; position:absolute; height:20px; width:20px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s}
+      .svc .switch input:checked + .slider{background:#3b82f6}
+      .svc .switch input:checked + .slider:before{transform:translateX(20px)}
     `;
     const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s);
   })();
@@ -236,7 +290,6 @@
     v.preload = 'auto';
     v.src = img.dataset.video;
 
-    // подогнать размер
     v.width = img.width || 22;
     v.height = img.height || 22;
 
@@ -261,11 +314,7 @@
     try { v.currentTime = 0; } catch(_){}
     const p = v.play();
     if (p && typeof p.catch === 'function'){
-      p.catch(()=>{ // если автоплей заблокирован — фолбэк на GIF
-        v.style.display = 'none';
-        img.style.display = '';
-        playTabGif(img);
-      });
+      p.catch(()=>{ v.style.display = 'none'; img.style.display = ''; playTabGif(img); });
     }
     return true;
   }
@@ -277,33 +326,25 @@
     img.style.display = '';
   }
 
-  // 3) GIF-фолбэк (cache-busting + откат)
+  // 3) GIF-фолбэк
   function preloadTabIcons(){
     document.querySelectorAll('.tabbar .tab .tab-icon').forEach(img=>{
       const s = img.dataset.static;
       const a = img.dataset.anim;
       if (s) { const i = new Image(); i.src = s; }
       if (a) { const i = new Image(); i.src = a; }
-      // прелоад MP4 (молчаливо)
-      if (img.dataset.video) {
-        ensureTabVideo(img); // создадим и подготовим тэг <video>
-      }
+      if (img.dataset.video) ensureTabVideo(img);
     });
   }
   function playTabGif(img){
     const animUrl   = img?.dataset?.anim;
     const staticUrl = img?.dataset?.static || img?.src;
     if (!animUrl) return;
-
-    const prev = gifTimers.get(img);
-    if (prev) clearTimeout(prev);
-
+    const prev = gifTimers.get(img); if (prev) clearTimeout(prev);
     const bust = (animUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
     img.src = animUrl + bust;
-
     const msAttr = parseInt(img.dataset.ms || img.dataset.duration || '', 10);
     const ms = Number.isFinite(msAttr) ? msAttr : TAB_GIF_DEFAULT_MS;
-
     const tid = setTimeout(()=> { img.src = staticUrl; }, ms);
     gifTimers.set(img, tid);
   }
@@ -313,46 +354,28 @@
     document.querySelectorAll('.tabbar .tab').forEach(b=>{
       const active = (b === btn);
       b.classList.toggle('active', active);
-
       const lottie = lottieMap.get(b);
       const img = b.querySelector('.tab-icon');
-
       if (active){
-        if (lottie) {
-          lottie.goToAndPlay(0, true);
-        } else if (img) {
-          // приоритет: MP4 → GIF → статика
-          if (!playTabVideo(img)) playTabGif(img);
-        }
+        if (lottie) lottie.goToAndPlay(0, true);
+        else if (img) { if (!playTabVideo(img)) playTabGif(img); }
       } else {
-        if (lottie) { lottie.goToAndStop(0, true); }
-        if (img) {
-          stopTabVideo(img);
-          if (img.dataset.static) {
-            const prev = gifTimers.get(img);
-            if (prev) clearTimeout(prev);
-            img.src = img.dataset.static;
-          }
-        }
+        if (lottie) lottie.goToAndStop(0, true);
+        if (img) { stopTabVideo(img); if (img.dataset.static){ const prev = gifTimers.get(img); if (prev) clearTimeout(prev); img.src = img.dataset.static; } }
       }
     });
-
     const name = btn?.dataset?.tab || 'catalog';
     showPageByTabName(name);
+    if (name === 'favs') renderFavs();  // обновляем избранное при входе
   }
 
-  // 5) Навесить клики и старт
   document.querySelectorAll('.tabbar .tab').forEach(btn=>{
     btn.addEventListener('click', ()=> activateTab(btn));
   });
-
-  preloadTabIcons();
-  initLottieTabs();
-
-  // стартовая вкладка
+  preloadTabIcons(); initLottieTabs();
   const startBtn = document.querySelector('.tabbar .tab[data-tab="catalog"]')
-      || document.querySelector('.tabbar .tab[data-tab="categories"]')
-      || document.querySelector('.tabbar .tab');
+                 || document.querySelector('.tabbar .tab[data-tab="categories"]')
+                 || document.querySelector('.tabbar .tab');
   if (startBtn) activateTab(startBtn);
 
   // ==== Категории/услуги ====
@@ -454,93 +477,241 @@
           <div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</div>
           <button class="btn" data-id="${s.service}">Купить</button>
         </div>`;
-      // Вся карточка кликабельна и ведёт на страницу сервиса
-      row.addEventListener('click', ()=> openServicePage(s));
-      // Кнопка «Купить» тоже ведёт туда же
+      row.addEventListener('click', ()=> openServicePage(s));                   // вся карточка
       row.querySelector('button').addEventListener('click', (e)=>{ e.stopPropagation(); openServicePage(s); });
       servicesListEl.appendChild(row);
     });
   }
 
-  // Страница отдельной услуги (пока «рыба», оформим полноценно дальше)
+  // ====== Избранное (localStorage) ======
+  function favLoad(){
+    try { return JSON.parse(localStorage.getItem('smm_favs') || '[]') } catch(_){ return [] }
+  }
+  function favSave(arr){ localStorage.setItem('smm_favs', JSON.stringify(arr||[])); }
+  function favHas(id){ return favLoad().some(x => x.id === id); }
+  function favAdd(item){
+    const a = favLoad(); if (!a.some(x=>x.id===item.id)) { a.push(item); favSave(a); }
+  }
+  function favRemove(id){
+    const a = favLoad().filter(x=>x.id!==id); favSave(a);
+  }
+  function renderFavs(){
+    const box = pages.favs?.querySelector('.fav-list') || (()=>{
+      const div = document.createElement('div'); div.className = 'fav-list'; pages.favs?.appendChild(div); return div;
+    })();
+    const items = favLoad();
+    box.innerHTML = '';
+    if (!items.length){ box.innerHTML = '<div class="empty">Избранных услуг пока нет.</div>'; return; }
+    items.forEach(s=>{
+      const row = document.createElement('div');
+      row.className = 'service';
+      row.innerHTML = `
+        <div class="left">
+          <div class="name">${s.name}</div>
+          <div class="meta">Сервис ID: ${s.id}${s.network ? ' • ' + s.network : ''}</div>
+        </div>
+        <div class="right">
+          <button class="btn" data-id="${s.id}">Открыть</button>
+        </div>`;
+      row.querySelector('button').addEventListener('click', ()=> openServicePage(s._raw || {service:s.id, name:s.name, min:s.min||1, max:s.max||100000, rate_client_1000:s.rate||0, currency:s.currency||currentCurrency}));
+      box.appendChild(row);
+    });
+  }
+
+  // ====== Полная страница сервиса ======
+  function presetValues(min, max){
+    // Базовые пресеты, отфильтровать по min/max
+    const base = [100, 500, 1000, 2500, 5000, 10000];
+    const arr = base.filter(q => q>=min && q<=max);
+    // если из-за min/max ничего не осталось — подстроим
+    if (!arr.length){
+      const a = []; let q = min;
+      for (let i=0;i<6;i++){ a.push(q); q = Math.min(max, Math.round(q*2)); if (q===a[a.length-1]) break; }
+      return a.slice(0,6);
+    }
+    return arr;
+  }
+  function priceFor(q, s){ return Math.max(0, Number(s.rate_client_1000||0) * Number(q||0) / 1000); }
+
   function openServicePage(s){
     if (!s) return;
+    const min = Number(s.min||1), max = Number(s.max||100000);
+    const presets = presetValues(min, max);
+    const cur = Math.max(min, Math.min(presets[0]||min, max));
+    const currency = (s.currency||currentCurrency);
+
     if (serviceTitleEl) serviceTitleEl.textContent = s.name || 'Услуга';
-    if (serviceDetailsEl){
-      serviceDetailsEl.innerHTML = `
-        <div class="card">
+
+    // Скелет страницы
+    serviceDetailsEl.innerHTML = `
+      <div class="svc">
+        <div class="card head">
+          <div class="ico"><img src="static/img/${(currentNetwork||'telegram')}.svg" alt="" width="22" height="22"></div>
           <h3 class="title">${s.name}</h3>
-          <div class="meta">Тип: ${s.type || '—'} • Мин: ${s.min} • Макс: ${s.max}</div>
-          <div class="meta">Цена от: <b>${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</b></div>
-          <div class="meta">Сервис ID: ${s.service}</div>
         </div>
+
         <div class="card">
-          <div class="meta">Здесь будет полноценная страница с описанием, вводом ссылки, количеством, динамической ценой и оформлением заказа.</div>
-        </div>`;
-    }
+          <div class="label">Количество</div>
+          <div class="qty-grid" id="qtyGrid"></div>
+          <div class="qty-input">
+            <input id="svcQty" type="number" min="${min}" max="${max}" step="1" value="${cur}">
+            <div class="chips">
+              <button class="chip" id="chipMin">мин ${min}</button>
+              <button class="chip" id="chipMax">макс ${max}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="field">
+            <div class="label">Ссылка</div>
+            <input id="svcLink" type="url" placeholder="https://...">
+            <div class="error" id="svcLinkErr">Обязательное поле</div>
+          </div>
+          <button class="promo-toggle" id="promoToggle">У меня есть промокод</button>
+          <div class="promo-wrap" id="promoWrap">
+            <input id="promoInput" type="text" placeholder="Промокод">
+            <button class="chip" id="promoApply">Активировать</button>
+          </div>
+        </div>
+
+        <div class="card summary">
+          <div class="sum-row"><span>Количество</span><b id="sumQty">${cur}</b></div>
+          <div class="sum-row"><span>Цена</span><b id="sumPrice">${priceFor(cur,s).toFixed(4)}${curSign(currency)}</b></div>
+          <button class="btn-primary" id="svcCreate">Создать заказ</button>
+        </div>
+
+        <div class="card desc" id="svcDesc">${s.desc || 'Описание будет добавлено позже.'}</div>
+
+        <div class="card">
+          <div class="fav-row">
+            <div class="fav-left">
+              <img class="heart" src="static/img/heart.svg" alt="">
+              <span>Избранное</span>
+            </div>
+            <label class="switch">
+              <input id="favToggle" type="checkbox">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Инициализация пресетов
+    const qtyGrid   = document.getElementById('qtyGrid');
+    const qtyInput  = document.getElementById('svcQty');
+    const chipMin   = document.getElementById('chipMin');
+    const chipMax   = document.getElementById('chipMax');
+    const sumQty    = document.getElementById('sumQty');
+    const sumPrice  = document.getElementById('sumPrice');
+    const linkEl    = document.getElementById('svcLink');
+    const linkErr   = document.getElementById('svcLinkErr');
+    const promoToggle = document.getElementById('promoToggle');
+    const promoWrap   = document.getElementById('promoWrap');
+    const promoInput  = document.getElementById('promoInput');
+    const promoApply  = document.getElementById('promoApply');
+    const btnCreate   = document.getElementById('svcCreate');
+    const favToggle   = document.getElementById('favToggle');
+
+    // Рисуем 6 карточек пресетов
+    qtyGrid.innerHTML = '';
+    presets.forEach(q=>{
+      const btn = document.createElement('button');
+      btn.className = 'qty';
+      btn.innerHTML = `<div class="num">${q.toLocaleString('ru-RU')}</div>
+                       <div class="price">${priceFor(q,s).toFixed(4)}${curSign(currency)}</div>`;
+      if (q===cur) btn.classList.add('active');
+      btn.addEventListener('click', ()=>{
+        qtyGrid.querySelectorAll('.qty').forEach(x=>x.classList.remove('active'));
+        btn.classList.add('active');
+        qtyInput.value = String(q);
+        sumQty.textContent = q;
+        sumPrice.textContent = `${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+      });
+      qtyGrid.appendChild(btn);
+    });
+
+    // Мин/макс
+    chipMin?.addEventListener('click', ()=>{
+      const q = min;
+      qtyInput.value = String(q);
+      qtyGrid.querySelectorAll('.qty').forEach(x=>x.classList.remove('active'));
+      sumQty.textContent = q;
+      sumPrice.textContent = `${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+    });
+    chipMax?.addEventListener('click', ()=>{
+      const q = max;
+      qtyInput.value = String(q);
+      qtyGrid.querySelectorAll('.qty').forEach(x=>x.classList.remove('active'));
+      sumQty.textContent = q;
+      sumPrice.textContent = `${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+    });
+
+    // Ручной ввод количества
+    qtyInput?.addEventListener('input', ()=>{
+      let q = parseInt(qtyInput.value||'0',10);
+      if (!Number.isFinite(q)) q = min;
+      q = Math.max(min, Math.min(max, q));
+      sumQty.textContent = q;
+      sumPrice.textContent = `${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+    });
+
+    // Промокод (UI-раскрытие). Отправим на сервер вместе с заказом как promo_code (если сервер игнорит — ок).
+    promoToggle?.addEventListener('click', ()=>{
+      promoWrap?.classList.toggle('show');
+    });
+    promoApply?.addEventListener('click', ()=>{
+      const code = (promoInput?.value||'').trim();
+      if (!code){ alert('Введите промокод'); return; }
+      // Здесь можно добавить валидацию на сервере / применить скидку.
+      alert('Промокод принят (визуально). Скидка будет применена при обработке заказа.');
+    });
+
+    // Избранное
+    const isFav = favHas(s.service);
+    favToggle.checked = isFav;
+    favToggle.addEventListener('change', ()=>{
+      if (favToggle.checked){
+        favAdd({ id: s.service, name: s.name, network: currentNetwork, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency, _raw:s });
+      } else {
+        favRemove(s.service);
+      }
+    });
+
+    // Создать заказ
+    btnCreate?.addEventListener('click', async ()=>{
+      const link = (linkEl?.value||'').trim();
+      const q    = parseInt(qtyInput?.value||'0',10);
+      if (!link){ linkErr?.classList.add('show'); linkEl?.focus(); return; }
+      linkErr?.classList.remove('show');
+      if (q<min || q>max){ alert(`Количество должно быть от ${min} до ${max}`); return; }
+
+      btnCreate.disabled = true; btnCreate.textContent = 'Оформляем...';
+      try{
+        const body = { user_id: userId || seq, service: s.service, link, quantity: q };
+        const promo = (promoInput?.value||'').trim(); if (promo) body.promo_code = promo;  // сервер может игнорировать
+        const r = await fetch(`${API_BASE}/order/create`,{
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const j = await r.json();
+        alert(`Заказ создан!\nНомер: ${j.order_id}\nСумма: ${j.cost} ${j.currency}`);
+        await fetchProfile();
+      }catch(e){
+        alert('Не удалось создать заказ: ' + (e?.message||e));
+      }finally{
+        btnCreate.disabled = false; btnCreate.textContent = 'Создать заказ';
+      }
+    });
+
     showPageByTabName('service');
     try{ history.replaceState(null, '', `#service-${s.service}`); }catch(_){}
   }
+
+  // Кнопки назад
   btnBackToCats?.addEventListener('click', ()=> showPageByTabName('catalog'));
   btnBackToServices?.addEventListener('click', ()=> showPageByTabName('services'));
-
-  // ==== Модалка заказа (оставляем для будущего экрана, не вызываем из списка) ====
-  const modal        = document.getElementById('orderModal');
-  const orderTitle   = document.getElementById('orderTitle');
-  const inputLink    = document.getElementById('inputLink');
-  const inputQty     = document.getElementById('inputQty');
-  const qtyHint      = document.getElementById('qtyHint');
-  const priceInfo    = document.getElementById('priceInfo');
-  const btnCancelOrd = document.getElementById('btnCancelOrder');
-  const btnCreateOrd = document.getElementById('btnCreateOrder');
-
-  let currentService = null;
-  function openOrderModal(svc){
-    if (!modal) return;
-    currentService = svc;
-    if (orderTitle) orderTitle.textContent = `Заказ: ${svc.name}`;
-    if (inputLink)  inputLink.value = '';
-    if (inputQty)  { inputQty.value = Math.max(svc.min, 100); inputQty.min = svc.min; inputQty.max = svc.max; }
-    if (qtyHint)    qtyHint.textContent = `(мин ${svc.min} • макс ${svc.max})`;
-    updatePrice();
-    modal.setAttribute('aria-hidden','false');
-  }
-  function closeOrderModal(){
-    modal?.setAttribute('aria-hidden','true');
-    currentService = null;
-  }
-  function updatePrice(){
-    if(!priceInfo || !inputQty || !currentService) return;
-    const q = parseInt(inputQty.value||'0',10);
-    const price = Math.max(0, Number(currentService.rate_client_1000) * q / 1000);
-    priceInfo.textContent = `Цена: ${price.toFixed(2)}${curSign(currentService.currency||currentCurrency)}`;
-  }
-  inputQty?.addEventListener('input', updatePrice);
-  btnCancelOrd?.addEventListener('click', closeOrderModal);
-  btnCreateOrd?.addEventListener('click', async ()=>{
-    if(!currentService) return;
-    const link = (inputLink?.value||'').trim();
-    const q    = parseInt(inputQty?.value||'0',10);
-    if(!link){ alert('Укажите ссылку'); return; }
-    if(q<currentService.min||q>currentService.max){ alert(`Количество должно быть от ${currentService.min} до ${currentService.max}`); return; }
-
-    btnCreateOrd.disabled = true; btnCreateOrd.textContent = 'Оформляем...';
-    try{
-      const r = await fetch(`${API_BASE}/order/create`,{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: userId || seq, service: currentService.service, link, quantity: q })
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const j = await r.json();
-      closeOrderModal();
-      alert(`Заказ создан!\nНомер: ${j.order_id}\nСумма: ${j.cost} ${j.currency}`);
-      await fetchProfile();
-    }catch(e){
-      alert('Не удалось создать заказ: ' + (e?.message||e));
-    }finally{
-      btnCreateOrd.disabled = false; btnCreateOrd.textContent = 'Оплатить';
-    }
-  });
 
   // ==== Старт ====
   loadCategories();
