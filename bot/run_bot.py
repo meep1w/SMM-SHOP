@@ -9,13 +9,22 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, BotCommand
 
+# Конфиг (BOT_TOKEN из .env читается внутри config)
 from bot.config import BOT_TOKEN
-# === твои роутеры ===
-from bot.handlers import start as h_start
-from bot.handlers import registration as h_registration
-# from bot.handlers import menu as h_menu  # если есть
 
-# aiogram 3.7+ убрал parse_mode из Bot(...). Делаем кросс-версионно:
+
+# Наш основной роутер регистрации/меню
+from bot.handlers import start_register as h_start_register
+
+# (опционально) если у тебя есть ещё меню с отдельными хендлерами
+try:
+    from bot.handlers import menu as h_menu  # noqa: F401
+    HAS_MENU = True
+except Exception:
+    HAS_MENU = False
+
+
+# aiogram 3.7+ убрал parse_mode из Bot(...). Делаем кросс-версионно.
 def _bot_kwargs():
     try:
         # aiogram >= 3.7.0
@@ -35,7 +44,10 @@ async def set_commands(bot: Bot) -> None:
 
 
 def make_fallback_router() -> Router:
-    """Подстраховочный роутер на случай, если основной /start не сработал."""
+    """
+    Подстраховочный роутер: если по какой-то причине основной /start не сработает.
+    Ставим его САМЫМ ПОСЛЕДНИМ в иерархии.
+    """
     r = Router()
 
     @r.message(CommandStart())
@@ -46,6 +58,7 @@ def make_fallback_router() -> Router:
     async def help_cmd(message: Message) -> None:
         await message.answer("Команда /help: отправь /start, чтобы открыть меню.")
 
+    # ещё один «страховочный» перехват на случай, если у клиента не прилетел тип update
     @r.message(F.text.casefold() == "/start")
     async def fallback_start_text(message: Message) -> None:
         await fallback_start(message)
@@ -60,17 +73,17 @@ async def main() -> None:
     )
 
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is empty")
+        raise RuntimeError("BOT_TOKEN is empty (проверь .env и bot/utils/config.py)")
 
     bot = Bot(BOT_TOKEN, **_bot_kwargs())
     dp = Dispatcher()
 
-    # === Подключаем рабочие роутеры ===
-    dp.include_router(h_start.router)
-    dp.include_router(h_registration.router)
-    # dp.include_router(h_menu.router)
+    # === Подключаем рабочие роутеры (ТОЛЬКО новые) ===
+    dp.include_router(h_start_register.router)
+    if HAS_MENU:
+        dp.include_router(h_menu.router)  # подключим, если модуль существует
 
-    # === Фоллбек-роутер в самом конце ===
+    # === Фоллбек-роутер САМИМ ПОСЛЕДНИМ ===
     dp.include_router(make_fallback_router())
 
     await set_commands(bot)
