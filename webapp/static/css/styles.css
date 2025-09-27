@@ -19,10 +19,11 @@
   --shadow:0 8px 24px rgba(0,0,0,.25);
 
   /* геометрия */
-  --sideGap:16px;          /* отступы слева/справа для хедера и таббара */
-  --headerH:80px;          /* высота хедера (увеличена) */
-  --headerPadY:14px;       /* вертикальный паддинг в хедере */
-  --tabbarH:74px;          /* высота таббара */
+  --headerH:84px;          /* ↑ хедер выше */
+  --headerPadTop:6px;      /* контент ниже центра */
+  --headerPadBottom:18px;
+  --tabbarH:74px;
+  --tabbarOffset:18px;     /* ↑ таббар «поднят» от нижнего края */
 }
 
 *{box-sizing:border-box}
@@ -35,27 +36,27 @@ body{
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
 
-/* ===== Header (прижат к верху, скругление только снизу) ===== */
+/* ===== Header (во всю ширину, прижат к верху, скругление снизу) ===== */
 .app-header{
   position:fixed;
-  top:0;
-  left:var(--sideGap);
-  right:var(--sideGap);
+  top:0; left:0; right:0;
   height:var(--headerH);
 
-  display:grid; grid-template-columns:1fr auto 1fr;
-  align-items:center; gap:12px;
-  padding:var(--headerPadY) 14px;
+  display:grid;
+  grid-template-columns:1fr auto 1fr;
+  align-items:end;                                 /* опустить контент ниже центра */
+  gap:12px;
 
-  background:rgba(16,18,22,.86);
+  padding:var(--headerPadTop) 16px var(--headerPadBottom);
+  background:rgba(16,18,22,.88);
   backdrop-filter:saturate(140%) blur(8px);
 
   border:1px solid var(--stroke);
-  border-radius:0 0 var(--radius) var(--radius); /* <— только нижние углы */
+  border-radius:0 0 var(--radius) var(--radius);   /* только нижние углы */
   overflow:hidden;
   z-index:10;
 }
-/* лёгкая линия снизу */
+/* тонкая линия снизу у хедера */
 .app-header::after{
   content:"";
   position:absolute; left:10px; right:10px; bottom:0; height:1px;
@@ -103,20 +104,17 @@ body{
 .btn-plus::before{content:""; position:absolute; left:-6px; top:4px; bottom:4px; width:1px; background:#242a36;}
 .btn-plus svg{width:18px; height:18px; display:block; pointer-events:none;}
 
-/* ===== App content (учёт фикс. хедера и таббара) ===== */
+/* ===== Контент (учёт фикс. хедера и таббара) ===== */
 .app-main{
-  padding: calc(var(--headerH) + 12px) var(--sideGap)
-           calc(var(--tabbarH) + env(safe-area-inset-bottom) + 16px);
+  padding: calc(var(--headerH) + 12px) 16px
+           calc(var(--tabbarH) + var(--tabbarOffset) + env(safe-area-inset-bottom) + 16px);
   min-height:100dvh;
 }
 .page{display:none}
 .page.active{display:block}
 
-/* ===== Category cards ===== */
-.cats-list{
-  display:flex; flex-direction:column; gap:12px;
-  /* пусть скроллится основной документ; у списка — авто-высота */
-}
+/* ===== Категории ===== */
+.cats-list{display:flex; flex-direction:column; gap:12px;}
 .cat{
   display:flex; align-items:center; gap:14px;
   padding:16px; border-radius:16px;
@@ -138,9 +136,6 @@ body{
 .cat-body{display:flex; flex-direction:column; gap:2px}
 .cat-name{font-weight:700; font-size:15px}
 .cat-desc{font-size:12px; color:var(--muted)}
-
-/* подпись под списком */
-.cats-list{ padding-bottom: 10px; }
 .cats-list::after{
   content:"Скоро добавим ещё категорий";
   display:block; text-align:center; color:var(--muted);
@@ -148,7 +143,7 @@ body{
   opacity:.95; padding:18px 8px 12px;
 }
 
-/* ===== Services list ===== */
+/* ===== Сервисы ===== */
 .subheader{display:flex; align-items:center; gap:10px; margin:6px 0 10px}
 .subheader .back{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
 .subheader-title{margin:0; font-size:16px; font-weight:800}
@@ -162,10 +157,10 @@ body{
 .service .left{display:flex; flex-direction:column; gap:4px}
 .service .name{font-weight:700}
 .service .meta{font-size:12px; color:var(--muted)}
-.service .price{font-weight:800; color:var(--brand)}
+.service .price{font-weight:800; color:#ff6b6b}
 .service .btn{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
 
-/* ===== Skeleton loader ===== */
+/* ===== Skeleton ===== */
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
 .skeleton{position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--stroke); background:linear-gradient(180deg,#15181d,#111419); height:64px;}
 .skeleton::after{content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent); background-size:200% 100%; animation:shimmer 1.4s infinite linear;}
@@ -175,12 +170,11 @@ body{
 .skel-line{height:10px;border-radius:8px;background:#1b2028;margin:6px 0; width:70%}
 .skel-line.short{width:35%}
 
-/* ===== Tabbar (прижат к низу, скругление только сверху) ===== */
+/* ===== Tabbar (во всю ширину, прижат к низу, скругление сверху) ===== */
 .tabbar{
   position:fixed;
-  left:var(--sideGap);
-  right:var(--sideGap);
-  bottom:calc(env(safe-area-inset-bottom)); /* упирается в низ */
+  left:0; right:0;
+  bottom:calc(env(safe-area-inset-bottom) + var(--tabbarOffset)); /* поднят */
   height:var(--tabbarH);
 
   display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:10px 12px;
@@ -189,11 +183,10 @@ body{
   backdrop-filter:blur(8px);
 
   border:1px solid var(--stroke);
-  border-radius:var(--radius) var(--radius) 0 0; /* <— только верхние углы */
+  border-radius:var(--radius) var(--radius) 0 0; /* только верхние углы */
   overflow:hidden;
   z-index:20;
 }
-/* линия сверху у таббара */
 .tabbar::before{
   content:""; position:absolute; left:10px; right:10px; top:0; height:1px;
   border-radius:999px; background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);
@@ -217,7 +210,7 @@ body{
 .btn.primary{background:var(--brand); border:none; color:#fff; border-radius:10px; padding:10px 14px; font-weight:700}
 .btn.secondary{background:var(--surface-2); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:10px 14px}
 
-/* ===== Скрываем скроллбары (страница и списки) ===== */
+/* ===== Скрыть все скроллбары ===== */
 body, .page, .app-main, .cats-list, .services-list{
   -ms-overflow-style:none;    /* IE/Edge */
   scrollbar-width:none;       /* Firefox */
