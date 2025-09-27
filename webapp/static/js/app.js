@@ -372,7 +372,7 @@
         <div class="card">
           <div class="fav-row">
             <div class="fav-left">
-              <img class="heart" src="static/img/heart.svg" alt="">
+              <img class="heart" src="static/img/tab-favorites.svg" alt="">
               <span>Избранное</span>
             </div>
             <label class="switch">
