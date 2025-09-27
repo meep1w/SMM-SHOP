@@ -2,7 +2,7 @@
  * - Таббар: MP4 (предпочтительно) → GIF (фолбэк) → статика; опционально Lottie
  * - Пополнение через CryptoBot (инвойс)
  * - Поп-ап «Оплата прошла успешно» по server-side флагу topup_delta
- * - Категории/услуги/создание заказа
+ * - Категории/услуги/создание заказа + ПОИСК по услугам
  */
 (function () {
   const tg = window.Telegram?.WebApp;
@@ -35,6 +35,13 @@
   const servicesListEl = document.getElementById('servicesList');
   const servicesTitle  = document.getElementById('servicesTitle');
   const btnBackToCats  = document.getElementById('btnBackToCats');
+
+  // ---- состояние поиска по услугам ----
+  let currentServices = [];          // оригинальный список для категории
+  let currentQuery = "";             // строка поиска
+  let searchWrap = null;             // контейнер .sh-search
+  let searchInput = null;            // <input>
+  let searchClear = null;            // кнопка ×
 
   // ==== CSS-инъекции для оверлея и таб-видео ====
   (function injectCSS(){
@@ -162,10 +169,10 @@
   });
 
   // ==== Таббар: Lottie / MP4 / GIF ====
-  const lottieMap = new Map();           // btn -> lottieInstance (если будет)
-  const gifTimers = new WeakMap();       // img -> timeoutId
-  const videoMap  = new WeakMap();       // img -> video
-  const TAB_GIF_DEFAULT_MS = 1100;       // дефолтная длительность GIF
+  const lottieMap = new Map();
+  const gifTimers = new WeakMap();
+  const videoMap  = new WeakMap();
+  const TAB_GIF_DEFAULT_MS = 1100;
 
   function pageIdByTabName(name){
     if (name === 'catalog' || name === 'categories') return 'page-categories';
@@ -177,18 +184,13 @@
   }
   function showPageByTabName(name){
     const targetId = pageIdByTabName(name);
-    Object.values({
-      'page-categories': pages.catalog,
-      'page-services':   pages.services,
-      'page-favs':       pages.favs,
-      'page-refs':       pages.refs,
-      'page-details':    pages.details,
-    }).forEach(el => { el?.classList.remove('active'); });
+    ['page-categories','page-services','page-favs','page-refs','page-details'].forEach(id=>{
+      document.getElementById(id)?.classList.remove('active');
+    });
     document.getElementById(targetId)?.classList.add('active');
     try { window.scrollTo({top:0, behavior:'instant'}); } catch(_){}
   }
 
-  // 1) Инициализация Lottie (если используешь контейнеры .tab-lottie)
   function initLottieTabs(){
     const hasLottieLib = !!window.lottie;
     document.querySelectorAll('.tabbar .tab').forEach((btn)=>{
@@ -213,7 +215,6 @@
     });
   }
 
-  // 2) MP4: создать/получить <video> для иконки
   function ensureTabVideo(img){
     if (!img?.dataset?.video) return null;
     let v = videoMap.get(img);
@@ -226,33 +227,27 @@
     v.setAttribute('playsinline', '');
     v.preload = 'auto';
     v.src = img.dataset.video;
-
-    // подогнать размер
     v.width = img.width || 22;
     v.height = img.height || 22;
-
     img.insertAdjacentElement('afterend', v);
-
     v.addEventListener('ended', ()=>{
       v.pause();
       try { v.currentTime = 0; } catch(_){}
       v.style.display = 'none';
       img.style.display = '';
     });
-
     videoMap.set(img, v);
     return v;
   }
   function playTabVideo(img){
     const v = ensureTabVideo(img);
     if (!v) return false;
-
     img.style.display = 'none';
     v.style.display = '';
     try { v.currentTime = 0; } catch(_){}
     const p = v.play();
     if (p && typeof p.catch === 'function'){
-      p.catch(()=>{ // если автоплей заблокирован — фолбэк на GIF
+      p.catch(()=>{
         v.style.display = 'none';
         img.style.display = '';
         playTabGif(img);
@@ -267,18 +262,13 @@
     v.style.display = 'none';
     img.style.display = '';
   }
-
-  // 3) GIF-фолбэк (cache-busting + откат)
   function preloadTabIcons(){
     document.querySelectorAll('.tabbar .tab .tab-icon').forEach(img=>{
       const s = img.dataset.static;
       const a = img.dataset.anim;
       if (s) { const i = new Image(); i.src = s; }
       if (a) { const i = new Image(); i.src = a; }
-      // прелоад MP4 (молчаливо)
-      if (img.dataset.video) {
-        ensureTabVideo(img); // создадим и подготовим тэг <video>
-      }
+      if (img.dataset.video) { ensureTabVideo(img); }
     });
   }
   function playTabGif(img){
@@ -298,8 +288,6 @@
     const tid = setTimeout(()=> { img.src = staticUrl; }, ms);
     gifTimers.set(img, tid);
   }
-
-  // 4) Активация вкладки
   function activateTab(btn){
     document.querySelectorAll('.tabbar .tab').forEach(b=>{
       const active = (b === btn);
@@ -309,41 +297,30 @@
       const img = b.querySelector('.tab-icon');
 
       if (active){
-        if (lottie) {
-          lottie.goToAndPlay(0, true);
-        } else if (img) {
-          // приоритет: MP4 → GIF → статика
-          if (!playTabVideo(img)) playTabGif(img);
-        }
+        if (lottie) lottie.goToAndPlay(0, true);
+        else if (img){ if (!playTabVideo(img)) playTabGif(img); }
       } else {
-        if (lottie) { lottie.goToAndStop(0, true); }
-        if (img) {
+        if (lottie) lottie.goToAndStop(0, true);
+        if (img){
           stopTabVideo(img);
-          if (img.dataset.static) {
-            const prev = gifTimers.get(img);
-            if (prev) clearTimeout(prev);
+          if (img.dataset.static){
+            const prev = gifTimers.get(img); if (prev) clearTimeout(prev);
             img.src = img.dataset.static;
           }
         }
       }
     });
-
     const name = btn?.dataset?.tab || 'catalog';
     showPageByTabName(name);
   }
-
-  // 5) Навесить клики и старт
   document.querySelectorAll('.tabbar .tab').forEach(btn=>{
     btn.addEventListener('click', ()=> activateTab(btn));
   });
-
   preloadTabIcons();
   initLottieTabs();
-
-  // стартовая вкладка
   const startBtn = document.querySelector('.tabbar .tab[data-tab="catalog"]')
-      || document.querySelector('.tabbar .tab[data-tab="categories"]')
-      || document.querySelector('.tabbar .tab');
+    || document.querySelector('.tabbar .tab[data-tab="categories"]')
+    || document.querySelector('.tabbar .tab');
   if (startBtn) activateTab(startBtn);
 
   // ==== Категории/услуги ====
@@ -380,18 +357,80 @@
       catsListEl.appendChild(a);
     });
   }
+
+  // --- создание поиска в сабхедере (динамически) ---
+  function ensureServicesSearch(){
+    if (searchWrap && searchInput && searchClear) return;
+    const sub = document.querySelector('#page-services .subheader');
+    if (!sub) return;
+
+    searchWrap = document.createElement('div');
+    searchWrap.className = 'sh-search';
+    searchWrap.id = 'servicesSearch';
+    searchWrap.innerHTML = `
+      <svg class="sh-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.71.71l.27.28v.79L20 21.49 21.49 20l-5.99-6zM6.5 11a4.5 4.5 0 1 1 9 0a4.5 4.5 0 0 1-9 0z"/>
+      </svg>
+      <input id="servicesQuery" type="search" placeholder="Поиск по услугам">
+      <button type="button" class="sh-clear" id="servicesClear" aria-label="Очистить">×</button>
+    `;
+    sub.appendChild(searchWrap);
+
+    searchInput = searchWrap.querySelector('#servicesQuery');
+    searchClear = searchWrap.querySelector('#servicesClear');
+
+    searchInput.addEventListener('input', ()=>{
+      currentQuery = searchInput.value || "";
+      searchWrap.classList.toggle('filled', currentQuery.trim().length>0);
+      applyServicesFilter();
+    });
+    searchClear.addEventListener('click', ()=>{
+      currentQuery = "";
+      searchInput.value = "";
+      searchWrap.classList.remove('filled');
+      applyServicesFilter();
+      searchInput.focus();
+    });
+  }
+
+  function normalize(s){
+    return String(s||'')
+      .toLowerCase()
+      .replaceAll('ё','е')
+      .trim();
+  }
+
+  function applyServicesFilter(){
+    if (!Array.isArray(currentServices)) return;
+    const q = normalize(currentQuery);
+    let list = currentServices;
+    if (q){
+      list = currentServices.filter(s=>{
+        const hay = `${s.name} ${s.type||''} ${s.category||''}`;
+        return normalize(hay).includes(q);
+      });
+    }
+    renderServices(list);
+  }
+
   async function openServices(network, title){
     if (servicesTitle) servicesTitle.textContent = title || 'Услуги';
+    currentQuery = "";
+    ensureServicesSearch();
+    if (searchInput){ searchInput.value = ""; searchWrap?.classList.remove('filled'); }
+
     showPageByTabName('services');
     renderServicesSkeleton(4);
     try{
       const r = await fetch(`${API_BASE}/services/${network}`);
-      const items = await r.json();
-      renderServices(items);
+      currentServices = await r.json();
+      applyServicesFilter(); // первичный рендер + учёт пустого поиска
     }catch{
+      currentServices = [];
       servicesListEl.innerHTML = '<div class="empty">Не удалось загрузить услуги</div>';
     }
   }
+
   function renderServicesSkeleton(n){
     servicesListEl.innerHTML='';
     for(let i=0;i<n;i++){
@@ -407,8 +446,13 @@
         </div>`);
     }
   }
+
   function renderServices(items){
     servicesListEl.innerHTML='';
+    if (!items.length){
+      servicesListEl.innerHTML = '<div class="empty">Ничего не найдено</div>';
+      return;
+    }
     items.forEach(s=>{
       const row = document.createElement('div');
       row.className = 'service';
@@ -421,10 +465,14 @@
           <div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</div>
           <button class="btn" data-id="${s.service}">Купить</button>
         </div>`;
-      row.querySelector('button').addEventListener('click', ()=> openOrderModal(s));
+      // клик по кнопке
+      row.querySelector('button').addEventListener('click', (e)=>{ e.stopPropagation(); openOrderModal(s); });
+      // клик по всей карточке
+      row.addEventListener('click', ()=> openOrderModal(s));
       servicesListEl.appendChild(row);
     });
   }
+
   btnBackToCats?.addEventListener('click', ()=> showPageByTabName('catalog'));
 
   // ==== Модалка заказа ====
