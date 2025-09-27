@@ -29,12 +29,19 @@
     favs:      document.getElementById('page-favs'),
     refs:      document.getElementById('page-refs'),
     details:   document.getElementById('page-details'),
+    service:   document.getElementById('page-service'),   // новая страница сервиса
   };
 
   const catsListEl     = document.getElementById('catsList');
   const servicesListEl = document.getElementById('servicesList');
   const servicesTitle  = document.getElementById('servicesTitle');
   const btnBackToCats  = document.getElementById('btnBackToCats');
+
+  // Новые элементы для поиска и страницы сервиса
+  const servicesSearchEl   = document.getElementById('servicesSearch');
+  const serviceTitleEl     = document.getElementById('serviceTitle');
+  const serviceDetailsEl   = document.getElementById('serviceDetails');
+  const btnBackToServices  = document.getElementById('btnBackToServices');
 
   // ==== CSS-инъекции для оверлея и таб-видео ====
   (function injectCSS(){
@@ -173,6 +180,7 @@
     if (name === 'refs' || name === 'referrals')     return 'page-refs';
     if (name === 'details')                          return 'page-details';
     if (name === 'services')                         return 'page-services';
+    if (name === 'service')                          return 'page-service';   // новая
     return 'page-categories';
   }
   function showPageByTabName(name){
@@ -183,6 +191,7 @@
       'page-favs':       pages.favs,
       'page-refs':       pages.refs,
       'page-details':    pages.details,
+      'page-service':    pages.service,
     }).forEach(el => { el?.classList.remove('active'); });
     document.getElementById(targetId)?.classList.add('active');
     try { window.scrollTo({top:0, behavior:'instant'}); } catch(_){}
@@ -347,6 +356,9 @@
   if (startBtn) activateTab(startBtn);
 
   // ==== Категории/услуги ====
+  let currentNetwork = null;
+  let servicesAll = [];                 // кэш услуг выбранной категории
+
   async function loadCategories(){
     if (!catsListEl) return;
     try{
@@ -380,18 +392,23 @@
       catsListEl.appendChild(a);
     });
   }
+
   async function openServices(network, title){
+    currentNetwork = network;
     if (servicesTitle) servicesTitle.textContent = title || 'Услуги';
     showPageByTabName('services');
     renderServicesSkeleton(4);
     try{
       const r = await fetch(`${API_BASE}/services/${network}`);
       const items = await r.json();
-      renderServices(items);
+      servicesAll = Array.isArray(items) ? items : [];
+      if (servicesSearchEl) servicesSearchEl.value = '';
+      applyServicesFilter();
     }catch{
       servicesListEl.innerHTML = '<div class="empty">Не удалось загрузить услуги</div>';
     }
   }
+
   function renderServicesSkeleton(n){
     servicesListEl.innerHTML='';
     for(let i=0;i<n;i++){
@@ -407,8 +424,24 @@
         </div>`);
     }
   }
+
+  // === Поиск по услугам выбранной категории ===
+  function applyServicesFilter(){
+    const q = (servicesSearchEl?.value || '').trim().toLowerCase();
+    const filtered = !q ? servicesAll : servicesAll.filter(s => {
+      const hay = [s.name, s.type, s.category, s.desc].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+    renderServices(filtered);
+  }
+  servicesSearchEl?.addEventListener('input', applyServicesFilter);
+
   function renderServices(items){
     servicesListEl.innerHTML='';
+    if (!Array.isArray(items) || !items.length){
+      servicesListEl.innerHTML = '<div class="empty">Нет услуг в этой категории</div>';
+      return;
+    }
     items.forEach(s=>{
       const row = document.createElement('div');
       row.className = 'service';
@@ -421,13 +454,37 @@
           <div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</div>
           <button class="btn" data-id="${s.service}">Купить</button>
         </div>`;
-      row.querySelector('button').addEventListener('click', ()=> openOrderModal(s));
+      // Вся карточка кликабельна и ведёт на страницу сервиса
+      row.addEventListener('click', ()=> openServicePage(s));
+      // Кнопка «Купить» тоже ведёт туда же
+      row.querySelector('button').addEventListener('click', (e)=>{ e.stopPropagation(); openServicePage(s); });
       servicesListEl.appendChild(row);
     });
   }
-  btnBackToCats?.addEventListener('click', ()=> showPageByTabName('catalog'));
 
-  // ==== Модалка заказа ====
+  // Страница отдельной услуги (пока «рыба», оформим полноценно дальше)
+  function openServicePage(s){
+    if (!s) return;
+    if (serviceTitleEl) serviceTitleEl.textContent = s.name || 'Услуга';
+    if (serviceDetailsEl){
+      serviceDetailsEl.innerHTML = `
+        <div class="card">
+          <h3 class="title">${s.name}</h3>
+          <div class="meta">Тип: ${s.type || '—'} • Мин: ${s.min} • Макс: ${s.max}</div>
+          <div class="meta">Цена от: <b>${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</b></div>
+          <div class="meta">Сервис ID: ${s.service}</div>
+        </div>
+        <div class="card">
+          <div class="meta">Здесь будет полноценная страница с описанием, вводом ссылки, количеством, динамической ценой и оформлением заказа.</div>
+        </div>`;
+    }
+    showPageByTabName('service');
+    try{ history.replaceState(null, '', `#service-${s.service}`); }catch(_){}
+  }
+  btnBackToCats?.addEventListener('click', ()=> showPageByTabName('catalog'));
+  btnBackToServices?.addEventListener('click', ()=> showPageByTabName('services'));
+
+  // ==== Модалка заказа (оставляем для будущего экрана, не вызываем из списка) ====
   const modal        = document.getElementById('orderModal');
   const orderTitle   = document.getElementById('orderTitle');
   const inputLink    = document.getElementById('inputLink');

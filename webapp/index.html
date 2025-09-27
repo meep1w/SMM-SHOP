@@ -47,8 +47,28 @@
     <div class="subheader">
       <button class="back" id="btnBackToCats" aria-label="Назад">←</button>
       <h2 class="subheader-title" id="servicesTitle">Услуги</h2>
+
+      <!-- Поиск по товарам текущей категории -->
+      <div class="search" id="servicesSearchWrap">
+        <svg class="search-ico" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.71.71l.27.28v.79l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z" fill="currentColor"/>
+        </svg>
+        <input id="servicesSearch" type="search" placeholder="Поиск по категории" autocomplete="off" />
+      </div>
+      <!-- /Поиск -->
     </div>
     <div class="services-list" id="servicesList"></div>
+  </section>
+
+  <!-- Новая страница отдельной услуги -->
+  <section id="page-service" class="page">
+    <div class="subheader">
+      <button class="back" id="btnBackToServices" aria-label="Назад">←</button>
+      <h2 class="subheader-title" id="serviceTitle">Услуга</h2>
+    </div>
+    <div class="service-details" id="serviceDetails">
+      <div class="empty">Загрузка…</div>
+    </div>
   </section>
 
   <!-- Избранное / Рефералы / Детализация -->
@@ -69,7 +89,6 @@
     <img class="tab-icon"
          src="static/img/tab-catalog.svg?v=25"
          data-static="static/img/tab-catalog.svg?v=25"
-
          alt="">
     <span>Каталог</span>
   </button>
@@ -78,7 +97,6 @@
     <img class="tab-icon"
          src="static/img/tab-favorites.svg?v=25"
          data-static="static/img/tab-favorites.svg?v=25"
-
          alt="">
     <span>Избранное</span>
   </button>
@@ -87,7 +105,6 @@
     <img class="tab-icon"
          src="static/img/tab-referrals.svg?v=25"
          data-static="static/img/tab-referrals.svg?v=25"
-
          alt="">
     <span>Рефералы</span>
   </button>
@@ -96,7 +113,6 @@
     <img class="tab-icon"
          src="static/img/tab-details.svg?v=25"
          data-static="static/img/tab-details.svg?v=25"
-
          alt="">
     <span>Детализация</span>
   </button>

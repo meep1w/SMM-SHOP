@@ -117,18 +117,54 @@ body{
 .subheader{display:flex; align-items:center; gap:10px; margin:6px 0 10px}
 .subheader .back{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
 .subheader-title{margin:0; font-size:16px; font-weight:800}
+
+/* ---- Новый: поиск в шапке услуг ---- */
+.subheader .search{
+  margin-left:auto;
+  display:flex; align-items:center; gap:8px;
+  background:linear-gradient(180deg,#15181d,#111419);
+  border:1px solid var(--stroke);
+  border-radius:12px;
+  padding:8px 10px;
+  min-width:180px; max-width:100%;
+  flex:1;
+}
+.subheader .search-ico{width:16px; height:16px; color:var(--muted); flex:0 0 16px}
+.subheader .search input{all:unset; font-size:12px; color:var(--text); width:100%}
+.subheader .search input::placeholder{color:var(--muted)}
+.subheader .search input:focus{outline:none}
+
+/* ---- Список услуг ---- */
 .services-list{display:flex; flex-direction:column; gap:10px;}
 .service{
   display:flex; justify-content:space-between; align-items:center; gap:10px;
   padding:14px; border-radius:14px;
   background:linear-gradient(180deg,#15181d,#111419);
   border:1px solid var(--stroke);
+  cursor:pointer;                                   /* вся карточка кликабельна */
+  transition:transform .08s ease, border-color .2s ease, background .2s ease;
 }
+.service:hover{ transform:translateY(-1px); border-color:var(--stroke-2) }
+.service:active{ transform:translateY(0) }
 .service .left{display:flex; flex-direction:column; gap:4px}
 .service .name{font-weight:700}
 .service .meta{font-size:12px; color:var(--muted)}
 .service .price{font-weight:800; color:#ff6b6b}
-.service .btn{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer;}
+.service .btn{
+  appearance:none; border:1px solid var(--stroke);
+  background:var(--surface-2); color:var(--text);
+  border-radius:10px; padding:8px 10px; cursor:pointer;
+}
+
+/* ===== Страница отдельной услуги (новая) ===== */
+.service-details{display:flex; flex-direction:column; gap:12px}
+.service-details .card{
+  background:linear-gradient(180deg,#15181d,#111419);
+  border:1px solid var(--stroke);
+  border-radius:14px; padding:14px;
+}
+.service-details .title{font-weight:800; font-size:16px; margin:0 0 6px}
+.service-details .meta{font-size:12px; color:var(--muted)}
 
 /* ===== Skeleton ===== */
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
@@ -208,4 +244,6 @@ body, .page, .app-main, .cats-list, .services-list{ -ms-overflow-style:none; scr
 body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar, .cats-list::-webkit-scrollbar, .services-list::-webkit-scrollbar{ width:0; height:0 }
 
 /* Responsive */
-@media (min-width:520px){ .nick{max-width:220px} }
+@media (min-width:520px){
+  .nick{max-width:220px}
+}
