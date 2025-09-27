@@ -1,6 +1,5 @@
 /* Slovekiza Mini-App
- * - Плавные Lottie-иконки таббара (с фолбэком на статичные/GIF)
- * - Стабильный запуск GIF (cache-busting) и возврат к статике
+ * - Таббар: MP4 (предпочтительно) → GIF (фолбэк) → статика; опционально Lottie
  * - Пополнение через CryptoBot (инвойс)
  * - Поп-ап «Оплата прошла успешно» по server-side флагу topup_delta
  * - Категории/услуги/создание заказа
@@ -28,7 +27,7 @@
     catalog:   document.getElementById('page-categories'),
     services:  document.getElementById('page-services'),
     favs:      document.getElementById('page-favs'),
-    refs:      document.getElementById('page-refs'),      // может не существовать (ок)
+    refs:      document.getElementById('page-refs'),
     details:   document.getElementById('page-details'),
   };
 
@@ -37,8 +36,8 @@
   const servicesTitle  = document.getElementById('servicesTitle');
   const btnBackToCats  = document.getElementById('btnBackToCats');
 
-  // ==== Поп-ап успешного пополнения (оверлей) ====
-  (function injectTopupOverlayCSS(){
+  // ==== CSS-инъекции для оверлея и таб-видео ====
+  (function injectCSS(){
     const css = `
       #topupOverlay{position:fixed;inset:0;z-index:99999;background:rgba(10,12,16,.92);
         display:none;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(4px)}
@@ -56,9 +55,12 @@
         background:linear-gradient(180deg,#2b81f7 0%,#1f6cdc 100%);color:#fff;font:600 15px/1 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
         box-shadow:0 8px 20px rgba(43,129,247,.35)}
       .topup-ok:active{transform:translateY(1px)}
+      .tab .tab-vid{width:22px;height:22px;display:none;object-fit:contain;pointer-events:none}
     `;
     const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s);
   })();
+
+  // ==== Оверлей успешного пополнения ====
   let overlay = document.getElementById('topupOverlay');
   if (!overlay){
     overlay = document.createElement('div');
@@ -159,10 +161,11 @@
     }catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
 
-  // ==== Таббар: Lottie (если есть) ИЛИ стабильные GIF ====
-  const lottieMap = new Map();           // btn -> lottieInstance
+  // ==== Таббар: Lottie / MP4 / GIF ====
+  const lottieMap = new Map();           // btn -> lottieInstance (если будет)
   const gifTimers = new WeakMap();       // img -> timeoutId
-  const TAB_GIF_DEFAULT_MS = 1100;       // дефолтная длительность GIF (можно менять)
+  const videoMap  = new WeakMap();       // img -> video
+  const TAB_GIF_DEFAULT_MS = 1100;       // дефолтная длительность GIF
 
   function pageIdByTabName(name){
     if (name === 'catalog' || name === 'categories') return 'page-categories';
@@ -180,32 +183,27 @@
       'page-favs':       pages.favs,
       'page-refs':       pages.refs,
       'page-details':    pages.details,
-    }).forEach(el => { if (el) el?.classList.remove('active'); });
-    const el = document.getElementById(targetId);
-    if (el) el.classList.add('active');
+    }).forEach(el => { el?.classList.remove('active'); });
+    document.getElementById(targetId)?.classList.add('active');
     try { window.scrollTo({top:0, behavior:'instant'}); } catch(_){}
   }
 
-  // 1) Инициализация Lottie (если подключишь lottie-web)
+  // 1) Инициализация Lottie (если используешь контейнеры .tab-lottie)
   function initLottieTabs(){
     const hasLottieLib = !!window.lottie;
     document.querySelectorAll('.tabbar .tab').forEach((btn)=>{
-      const iconBox = btn.querySelector('.tab-lottie'); // будет работать, если заменишь <img> на контейнер
+      const iconBox = btn.querySelector('.tab-lottie');
       if (!iconBox) return;
 
       const fallback = iconBox.getAttribute('data-fallback');
       if (fallback) iconBox.style.backgroundImage = `url("${fallback}")`;
-      if (!hasLottieLib) return; // останется фолбэк
+      if (!hasLottieLib) return;
 
       const jsonUrl = iconBox.getAttribute('data-lottie');
       if (!jsonUrl) return;
 
       const anim = window.lottie.loadAnimation({
-        container: iconBox,
-        renderer: 'svg',
-        loop: false,
-        autoplay: false,
-        path: jsonUrl,
+        container: iconBox, renderer: 'svg', loop: false, autoplay: false, path: jsonUrl,
         rendererSettings: { preserveAspectRatio: 'xMidYMid meet', progressiveLoad: true }
       });
       iconBox.classList.add('has-lottie');
@@ -215,31 +213,85 @@
     });
   }
 
-  // 2) Прелоад статичных и анимированных GIF
+  // 2) MP4: создать/получить <video> для иконки
+  function ensureTabVideo(img){
+    if (!img?.dataset?.video) return null;
+    let v = videoMap.get(img);
+    if (v) return v;
+
+    v = document.createElement('video');
+    v.className = 'tab-vid';
+    v.muted = true;
+    v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    v.preload = 'auto';
+    v.src = img.dataset.video;
+
+    // подогнать размер
+    v.width = img.width || 22;
+    v.height = img.height || 22;
+
+    img.insertAdjacentElement('afterend', v);
+
+    v.addEventListener('ended', ()=>{
+      v.pause();
+      try { v.currentTime = 0; } catch(_){}
+      v.style.display = 'none';
+      img.style.display = '';
+    });
+
+    videoMap.set(img, v);
+    return v;
+  }
+  function playTabVideo(img){
+    const v = ensureTabVideo(img);
+    if (!v) return false;
+
+    img.style.display = 'none';
+    v.style.display = '';
+    try { v.currentTime = 0; } catch(_){}
+    const p = v.play();
+    if (p && typeof p.catch === 'function'){
+      p.catch(()=>{ // если автоплей заблокирован — фолбэк на GIF
+        v.style.display = 'none';
+        img.style.display = '';
+        playTabGif(img);
+      });
+    }
+    return true;
+  }
+  function stopTabVideo(img){
+    const v = videoMap.get(img);
+    if (!v) return;
+    try { v.pause(); v.currentTime = 0; } catch(_){}
+    v.style.display = 'none';
+    img.style.display = '';
+  }
+
+  // 3) GIF-фолбэк (cache-busting + откат)
   function preloadTabIcons(){
     document.querySelectorAll('.tabbar .tab .tab-icon').forEach(img=>{
       const s = img.dataset.static;
       const a = img.dataset.anim;
       if (s) { const i = new Image(); i.src = s; }
       if (a) { const i = new Image(); i.src = a; }
+      // прелоад MP4 (молчаливо)
+      if (img.dataset.video) {
+        ensureTabVideo(img); // создадим и подготовим тэг <video>
+      }
     });
   }
-
-  // 3) Стабильный запуск GIF с cache-busting + откат на статику
   function playTabGif(img){
     const animUrl   = img?.dataset?.anim;
     const staticUrl = img?.dataset?.static || img?.src;
     if (!animUrl) return;
 
-    // сбить предыдущий таймер
     const prev = gifTimers.get(img);
     if (prev) clearTimeout(prev);
 
-    // перезапустить GIF за счёт ?t=timestamp (обход кэша)
     const bust = (animUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
     img.src = animUrl + bust;
 
-    // длительность можно задать через data-ms="1000" или data-duration
     const msAttr = parseInt(img.dataset.ms || img.dataset.duration || '', 10);
     const ms = Number.isFinite(msAttr) ? msAttr : TAB_GIF_DEFAULT_MS;
 
@@ -247,7 +299,7 @@
     gifTimers.set(img, tid);
   }
 
-  // 4) Активация вкладки: включить нужную страницу, стиль, анимацию
+  // 4) Активация вкладки
   function activateTab(btn){
     document.querySelectorAll('.tabbar .tab').forEach(b=>{
       const active = (b === btn);
@@ -257,16 +309,22 @@
       const img = b.querySelector('.tab-icon');
 
       if (active){
-        if (lottie) { lottie.goToAndPlay(0, true); }
-        else if (img) { playTabGif(img); }
-      } else {
-        // неактивной вкладке вернуть статику
-        if (!lottie && img && img.dataset.static) {
-          const prev = gifTimers.get(img);
-          if (prev) clearTimeout(prev);
-          img.src = img.dataset.static;
+        if (lottie) {
+          lottie.goToAndPlay(0, true);
+        } else if (img) {
+          // приоритет: MP4 → GIF → статика
+          if (!playTabVideo(img)) playTabGif(img);
         }
+      } else {
         if (lottie) { lottie.goToAndStop(0, true); }
+        if (img) {
+          stopTabVideo(img);
+          if (img.dataset.static) {
+            const prev = gifTimers.get(img);
+            if (prev) clearTimeout(prev);
+            img.src = img.dataset.static;
+          }
+        }
       }
     });
 
@@ -282,7 +340,7 @@
   preloadTabIcons();
   initLottieTabs();
 
-  // стартовая вкладка — ищем catalog|categories
+  // стартовая вкладка
   const startBtn = document.querySelector('.tabbar .tab[data-tab="catalog"]')
       || document.querySelector('.tabbar .tab[data-tab="categories"]')
       || document.querySelector('.tabbar .tab');

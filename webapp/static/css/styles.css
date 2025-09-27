@@ -144,7 +144,7 @@ body{
 .tabbar{
   position:fixed; left:0; right:0; bottom:env(safe-area-inset-bottom); z-index:20;
   height:var(--tabbarH);
-  display:grid; grid-template-columns:repeat(4,1fr); gap:8px; padding:10px 12px;
+  display:grid; grid-template-columns:repeat(4,1fr); gap:8px; padding:10px 12px 100px 12px;
   background:rgba(14,16,20,.92); backdrop-filter:blur(8px);
   border:1px solid var(--stroke);
   border-radius:var(--radius) var(--radius) 0 0;
@@ -165,7 +165,7 @@ body{
 .tab:active{transform:scale(.98)}
 .tab.active{background:#181c22; color:var(--text); border-color:#2b3140}
 .tab .tab-icon{width:22px; height:22px; display:block; image-rendering:auto}
-
+.tab .tab-vid{width:22px;height:22px;display:none;object-fit:contain;pointer-events:none}
 .tab.active .tab-icon{opacity:1}
 
 /* ===== Modal ===== */
