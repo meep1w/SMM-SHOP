@@ -491,4 +491,41 @@
 
   // ==== Старт ====
   loadCategories();
+
+  // ===== Поднятие таббара при появлении экранной клавиатуры
+  (function keyboardLift(){
+    const root = document.documentElement;
+
+    function applyKbInset(px){
+      // не дергать интерфейс из-за мелких колебаний
+      const v = px > 40 ? px : 0;
+      root.style.setProperty('--kb', v + 'px');
+    }
+
+    // 1) VisualViewport (iOS/Android браузеры)
+    if (window.visualViewport){
+      const vv = window.visualViewport;
+      const handler = () => {
+        // высота «клавиатуры» ≈ разница между window.innerHeight и видимой частью
+        const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        applyKbInset(inset);
+      };
+      vv.addEventListener('resize', handler);
+      vv.addEventListener('scroll', handler);
+      handler();
+    }
+
+    // 2) Telegram WebApp API (если доступен)
+    try{
+      const tg = window.Telegram?.WebApp;
+      tg?.onEvent?.('viewportChanged', (e)=>{
+        // e.height или tg.viewportHeight — видимая часть
+        const vh = (e && (e.height || e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
+        if (!vh) return;
+        const inset = Math.max(0, window.innerHeight - vh);
+        applyKbInset(inset);
+      });
+    }catch(_){}
+  })();
+
 })();
