@@ -41,6 +41,8 @@
   const serviceDetailsEl   = document.getElementById('serviceDetails');
   const btnBackToServices  = document.getElementById('btnBackToServices');
 
+  const favsListEl = document.getElementById('favsList');
+
   // ==== Вспомогательные ====
   function curSign(c){ return c==='RUB'?' ₽':(c==='USD'?' $':` ${c}`); }
 
@@ -166,8 +168,9 @@
     document.querySelectorAll('.tabbar .tab').forEach(b=>{
       b.classList.toggle('active', b===btn);
     });
-    showPageByTabName(btn?.dataset?.tab || 'catalog');
-    if (btn?.dataset?.tab === 'favs') renderFavs();
+    const tab = btn?.dataset?.tab || 'catalog';
+    showPageByTabName(tab);
+    if (tab === 'favs') loadFavorites();
   }
   document.querySelectorAll('.tabbar .tab').forEach(btn=>{
     btn.addEventListener('click', ()=> activateTab(btn));
@@ -282,32 +285,71 @@
     });
   }
 
-  // ====== Избранное (localStorage) ======
-  function favLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]') } catch(_){ return [] } }
-  function favSave(arr){ localStorage.setItem('smm_favs', JSON.stringify(arr||[])); }
-  function favHas(id){ return favLoad().some(x => x.id === id); }
-  function favAdd(item){ const a = favLoad(); if (!a.some(x=>x.id===item.id)) { a.push(item); favSave(a); } }
-  function favRemove(id){ favSave(favLoad().filter(x=>x.id!==id)); }
-  function renderFavs(){
-    const box = pages.favs?.querySelector('.fav-list') || (()=>{
-      const div = document.createElement('div'); div.className = 'fav-list'; pages.favs?.appendChild(div); return div;
-    })();
-    const items = favLoad();
-    box.innerHTML = '';
-    if (!items.length){ box.innerHTML = '<div class="empty">Избранных услуг пока нет.</div>'; return; }
+  // ====== Избранное ======
+  function extraFavsLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs_extra') || '[]') } catch(_){ return [] } }
+  function extraFavsSave(arr){ localStorage.setItem('smm_favs_extra', JSON.stringify(arr||[])); }
+  function extraFavsHas(id){ return extraFavsLoad().some(x => x.service === id); }
+  function extraFavsAdd(svc){ const a = extraFavsLoad(); if (!a.some(x=>x.service===svc.service)) { a.push(svc); extraFavsSave(a); } }
+  function extraFavsRemove(id){ extraFavsSave(extraFavsLoad().filter(x=>x.service!==id)); }
+
+  async function loadFavorites(){
+    if (!favsListEl) return;
+
+    // skeleton 3 шт.
+    favsListEl.innerHTML = '';
+    for(let i=0;i<3;i++){
+      favsListEl.insertAdjacentHTML('beforeend', `
+        <div class="skeleton">
+          <div class="skel-row">
+            <div class="skel-avatar"></div>
+            <div class="skel-lines">
+              <div class="skel-line"></div>
+              <div class="skel-line short"></div>
+            </div>
+          </div>
+        </div>`);
+    }
+
+    try{
+      const qp = new URLSearchParams({ user_id: String(userId || seq) });
+      const r = await fetch(`${API_BASE}/favorites?${qp.toString()}`);
+      const serverItems = (await r.json()) || [];
+
+      // дополняем локально добавленными
+      const extra = extraFavsLoad();
+      const extraFiltered = extra.filter(x => !serverItems.some(s => s.service === x.service));
+      const items = serverItems.concat(extraFiltered);
+
+      renderFavCards(items);
+      window._favIdsServer = new Set(serverItems.map(x=>x.service));
+    }catch{
+      favsListEl.innerHTML = `<div class="empty" style="opacity:.9; padding:14px 6px;">Не удалось загрузить избранное</div>`;
+    }
+  }
+
+  function renderFavCards(items){
+    favsListEl.innerHTML = '';
+    if (!Array.isArray(items) || !items.length){
+      favsListEl.innerHTML = `<div class="empty" style="opacity:.9; padding:14px 6px;">
+        Избранное появится здесь.<br>Избранных услуг пока нет.
+      </div>`;
+      return;
+    }
     items.forEach(s=>{
       const row = document.createElement('div');
       row.className = 'service';
       row.innerHTML = `
         <div class="left">
           <div class="name">${s.name}</div>
-          <div class="meta">Сервис ID: ${s.id}${s.network ? ' • ' + s.network : ''}</div>
+          <div class="meta">Тип: ${s.type} • Мин: ${s.min} • Макс: ${s.max}</div>
         </div>
         <div class="right">
-          <button class="btn" data-id="${s.id}">Открыть</button>
+          <div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</div>
+          <button class="btn">Открыть</button>
         </div>`;
-      row.querySelector('button').addEventListener('click', ()=> openServicePage(s._raw || {service:s.id, name:s.name, min:s.min||1, max:s.max||100000, rate_client_1000:s.rate||0, currency:s.currency||currentCurrency}));
-      box.appendChild(row);
+      row.addEventListener('click', ()=> openServicePage(s));
+      row.querySelector('button').addEventListener('click', (e)=>{ e.stopPropagation(); openServicePage(s); });
+      favsListEl.appendChild(row);
     });
   }
 
@@ -447,14 +489,18 @@
       alert('Промокод принят (визуально). Скидка будет применена при обработке заказа.');
     });
 
-    const isFav = favHas(s.service);
+    // состояние избранного: сначала считаем, что в избранном, если пришло с бэка, плюс локально добавленные
+    const serverFavs = (window._favIdsServer instanceof Set) ? window._favIdsServer : new Set();
+    const isFav = serverFavs.has(s.service) || extraFavsHas(s.service);
     favToggle.checked = isFav;
     favToggle.addEventListener('change', ()=>{
       if (favToggle.checked){
-        favAdd({ id: s.service, name: s.name, network: currentNetwork, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency, _raw:s });
+        extraFavsAdd(s);      // добавим локально
       } else {
-        favRemove(s.service);
+        extraFavsRemove(s.service);
       }
+      // если открыта вкладка избранного — обновим список
+      if (pages.favs?.classList.contains('active')) loadFavorites();
     });
 
     btnCreate?.addEventListener('click', async ()=>{
@@ -497,16 +543,13 @@
     const root = document.documentElement;
 
     function applyKbInset(px){
-      // не дергать интерфейс из-за мелких колебаний
       const v = px > 40 ? px : 0;
       root.style.setProperty('--kb', v + 'px');
     }
 
-    // 1) VisualViewport (iOS/Android браузеры)
     if (window.visualViewport){
       const vv = window.visualViewport;
       const handler = () => {
-        // высота «клавиатуры» ≈ разница между window.innerHeight и видимой частью
         const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
         applyKbInset(inset);
       };
@@ -515,11 +558,9 @@
       handler();
     }
 
-    // 2) Telegram WebApp API (если доступен)
     try{
       const tg = window.Telegram?.WebApp;
       tg?.onEvent?.('viewportChanged', (e)=>{
-        // e.height или tg.viewportHeight — видимая часть
         const vh = (e && (e.height || e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
         if (!vh) return;
         const inset = Math.max(0, window.innerHeight - vh);

@@ -3,10 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0e1013">
   <title>Slovekiza — Магазин SMM</title>
+
   <link rel="stylesheet" href="static/css/styles.css?v=40">
   <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script defer src="static/js/app.js?v=40"></script>
+  <script defer src="static/js/app.js?v=41"></script>
 </head>
 <body>
 
@@ -73,17 +75,19 @@
 
   <!-- Избранное / Рефералы / Детализация -->
   <section id="page-favs" class="page">
-    <div class="empty">Избранное появится здесь.</div>
+    <div class="services-list" id="favsList"></div>
   </section>
+
   <section id="page-refs" class="page">
     <div class="empty">Реферальная система скоро будет доступна.</div>
   </section>
+
   <section id="page-details" class="page">
     <div class="empty">История заказов появится здесь.</div>
   </section>
 </main>
 
-<!-- ===== Bottom Tabbar (4 вкладки + GIF-анимация на клик) ===== -->
+<!-- ===== Bottom Tabbar ===== -->
 <nav class="tabbar" id="tabbar">
   <button class="tab active" data-tab="catalog" aria-label="Каталог">
     <img class="tab-icon"
@@ -118,7 +122,7 @@
   </button>
 </nav>
 
-<!-- ===== Simple modal for order ===== -->
+<!-- ===== Simple modal for order (оставляем как фолбэк) ===== -->
 <div class="modal" id="orderModal" aria-hidden="true">
   <div class="modal-backdrop"></div>
   <div class="modal-card">
