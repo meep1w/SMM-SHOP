@@ -2,6 +2,7 @@
  * - Пополнение через CryptoBot (инвойс)
  * - Поп-ап «Оплата прошла успешно» по server-side флагу topup_delta
  * - Категории / Услуги / Полная страница создания заказа
+ * - Избранное синхронизировано с сервером
  */
 (function () {
   const tg = window.Telegram?.WebApp;
@@ -41,12 +42,10 @@
   const serviceDetailsEl   = document.getElementById('serviceDetails');
   const btnBackToServices  = document.getElementById('btnBackToServices');
 
-  const favsListEl = document.getElementById('favsList');
-
-  // ==== Вспомогательные ====
+  // ==== Helpers ====
   function curSign(c){ return c==='RUB'?' ₽':(c==='USD'?' $':` ${c}`); }
 
-  // ==== Оверлей успешного пополнения (минимум стилей в CSS) ====
+  // ==== Topup overlay ====
   function showTopupOverlay(delta, currency){
     const id='topupOverlay';
     let overlay = document.getElementById(id);
@@ -76,7 +75,7 @@
     overlay.style.display = 'flex';
   }
 
-  // ==== Идентификация/профиль ====
+  // ==== Profile ====
   let userId = null; try { userId = tg?.initDataUnsafe?.user?.id || null; } catch(_) {}
   function urlNick(){ try{const p=new URLSearchParams(location.search);const v=p.get('n');return v?decodeURIComponent(v):null;}catch(_){return null;} }
   const nickFromUrl = urlNick();
@@ -129,7 +128,7 @@
   window.addEventListener('focus', fetchProfile);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchProfile(); });
 
-  // ==== Пополнение ====
+  // ==== Topup ====
   btnTopup?.addEventListener('click', async ()=>{
     try{
       const s = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
@@ -147,7 +146,7 @@
     }catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
 
-  // ==== Таббар (без анимаций) ====
+  // ==== Tabs ====
   function pageIdByTabName(name){
     if (name === 'catalog' || name === 'categories') return 'page-categories';
     if (name === 'favs' || name === 'favorites')     return 'page-favs';
@@ -165,16 +164,11 @@
     try { window.scrollTo({top:0, behavior:'instant'}); } catch(_){}
   }
   function activateTab(btn){
-    document.querySelectorAll('.tabbar .tab').forEach(b=>{
-      b.classList.toggle('active', b===btn);
-    });
-    const tab = btn?.dataset?.tab || 'catalog';
-    showPageByTabName(tab);
-    if (tab === 'favs') loadFavorites();
+    document.querySelectorAll('.tabbar .tab').forEach(b=> b.classList.toggle('active', b===btn));
+    showPageByTabName(btn?.dataset?.tab || 'catalog');
+    if (btn?.dataset?.tab === 'favs') renderFavs();
   }
-  document.querySelectorAll('.tabbar .tab').forEach(btn=>{
-    btn.addEventListener('click', ()=> activateTab(btn));
-  });
+  document.querySelectorAll('.tabbar .tab').forEach(btn=> btn.addEventListener('click', ()=> activateTab(btn)));
   const startBtn = document.querySelector('.tabbar .tab[data-tab="catalog"]')
                  || document.querySelector('.tabbar .tab[data-tab="categories"]')
                  || document.querySelector('.tabbar .tab');
@@ -250,7 +244,7 @@
     }
   }
 
-  // Поиск по услугам выбранной категории
+  // Поиск в категории
   function applyServicesFilter(){
     const q = (servicesSearchEl?.value || '').trim().toLowerCase();
     const filtered = !q ? servicesAll : servicesAll.filter(s => {
@@ -285,75 +279,65 @@
     });
   }
 
-  // ====== Избранное ======
-  function extraFavsLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs_extra') || '[]') } catch(_){ return [] } }
-  function extraFavsSave(arr){ localStorage.setItem('smm_favs_extra', JSON.stringify(arr||[])); }
-  function extraFavsHas(id){ return extraFavsLoad().some(x => x.service === id); }
-  function extraFavsAdd(svc){ const a = extraFavsLoad(); if (!a.some(x=>x.service===svc.service)) { a.push(svc); extraFavsSave(a); } }
-  function extraFavsRemove(id){ extraFavsSave(extraFavsLoad().filter(x=>x.service!==id)); }
+  // ===== Избранное — сервер (с локальным кэшем на оффлайн) =====
+  function favCacheLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]') } catch(_){ return [] } }
+  function favCacheSave(arr){ localStorage.setItem('smm_favs', JSON.stringify(arr||[])); }
 
-  async function loadFavorites(){
-    if (!favsListEl) return;
-
-    // skeleton 3 шт.
-    favsListEl.innerHTML = '';
-    for(let i=0;i<3;i++){
-      favsListEl.insertAdjacentHTML('beforeend', `
-        <div class="skeleton">
-          <div class="skel-row">
-            <div class="skel-avatar"></div>
-            <div class="skel-lines">
-              <div class="skel-line"></div>
-              <div class="skel-line short"></div>
-            </div>
-          </div>
-        </div>`);
-    }
-
-    try{
-      const qp = new URLSearchParams({ user_id: String(userId || seq) });
-      const r = await fetch(`${API_BASE}/favorites?${qp.toString()}`);
-      const serverItems = (await r.json()) || [];
-
-      // дополняем локально добавленными
-      const extra = extraFavsLoad();
-      const extraFiltered = extra.filter(x => !serverItems.some(s => s.service === x.service));
-      const items = serverItems.concat(extraFiltered);
-
-      renderFavCards(items);
-      window._favIdsServer = new Set(serverItems.map(x=>x.service));
-    }catch{
-      favsListEl.innerHTML = `<div class="empty" style="opacity:.9; padding:14px 6px;">Не удалось загрузить избранное</div>`;
-    }
+  async function favFetchServer(){
+    const uid = (userId || seq);
+    const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
+    if (!r.ok) throw 0;
+    const items = await r.json();
+    favCacheSave(items.map(s => ({ id: s.service, name: s.name, network: s.network, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency })));
+    return items;
   }
 
-  function renderFavCards(items){
-    favsListEl.innerHTML = '';
-    if (!Array.isArray(items) || !items.length){
-      favsListEl.innerHTML = `<div class="empty" style="opacity:.9; padding:14px 6px;">
-        Избранное появится здесь.<br>Избранных услуг пока нет.
-      </div>`;
-      return;
+  async function favAddServer(serviceId){
+    const r = await fetch(`${API_BASE}/favorites`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ user_id: (userId || seq), service_id: serviceId })
+    });
+    if (!r.ok) throw new Error(await r.text());
+  }
+
+  async function favRemoveServer(serviceId){
+    const url = `${API_BASE}/favorites?user_id=${encodeURIComponent(userId||seq)}&service_id=${encodeURIComponent(serviceId)}`;
+    const r = await fetch(url, { method:'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
+  }
+
+  async function renderFavs(){
+    const box = pages.favs?.querySelector('.fav-list') || (()=>{ const d=document.createElement('div'); d.className='fav-list'; pages.favs?.appendChild(d); return d; })();
+    box.innerHTML = '<div class="empty">Загрузка…</div>';
+    let items = [];
+    try { items = await favFetchServer(); }
+    catch {
+      items = favCacheLoad().map(s => ({
+        service: s.id, name: s.name, network:s.network, min:s.min||1, max:s.max||100000, rate_client_1000:s.rate||0, currency:s.currency||'RUB'
+      }));
     }
+
+    if (!items.length){ box.innerHTML = '<div class="empty">Избранных услуг пока нет.</div>'; return; }
+
+    box.innerHTML = '';
     items.forEach(s=>{
       const row = document.createElement('div');
       row.className = 'service';
       row.innerHTML = `
         <div class="left">
           <div class="name">${s.name}</div>
-          <div class="meta">Тип: ${s.type} • Мин: ${s.min} • Макс: ${s.max}</div>
+          <div class="meta">ID: ${s.service}${s.network ? ' • ' + s.network : ''}</div>
         </div>
         <div class="right">
           <div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</div>
-          <button class="btn">Открыть</button>
+          <button class="btn" data-id="${s.service}">Открыть</button>
         </div>`;
-      row.addEventListener('click', ()=> openServicePage(s));
-      row.querySelector('button').addEventListener('click', (e)=>{ e.stopPropagation(); openServicePage(s); });
-      favsListEl.appendChild(row);
+      row.querySelector('button').addEventListener('click', ()=> openServicePage(s));
+      box.appendChild(row);
     });
   }
 
-  // ====== Полная страница сервиса ======
+  // ===== Полная страница услуги =====
   function presetValues(min, max){
     const base = [100, 500, 1000, 2500, 5000, 10000];
     const arr = base.filter(q => q>=min && q<=max);
@@ -366,7 +350,7 @@
   }
   function priceFor(q, s){ return Math.max(0, Number(s.rate_client_1000||0) * Number(q||0) / 1000); }
 
-  function openServicePage(s){
+  async function openServicePage(s){
     if (!s) return;
     const min = Number(s.min||1), max = Number(s.max||100000);
     const presets = presetValues(min, max);
@@ -375,7 +359,6 @@
 
     if (serviceTitleEl) serviceTitleEl.textContent = s.name || 'Услуга';
 
-    // Разметка без дублирующего «хедера» с иконкой
     serviceDetailsEl.innerHTML = `
       <div class="svc">
         <div class="card">
@@ -426,7 +409,6 @@
       </div>
     `;
 
-    // Инициализация пресетов
     const qtyGrid   = document.getElementById('qtyGrid');
     const qtyInput  = document.getElementById('svcQty');
     const chipMin   = document.getElementById('chipMin');
@@ -489,18 +471,22 @@
       alert('Промокод принят (визуально). Скидка будет применена при обработке заказа.');
     });
 
-    // состояние избранного: сначала считаем, что в избранном, если пришло с бэка, плюс локально добавленные
-    const serverFavs = (window._favIdsServer instanceof Set) ? window._favIdsServer : new Set();
-    const isFav = serverFavs.has(s.service) || extraFavsHas(s.service);
+    // актуальный статус в избранном
+    const isFav = await (async()=>{
+      try{ const list = await favFetchServer(); return list.some(x=>Number(x.service)===Number(s.service)); }
+      catch { return (favCacheLoad().some(x=>x.id===s.service)); }
+    })();
     favToggle.checked = isFav;
-    favToggle.addEventListener('change', ()=>{
-      if (favToggle.checked){
-        extraFavsAdd(s);      // добавим локально
-      } else {
-        extraFavsRemove(s.service);
+
+    favToggle.addEventListener('change', async ()=>{
+      try{
+        if (favToggle.checked) await favAddServer(s.service);
+        else await favRemoveServer(s.service);
+        try { await favFetchServer(); } catch(_){}
+      }catch(e){
+        favToggle.checked = !favToggle.checked;
+        alert('Не удалось обновить избранное: ' + (e?.message||e));
       }
-      // если открыта вкладка избранного — обновим список
-      if (pages.favs?.classList.contains('active')) loadFavorites();
     });
 
     btnCreate?.addEventListener('click', async ()=>{
@@ -535,18 +521,13 @@
   btnBackToCats?.addEventListener('click', ()=> showPageByTabName('catalog'));
   btnBackToServices?.addEventListener('click', ()=> showPageByTabName('services'));
 
-  // ==== Старт ====
+  // ==== Start ====
   loadCategories();
 
-  // ===== Поднятие таббара при появлении экранной клавиатуры
+  // ==== Поднятие таббара при клавиатуре ====
   (function keyboardLift(){
     const root = document.documentElement;
-
-    function applyKbInset(px){
-      const v = px > 40 ? px : 0;
-      root.style.setProperty('--kb', v + 'px');
-    }
-
+    function applyKbInset(px){ const v = px > 40 ? px : 0; root.style.setProperty('--kb', v + 'px'); }
     if (window.visualViewport){
       const vv = window.visualViewport;
       const handler = () => {
@@ -557,7 +538,6 @@
       vv.addEventListener('scroll', handler);
       handler();
     }
-
     try{
       const tg = window.Telegram?.WebApp;
       tg?.onEvent?.('viewportChanged', (e)=>{

@@ -3,18 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0e1013">
   <title>Slovekiza — Магазин SMM</title>
-
-  <link rel="stylesheet" href="static/css/styles.css?v=40">
+  <link rel="stylesheet" href="static/css/styles.css?v=42">
   <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script defer src="static/js/app.js?v=41"></script>
+  <script defer src="static/js/app.js?v=42"></script>
 </head>
 <body>
 
 <!-- ===== Header ===== -->
 <header class="app-header" id="appHeader">
-  <!-- Кликабельная зона профиля -->
   <div class="hdr-left" id="profileBtn" role="button" tabindex="0" aria-label="Профиль">
     <img id="avatar" class="avatar" src="" alt="">
     <div class="nick-wrap">
@@ -23,7 +20,6 @@
     </div>
   </div>
 
-  <!-- Справа — баланс и плюс -->
   <div class="hdr-right">
     <div class="balance">
       <span class="balance-label">Баланс</span>
@@ -75,13 +71,11 @@
 
   <!-- Избранное / Рефералы / Детализация -->
   <section id="page-favs" class="page">
-    <div class="services-list" id="favsList"></div>
+    <div class="fav-list"></div>
   </section>
-
   <section id="page-refs" class="page">
     <div class="empty">Реферальная система скоро будет доступна.</div>
   </section>
-
   <section id="page-details" class="page">
     <div class="empty">История заказов появится здесь.</div>
   </section>
@@ -90,39 +84,27 @@
 <!-- ===== Bottom Tabbar ===== -->
 <nav class="tabbar" id="tabbar">
   <button class="tab active" data-tab="catalog" aria-label="Каталог">
-    <img class="tab-icon"
-         src="static/img/tab-catalog.svg?v=25"
-         data-static="static/img/tab-catalog.svg?v=25"
-         alt="">
+    <img class="tab-icon" src="static/img/tab-catalog.svg?v=25" data-static="static/img/tab-catalog.svg?v=25" alt="">
     <span>Каталог</span>
   </button>
 
   <button class="tab" data-tab="favs" aria-label="Избранное">
-    <img class="tab-icon"
-         src="static/img/tab-favorites.svg?v=25"
-         data-static="static/img/tab-favorites.svg?v=25"
-         alt="">
+    <img class="tab-icon" src="static/img/tab-favorites.svg?v=25" data-static="static/img/tab-favorites.svg?v=25" alt="">
     <span>Избранное</span>
   </button>
 
   <button class="tab" data-tab="refs" aria-label="Рефералы">
-    <img class="tab-icon"
-         src="static/img/tab-referrals.svg?v=25"
-         data-static="static/img/tab-referrals.svg?v=25"
-         alt="">
+    <img class="tab-icon" src="static/img/tab-referrals.svg?v=25" data-static="static/img/tab-referrals.svg?v=25" alt="">
     <span>Рефералы</span>
   </button>
 
   <button class="tab" data-tab="details" aria-label="Детализация">
-    <img class="tab-icon"
-         src="static/img/tab-details.svg?v=25"
-         data-static="static/img/tab-details.svg?v=25"
-         alt="">
+    <img class="tab-icon" src="static/img/tab-details.svg?v=25" data-static="static/img/tab-details.svg?v=25" alt="">
     <span>Детализация</span>
   </button>
 </nav>
 
-<!-- ===== Simple modal for order (оставляем как фолбэк) ===== -->
+<!-- ===== Простая модалка (оставили для совместимости, но не используется для заказа) ===== -->
 <div class="modal" id="orderModal" aria-hidden="true">
   <div class="modal-backdrop"></div>
   <div class="modal-card">
