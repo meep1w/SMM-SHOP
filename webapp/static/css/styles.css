@@ -196,7 +196,7 @@ body{
 .svc .promo-wrap{display:none; gap:8px; align-items:center; margin-top:10px}
 .svc .promo-wrap.show{display:flex}
 .svc .promo-wrap input{flex:1; min-width:0; background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:12px; padding:12px}
-.svc .promo-wrap .chip{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color:#6ea8ff;
+.svc .promo-wrap .chip{appearance:none; border:1px solid var(--stroke); background:var(--surface-2); color: #ff6e6e;
   border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:600}
 
 /* Итого + кнопка */
@@ -204,7 +204,7 @@ body{
 .svc .sum-row{display:flex; align-items:center; justify-content:space-between; font-size:14px}
 .svc .sum-row b{font-weight:800}
 .svc .btn-primary{width:100%; padding:12px 16px; border-radius:14px; border:0; cursor:pointer;
-  background:linear-gradient(180deg,#2b81f7 0%,#1f6cdc 100%); color:#fff; font:700 14px/1 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  background:linear-gradient(180deg,#ff6b6b 0%, #ff3e3e 100%); color:#fff; font:700 14px/1 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
 
 /* Описание */
 .svc .desc{font-size:12px; color:var(--muted)}
@@ -217,7 +217,7 @@ body{
 .svc .switch input{opacity:0; width:0; height:0}
 .svc .slider{position:absolute; cursor:pointer; inset:0; background:#2a2f36; border-radius:50px; transition:.2s}
 .svc .slider:before{content:""; position:absolute; height:20px; width:20px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s}
-.svc .switch input:checked + .slider{background:#3b82f6}
+.svc .switch input:checked + .slider{background:var(--brand);}
 .svc .switch input:checked + .slider:before{transform:translateX(20px)}
 
 /* ===== Skeleton ===== */
