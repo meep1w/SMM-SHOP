@@ -2,6 +2,9 @@
 import os, time, math
 from sqlalchemy import create_engine, Column, BigInteger, Integer, Text, Numeric, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.orm import declarative_base, sessionmaker
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./smmshop.sqlite3")
 
