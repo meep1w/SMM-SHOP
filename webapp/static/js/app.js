@@ -550,7 +550,7 @@ async function loadRefs() {
             </svg>
           </div>
           <div class="ref-h1">
-            Приглашайте пользователей и получайте от <span class="accent">10%</span> их платежей
+            Приглашайте пользователей <br> и получайте от <span class="accent">10%</span> их платежей
           </div>
           <div class="ref-h2">
             Средства автоматически поступают на ваш баланс.
