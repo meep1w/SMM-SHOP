@@ -541,14 +541,9 @@ async function loadRefs() {
 
         <!-- HERO -->
         <div class="card ref-hero">
-          <div class="ref-ico">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" stroke="white" stroke-width="1.6"/>
-              <path d="M3.5 20a6.5 6.5 0 0 1 13 0" stroke="white" stroke-width="1.6"/>
-              <circle cx="18" cy="8" r="2.5" stroke="white" stroke-width="1.6"/>
-              <path d="M16.5 20a5.5 5.5 0 0 1 5.5 0" stroke="white" stroke-width="1.6"/>
-            </svg>
-          </div>
+            <div class="ref-ico">
+                <img src="static/img/tab-favorites.svg" alt="" class="ref-ico-img">
+            </div>
           <div class="ref-h1">
             Приглашайте пользователей <br> и получайте от <span class="accent">10%</span> их платежей
           </div>

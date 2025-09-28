@@ -480,7 +480,7 @@ body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar,
   width:56px;height:56px;border-radius:30%; /* было 50% */
   display:grid;place-items:center;color:#fff;margin-bottom:2px;
   background:radial-gradient(110px 110px at 30% 30%,#ff6b6b 0%,#ff3e3e 60%,#b62828 100%);
-  box-shadow:0 10px 30px rgba(255,107,107,.25),inset 0 0 18px rgba(255,255,255,.08);
+
 }
 .ref-ico svg{width:28px;height:28px;display:block}
 .ref-h1{font:600 15px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0}
