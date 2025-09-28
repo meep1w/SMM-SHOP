@@ -3,10 +3,10 @@
 SQLAlchemy модели и инициализация БД для SMMShop.
 
 - PostgreSQL по умолчанию (из .env: DATABASE_URL)
-- Совместимо с SQLite (для локального теста)
+- Совместимо с SQLite
 - Внутренние id через Identity()
-- services.id = VEXBOOST ID (BigInteger, без автоинкремента)
-- Поддержка рефералок: RefLink, ReferralBonus
+- services.id = VEXBOOST ID (BigInteger)
+- Рефералки: RefLink, ReferralBonus (+ алиасы RefBonus, RefReward)
 """
 
 import os
@@ -141,7 +141,7 @@ class ReferralBonus(Base):
     """
     Начисления за рефералов.
     to_user_id  — кому зачислили (пригласивший)
-    from_user_id — пригласил кого (реферал); может быть NULL, если не сопоставили
+    from_user_id — пригласил кого (реферал); может быть NULL
     """
     __tablename__ = "referral_bonuses"
 
@@ -154,8 +154,9 @@ class ReferralBonus(Base):
     created_at = Column(Integer, default=now_ts, nullable=False)
 
 
-# На случай, если где-то импортируют старое имя:
+# Алиасы, чтобы любые старые импорты не ломались
 RefBonus = ReferralBonus
+RefReward = ReferralBonus
 
 
 # --- UTIL ---
@@ -176,6 +177,6 @@ __all__ = [
     "engine", "SessionLocal", "Base",
     "now_ts", "stable_seq",
     "User", "Service", "Favorite", "Topup", "Order",
-    "RefLink", "ReferralBonus", "RefBonus",
+    "RefLink", "ReferralBonus", "RefBonus", "RefReward",
     "init_db", "get_db",
 ]
