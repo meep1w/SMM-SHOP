@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 import html
-import random
-import string
+from typing import Optional
+
 from aiogram import Router, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, CallbackQuery, WebAppInfo
+from aiogram.types import (
+    Message, InlineKeyboardMarkup, InlineKeyboardButton,
+    FSInputFile, CallbackQuery, WebAppInfo
+)
+import httpx
 
 from bot.config import (
     API_BASE,
@@ -16,10 +20,11 @@ from bot.config import (
     WELCOME_IMG,
     MENU_IMG,
 )
-import httpx
 
 router = Router()
 _http = httpx.AsyncClient(timeout=15.0)
+
+# ---------------- UI ----------------
 
 def kb_welcome() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -39,6 +44,8 @@ def kb_main() -> InlineKeyboardMarkup:
         ],
     ])
 
+# ---------------- API helpers ----------------
+
 async def api_user_exists(user_id: int) -> bool:
     try:
         r = await _http.get(f"{API_BASE}/user/exists", params={"user_id": user_id})
@@ -47,13 +54,81 @@ async def api_user_exists(user_id: int) -> bool:
         # если API недоступно — показываем меню, чтобы не блокировать пользователя
         return True
 
+async def api_bind_ref(user_id: int, code: str) -> dict:
+    """
+    POST /api/v1/referrals/bind  -> { ok, already? }
+    """
+    try:
+        r = await _http.post(f"{API_BASE}/referrals/bind", json={"user_id": user_id, "code": code})
+        # 200 OK: {"ok": True} или {"ok": True, "already": True}
+        if r.status_code == 200:
+            return r.json() or {"ok": True}
+        # 4xx: код не найден / self_ref / и т.д.
+        try:
+            msg = r.json()
+        except Exception:
+            msg = {"error": r.text}
+        return {"ok": False, "status": r.status_code, **(msg if isinstance(msg, dict) else {})}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def extract_start_payload(text: Optional[str]) -> str:
+    """
+    Возвращает payload из /start: "ref_xxx" либо пустую строку.
+    """
+    if not text:
+        return ""
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return (parts[1] or "").strip()
+
+def try_extract_ref_code(payload: str) -> Optional[str]:
+    """
+    Принимает 'ref_abc123' -> 'abc123', иначе None.
+    """
+    if not payload:
+        return None
+    p = payload.strip().lower()
+    if not p.startswith("ref_"):
+        return None
+    code = p[4:].strip()
+    # оставляем только безопасные символы (буквы/цифры/нижнее подчёркивание/дефис)
+    import re
+    code = re.sub(r"[^a-z0-9_-]", "", code)
+    return code or None
+
+# ---------------- Handlers ----------------
+
 @router.message(CommandStart())
 async def start_cmd(m: Message):
     uid = m.from_user.id
 
+    # 1) диплинк: /start ref_xxx -> привязка
+    payload = extract_start_payload(m.text)
+    ref_code = try_extract_ref_code(payload)
+    ref_notice: Optional[str] = None
+    if ref_code:
+        res = await api_bind_ref(uid, ref_code)
+        if res.get("ok"):
+            if res.get("already"):
+                ref_notice = "⚠️ Реферальный код уже привязан к вашему профилю."
+            else:
+                ref_notice = "✅ Реферальный код применён. Бонус будет начисляться с каждого депозита."
+        else:
+            # аккуратно отобразим причину
+            err = (
+                res.get("error")
+                or res.get("detail")
+                or res.get("message")
+                or ("Код не применён" + (f" (HTTP {res.get('status')})" if res.get("status") else ""))
+            )
+            ref_notice = f"❌ {err}"
+
+    # 2) есть ли пользователь в БД
     exists = await api_user_exists(uid)
     if not exists:
-        # первый раз — экран приветствия с кнопкой регистрации
+        # экран приветствия + (если был реф-код) — комментарий
         caption = (
             "<b>Добро пожаловать в магазин "
             f"<a href=\"{html.escape(GROUP_URL or PUBLIC_CHAT_URL or '#')}\">Slovekiza</a>!</b>\n\n"
@@ -63,13 +138,17 @@ async def start_cmd(m: Message):
         )
         photo = FSInputFile(WELCOME_IMG) if WELCOME_IMG.exists() else None
         if photo:
-            await m.answer_photo(photo, caption=caption, reply_markup=kb_welcome())
+            msg = await m.answer_photo(photo, caption=caption, reply_markup=kb_welcome())
         else:
-            await m.answer(caption, reply_markup=kb_welcome())
+            msg = await m.answer(caption, reply_markup=kb_welcome())
+        if ref_notice:
+            await m.answer(ref_notice)
         return
 
-    # уже зарегистрирован — сразу главное меню
+    # 3) зарегистрирован — главное меню (+ уведомление о реф-коде, если было)
     await send_main_menu(m)
+    if ref_notice:
+        await m.answer(ref_notice)
 
 async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
     text = (
@@ -92,7 +171,8 @@ async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
         else:
             await m.answer(text, reply_markup=kb_main())
 
-# простые обработчики пунктов меню (заглушки)
+# ------ simple menu placeholders ------
+
 @router.callback_query(F.data == "menu:about")
 async def about_cb(c: CallbackQuery):
     await c.answer()
@@ -101,7 +181,7 @@ async def about_cb(c: CallbackQuery):
 @router.callback_query(F.data == "menu:refs")
 async def refs_cb(c: CallbackQuery):
     await c.answer()
-    await c.message.answer("Реферальная система скоро будет доступна. Следите за новостями.")
+    await c.message.answer("Реферальная статистика доступна в мини-апп (вкладка «Рефералы»).")
 
 @router.callback_query(F.data == "menu:roulette")
 async def roulette_cb(c: CallbackQuery):
