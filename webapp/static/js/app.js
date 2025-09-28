@@ -745,13 +745,6 @@ const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:Str
     return r.json();
   }
 
-function stInfo(s){
-  const t = String(s||'').toLowerCase();
-  if (t==='completed' || t==='success' || t==='finished') return { cls:'badge--completed', label:'Завершён' };
-  if (t==='failed' || t==='canceled' || t==='cancelled' || t==='error') return { cls:'badge--failed', label:'Отменён' };
-  // pending/awaiting/in progress → «В обработке»
-  return { cls:'badge--processing', label:'В обработке' };
-}
 
 /* ===== Детализация (Orders/Payments) — кэш и мгновенная фильтрация ===== */
 async function loadDetails(defaultTab = "orders") {
