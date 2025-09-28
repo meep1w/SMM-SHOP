@@ -8,11 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 from sqlalchemy.orm import Session
+from sqlalchemy import func, distinct
 
 from .db import (
     Base, engine, SessionLocal,
     User, Service, Favorite, Order, Topup,
-    RefLink, RefReward, stable_seq
+    RefLink, RefBind, RefReward,
+    stable_seq, now_ts,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -34,13 +36,16 @@ origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 CURRENCY = (os.getenv("CURRENCY", "RUB") or "RUB").strip().upper()
 MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER", "5.0"))
 
-# CryptoBot
+# CryptoBot (учтены возможные опечатки)
 CRYPTOBOT_API_KEY  = os.getenv("CRYPTOBOT_API_KEY") or os.getenv("CRYPTOPBOT_API_KEY") or ""
 CRYPTOBOT_BASE     = os.getenv("CRYPTOBOT_BASE") or os.getenv("CRYPTOPBOT_BASE") or "https://pay.crypt.bot/api"
 CRYPTOBOT_MIN_TOPUP_USD = float(os.getenv("CRYPTOBOT_MIN_TOPUP_USD", os.getenv("CRYPTOPBOT_MIN_TOPUP_USD", "0.10")))
 
-# для ссылки-приглашения
-BOT_USERNAME = os.getenv("BOT_USERNAME", "slovekinzshop_bot").lstrip("@")
+# Referral
+BOT_USERNAME = (os.getenv("BOT_USERNAME", "slovekinzshop_bot") or "slovekinzshop_bot").lstrip("@")
+REF_BASE_RATE = float(os.getenv("REF_BASE_RATE", "0.10"))   # 10%
+REF_TIER_RATE = float(os.getenv("REF_TIER_RATE", "0.20"))   # 20%
+REF_TIER_THRESHOLD = int(os.getenv("REF_TIER_THRESHOLD", "50"))
 
 FX_CACHE_TTL = int(os.getenv("FX_CACHE_TTL", "600"))
 
@@ -63,61 +68,90 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# глобальный HTTP клиент
 _client = httpx.AsyncClient(timeout=30.0)
 
-# --- util / DB ---
+# --- FX cache ---
+_fx_cache: Dict[str, Dict[str, Any]] = {}
+
+
+def _fx_get(k: str) -> Optional[float]:
+    obj = _fx_cache.get(k)
+    if not obj:
+        return None
+    if time.time() - obj.get("t", 0) > FX_CACHE_TTL:
+        return None
+    return float(obj.get("v", 0))
+
+
+def _fx_put(k: str, v: float) -> None:
+    _fx_cache[k] = {"v": float(v), "t": time.time()}
+
+
+async def fx_usd_rub() -> float:
+    cached = _fx_get("USD_RUB")
+    if cached:
+        return cached
+
+    for url in (
+        "https://api.exchangerate.host/latest?base=USD&symbols=RUB",
+        "https://open.er-api.com/v6/latest/USD",
+    ):
+        try:
+            r = await _client.get(url)
+            data = r.json()
+            v = float(data["rates"]["RUB"])
+            if v > 0:
+                _fx_put("USD_RUB", v)
+                return v
+        except Exception:
+            continue
+
+    # запасной вариант
+    _fx_put("USD_RUB", 100.0)
+    return 100.0
+
+
+def client_rate_view_per_1k(base_usd_per_1k: float, fx: float) -> float:
+    usd_client = float(base_usd_per_1k) * MARKUP_MULTIPLIER
+    if CURRENCY == "RUB":
+        return usd_client * fx
+    return usd_client
+
+
 def db() -> Session:
     return SessionLocal()
+
 
 def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
     u = s.query(User).filter(User.tg_id == tg_id).one_or_none()
     if u:
         if nick and not u.nick:
             u.nick = nick
-        u.last_seen_at = int(time.time())
+        u.last_seen_at = now_ts()
         s.commit()
         return u
+
     u = User(
-        tg_id=tg_id, seq=stable_seq(tg_id), nick=nick,
-        currency=CURRENCY, balance=0.0, last_seen_at=int(time.time())
+        tg_id=tg_id,
+        seq=stable_seq(tg_id),
+        nick=nick,
+        currency=CURRENCY,
+        balance=0.0,
+        last_seen_at=now_ts(),
     )
-    s.add(u); s.commit(); s.refresh(u)
+    s.add(u)
+    s.commit()
+    s.refresh(u)
+
     # дефолтные избранные
     for sid in (2127, 2453, 2454):
         s.merge(Favorite(user_id=u.id, service_id=sid))
     s.commit()
     return u
 
-# --- FX cache ---
-_fx_cache: Dict[str, Dict[str, Any]] = {}
 
-def _fx_get(k: str) -> Optional[float]:
-    obj = _fx_cache.get(k)
-    if not obj: return None
-    if time.time() - obj.get("t", 0) > FX_CACHE_TTL: return None
-    return float(obj.get("v", 0))
-
-def _fx_put(k: str, v: float) -> None:
-    _fx_cache[k] = {"v": float(v), "t": time.time()}
-
-async def fx_usd_rub() -> float:
-    cached = _fx_get("USD_RUB")
-    if cached: return cached
-    for url in ("https://api.exchangerate.host/latest?base=USD&symbols=RUB",
-                "https://open.er-api.com/v6/latest/USD"):
-        try:
-            r = await _client.get(url); data = r.json()
-            v = float(data["rates"]["RUB"])
-            if v > 0: _fx_put("USD_RUB", v); return v
-        except Exception:
-            continue
-    _fx_put("USD_RUB", 100.0); return 100.0
-
-def client_rate_view_per_1k(base_usd_per_1k: float, fx: float) -> float:
-    usd_client = float(base_usd_per_1k) * MARKUP_MULTIPLIER
-    return usd_client * (fx if CURRENCY == "RUB" else 1.0)
-
-# --- schemes ---
+# --- схемы ---
 class UserOut(BaseModel):
     seq: int
     nick: Optional[str] = None
@@ -126,6 +160,7 @@ class UserOut(BaseModel):
     topup_delta: float = 0.0
     topup_currency: str = "USD"
 
+
 class CreateOrderIn(BaseModel):
     user_id: int
     service: int
@@ -133,28 +168,44 @@ class CreateOrderIn(BaseModel):
     quantity: int
     promo_code: Optional[str] = None
 
+
 class RegisterIn(BaseModel):
     user_id: int
     nick: str
-    ref_code: Optional[str] = None  # ref_43937 или просто 43937
 
-# --- VEX services sync ---
+
+class RefBindIn(BaseModel):
+    user_id: int
+    code: str
+
+
+# --- VEXBOOST ----
 async def vex_services_raw() -> List[Dict[str, Any]]:
-    if not VEX_KEY: raise HTTPException(500, "VEXBOOST_KEY not set")
+    if not VEX_KEY:
+        raise HTTPException(500, "VEXBOOST_KEY not set")
     url = f"{API_BASE}?action=services&key={VEX_KEY}"
-    r = await _client.get(url); r.raise_for_status()
+    r = await _client.get(url)
+    r.raise_for_status()
     data = r.json()
-    if not isinstance(data, list): raise HTTPException(502, "Unexpected services payload")
+    if not isinstance(data, list):
+        raise HTTPException(502, "Unexpected services payload")
     return data
+
 
 def _detect_network(name: str, category: str) -> Optional[str]:
     t = f"{name} {category}".lower()
-    if "telegram" in t or "tg " in t: return "telegram"
-    if "tiktok" in t or "tik tok" in t: return "tiktok"
-    if "instagram" in t or "insta" in t or "ig " in t: return "instagram"
-    if "youtube" in t or "you tube" in t or "yt " in t: return "youtube"
-    if "facebook" in t or "fb " in t or "meta" in t: return "facebook"
+    if "telegram" in t or "tg " in t:
+        return "telegram"
+    if "tiktok" in t or "tik tok" in t:
+        return "tiktok"
+    if "instagram" in t or "insta" in t or "ig " in t:
+        return "instagram"
+    if "youtube" in t or "you tube" in t or "yt " in t:
+        return "youtube"
+    if "facebook" in t or "fb " in t or "meta" in t:
+        return "facebook"
     return None
+
 
 async def sync_services_into_db():
     raw = await vex_services_raw()
@@ -163,60 +214,41 @@ async def sync_services_into_db():
         for it in raw:
             sid = int(it.get("service"))
             name = it.get("name") or f"Service {sid}"
-            type_ = it.get("type"); cat = it.get("category") or ""
-            min_ = int(it.get("min") or 0); max_ = int(it.get("max") or 0)
+            type_ = it.get("type")
+            cat = it.get("category") or ""
+            min_ = int(it.get("min") or 0)
+            max_ = int(it.get("max") or 0)
             base_rate_usd = float(it.get("rate") or 0.0)
             rate_view = client_rate_view_per_1k(base_rate_usd, fx)
             net = _detect_network(name, cat) or "telegram"
+
             obj = s.get(Service, sid)
             if not obj:
                 obj = Service(
-                    id=sid, network=net, name=name, type=type_,
-                    min=min_, max=max_, rate_client_1000=rate_view,
-                    currency=CURRENCY, description=cat, active=True
-                ); s.add(obj)
+                    id=sid,
+                    network=net,
+                    name=name,
+                    type=type_,
+                    min=min_,
+                    max=max_,
+                    rate_client_1000=rate_view,
+                    currency=CURRENCY,
+                    description=cat,
+                    active=True,
+                )
+                s.add(obj)
             else:
-                obj.network = net; obj.name = name; obj.type = type_
-                obj.min = min_; obj.max = max_; obj.rate_client_1000 = rate_view
-                obj.currency = CURRENCY; obj.description = cat; obj.active = True
+                obj.network = net
+                obj.name = name
+                obj.type = type_
+                obj.min = min_
+                obj.max = max_
+                obj.rate_client_1000 = rate_view
+                obj.currency = CURRENCY
+                obj.description = cat
+                obj.active = True
         s.commit()
 
-# --- referrals helpers ---
-REF_PRO_THRESHOLD = 50  # рефералов с депозитом для 20%
-
-def _parse_ref_code(code: Optional[str]) -> Optional[int]:
-    if not code: return None
-    c = str(code).strip().lower()
-    if c.startswith("ref_"): c = c[4:]
-    if not c.isdigit(): return None
-    return int(c)
-
-def _ref_rate_for(s: Session, referrer_id: int) -> (float, int):
-    # сколько рефералов у referrer_id сделали хотя бы один paid топап
-    q = (
-        s.query(Topup.user_id)
-        .join(RefLink, RefLink.user_id == Topup.user_id)
-        .filter(RefLink.referrer_id == referrer_id, Topup.status == "paid")
-        .distinct()
-    )
-    paid_users = q.count()
-    rate = 0.20 if paid_users >= REF_PRO_THRESHOLD else 0.10
-    return rate, paid_users
-
-def _apply_ref_rewards_for(s: Session, referrer: User, fx: float):
-    """Зачислить все не зачисленные бонусы referrer'у."""
-    rewards = (
-        s.query(RefReward)
-        .filter(RefReward.referrer_id == referrer.id, RefReward.applied == False)  # noqa: E712
-        .all()
-    )
-    if not rewards: return 0.0
-    total_usd = sum(float(r.amount_usd or 0.0) for r in rewards)
-    add = total_usd if CURRENCY == "USD" else (total_usd * fx)
-    referrer.balance = float(referrer.balance or 0.0) + round(add, 2)
-    for r in rewards: r.applied = True
-    s.commit()
-    return total_usd
 
 # --- lifecycle ---
 @app.on_event("startup")
@@ -227,6 +259,7 @@ async def _startup():
     except Exception as e:
         logging.exception("Startup sync failed: %s", e)
 
+
 @app.on_event("shutdown")
 async def _shutdown():
     try:
@@ -234,19 +267,59 @@ async def _shutdown():
     except Exception:
         pass
 
+
+# --- helpers (ref) ---
+def _ensure_ref_link(s: Session, u: User) -> RefLink:
+    rl = s.query(RefLink).filter(RefLink.owner_user_id == u.id).one_or_none()
+    if rl:
+        return rl
+    import secrets
+    for _ in range(10):
+        code = secrets.token_urlsafe(4).replace("_", "").replace("-", "")[:8].lower()
+        exists = s.query(RefLink.id).filter(RefLink.code == code).first()
+        if not exists:
+            rl = RefLink(owner_user_id=u.id, code=code, created_at=now_ts())
+            s.add(rl)
+            s.commit()
+            s.refresh(rl)
+            return rl
+    raise HTTPException(500, "cannot_generate_ref_code")
+
+
+def _current_rate_for_owner(s: Session, owner_user_id: int) -> float:
+    # сколько рефералов с депозитом у владельца
+    sub = (
+        s.query(distinct(Topup.user_id))
+        .join(RefBind, RefBind.user_id == Topup.user_id)
+        .filter(RefBind.ref_owner_user_id == owner_user_id, Topup.status == "paid")
+        .subquery()
+    )
+    cnt = s.query(func.count()).select_from(sub).scalar() or 0
+    return REF_TIER_RATE if cnt >= REF_TIER_THRESHOLD else REF_BASE_RATE
+
+
 # --- endpoints ---
 @app.get("/api/v1/ping")
 async def ping():
     return {"ok": True}
 
+
+# Проверка наличия пользователя (без автосоздания)
 @app.get("/api/v1/user/exists")
 async def api_user_exists(user_id: int = Query(...)):
     with db() as s:
         exists = s.query(User.id).filter(User.tg_id == user_id).first() is not None
         return {"exists": exists}
 
+
+# Профиль: можно выключить автосоздание
 @app.get("/api/v1/user", response_model=UserOut)
-async def api_user(user_id: int = Query(...), consume_topup: int = 0, nick: Optional[str] = None, autocreate: int = 1):
+async def api_user(
+    user_id: int = Query(...),
+    consume_topup: int = 0,
+    nick: Optional[str] = None,
+    autocreate: int = 1,  # 1 — как раньше; 0 — без создания (вернёт 404)
+):
     with db() as s:
         u = s.query(User).filter(User.tg_id == user_id).one_or_none()
         if not u:
@@ -255,30 +328,64 @@ async def api_user(user_id: int = Query(...), consume_topup: int = 0, nick: Opti
             u = ensure_user(s, user_id, nick=nick)
         else:
             if nick and not u.nick:
-                u.nick = nick; s.commit()
+                u.nick = nick
+                s.commit()
 
         delta = 0.0
         if consume_topup:
-            # собственные топапы пользователя
-            pays = s.query(Topup).filter(Topup.user_id == u.id, Topup.status == "paid", Topup.applied == False).all()  # noqa: E712
-            for t in pays:
-                delta += float(t.amount_usd or 0.0)
-                t.applied = True
-            if delta > 0:
-                add = delta if CURRENCY == "USD" else (delta * (await fx_usd_rub()))
-                u.balance = float(u.balance or 0.0) + round(add, 2)
-            s.commit()
-            # бонусы от рефералов
-            fx = await fx_usd_rub()
-            _apply_ref_rewards_for(s, u, fx)
+            pays = (
+                s.query(Topup)
+                .filter(Topup.user_id == u.id, Topup.status == "paid", Topup.applied == False)  # noqa: E712
+                .all()
+            )
+            if pays:
+                # курс для конвертации в валюту магазина
+                fx = await fx_usd_rub()
+                for t in pays:
+                    # зачисляем пользователю основной платёж
+                    usd = float(t.amount_usd or 0.0)
+                    add = usd if CURRENCY == "USD" else (usd * fx)
+                    add = round(add, 2)
+                    delta += usd
+                    t.applied = True
+                    u.balance = float(u.balance or 0.0) + add
+
+                    # реферальная награда (если есть привязка)
+                    rb = s.query(RefBind).filter(RefBind.user_id == u.id).one_or_none()
+                    if rb:
+                        owner = s.get(User, rb.ref_owner_user_id)
+                        if owner:
+                            rate = _current_rate_for_owner(s, owner.id)
+                            reward_amount = usd if CURRENCY == "USD" else (usd * fx)
+                            reward_amount = round(reward_amount * rate, 2)
+
+                            # защита от дублей на тот же topup
+                            exists = s.query(RefReward.id).filter(RefReward.topup_id == t.id).first()
+                            if not exists and reward_amount > 0:
+                                owner.balance = float(owner.balance or 0.0) + reward_amount
+                                rr = RefReward(
+                                    to_user_id=owner.id,
+                                    from_user_id=u.id,
+                                    topup_id=t.id,
+                                    amount_credit=reward_amount,
+                                    currency=CURRENCY,
+                                    rate=rate,
+                                    created_at=now_ts(),
+                                )
+                                s.add(rr)
+                s.commit()
 
         return UserOut(
-            seq=u.seq, nick=u.nick, currency=u.currency,
+            seq=u.seq,
+            nick=u.nick,
+            currency=u.currency,
             balance=float(u.balance or 0.0),
-            topup_delta=round(delta, 6), topup_currency="USD"
+            topup_delta=round(delta, 6),
+            topup_currency="USD",
         )
 
-# --- registration (with optional ref) ---
+
+# Регистрация (ник должен быть уникальным)
 @app.post("/api/v1/register")
 async def api_register(body: RegisterIn):
     nick = (body.nick or "").strip()
@@ -293,50 +400,146 @@ async def api_register(body: RegisterIn):
         else:
             if u.nick:
                 raise HTTPException(409, "Профиль уже создан")
-            u.nick = nick; s.commit()
-
-        # реф.код (необязательно)
-        code = _parse_ref_code(body.ref_code)
-        if code:
-            # ищем пригласителя по seq
-            referrer = s.query(User).filter(User.seq == code).one_or_none()
-            if referrer and referrer.id != u.id:
-                # запишем связь, если ещё не была
-                if s.get(RefLink, u.id) is None:
-                    s.add(RefLink(user_id=u.id, referrer_id=referrer.id)); s.commit()
-
+            u.nick = nick
+            s.commit()
         return {"ok": True, "seq": u.seq, "nick": u.nick}
 
-# --- services ---
+
+# Привязка по реф.коду (бот может вызывать при /start ref_xxx)
+@app.post("/api/v1/referrals/bind")
+async def api_referrals_bind(body: RefBindIn):
+    code = (body.code or "").strip().lower()
+    if not code:
+        raise HTTPException(400, "empty_code")
+    with db() as s:
+        u = ensure_user(s, body.user_id)
+        # уже привязан — игнор
+        bound = s.query(RefBind).filter(RefBind.user_id == u.id).one_or_none()
+        if bound:
+            return {"ok": True, "already": True}
+
+        rl = s.query(RefLink).filter(RefLink.code == code).one_or_none()
+        if not rl:
+            raise HTTPException(404, "code_not_found")
+
+        if rl.owner_user_id == u.id:
+            raise HTTPException(400, "self_ref_forbidden")
+
+        rb = RefBind(user_id=u.id, ref_owner_user_id=rl.owner_user_id, code=code, created_at=now_ts())
+        s.add(rb)
+        s.commit()
+        return {"ok": True}
+
+
+# Реф. статистика
+@app.get("/api/v1/referrals/stats")
+async def api_referrals_stats(user_id: int = Query(...)):
+    with db() as s:
+        u = s.query(User).filter(User.tg_id == user_id).one_or_none()
+        if not u:
+            # пробуем как seq
+            u = s.query(User).filter(User.seq == user_id).one_or_none()
+        if not u:
+            # создадим минимальный профиль, чтобы отдать ссылку
+            u = ensure_user(s, tg_id=user_id)
+
+        rl = _ensure_ref_link(s, u)
+
+        # приглашено всего
+        invited_total = s.query(func.count(RefBind.id)).filter(RefBind.ref_owner_user_id == u.id).scalar() or 0
+
+        # рефералов с депозитом (distinct по user_id в paid topups)
+        sub = (
+            s.query(distinct(Topup.user_id))
+            .join(RefBind, RefBind.user_id == Topup.user_id)
+            .filter(RefBind.ref_owner_user_id == u.id, Topup.status == "paid")
+            .subquery()
+        )
+        invited_with_deposit = s.query(func.count()).select_from(sub).scalar() or 0
+
+        # начислено всего
+        earned_total = s.query(func.coalesce(func.sum(RefReward.amount_credit), 0.0))\
+                        .filter(RefReward.to_user_id == u.id).scalar() or 0.0
+
+        # последниe 20 бонусов
+        rewards = (
+            s.query(RefReward)
+            .filter(RefReward.to_user_id == u.id)
+            .order_by(RefReward.id.desc())
+            .limit(20).all()
+        )
+
+        # текущая ставка по порогу
+        rate = REF_TIER_RATE if invited_with_deposit >= REF_TIER_THRESHOLD else REF_BASE_RATE
+        rate_percent = int(round(rate * 100))
+        currency = u.currency or CURRENCY
+
+        invite_link = f"https://t.me/{BOT_USERNAME}?start=ref_{rl.code}"
+
+        return {
+            "invite_link": invite_link,
+            "rate": rate,
+            "rate_percent": rate_percent,
+            "tier": "tier20" if rate >= REF_TIER_RATE else "base",
+            "invited_total": invited_total,
+            "invited_with_deposit": invited_with_deposit,
+            "earned_total": round(float(earned_total), 2),
+            "earned_currency": currency,
+            "threshold": REF_TIER_THRESHOLD,
+            "next_tier_target": REF_TIER_THRESHOLD,
+            "next_tier_remaining": max(0, REF_TIER_THRESHOLD - invited_with_deposit),
+            "last_bonuses": [
+                {
+                    "id": r.id,
+                    "from_seq": s.query(User.seq).filter(User.id == r.from_user_id).scalar() or 0,
+                    "amount_credit": float(r.amount_credit or 0),
+                    "currency": r.currency or currency,
+                    "rate": int(round(float(r.rate or 0) * 100)),
+                    "ts": int(r.created_at or now_ts()),
+                }
+                for r in rewards
+            ],
+        }
+
+
 @app.get("/api/v1/services")
 async def api_services():
     with db() as s:
         groups = {k: {**DISPLAY[k], "count": 0} for k in DISPLAY}
         for it in s.query(Service).filter(Service.active == True).all():  # noqa: E712
-            if it.network in groups: groups[it.network]["count"] += 1
+            if it.network in groups:
+                groups[it.network]["count"] += 1
         return [groups[k] for k in ["telegram", "tiktok", "instagram", "youtube", "facebook"]]
+
 
 @app.get("/api/v1/services/{network}")
 async def api_services_by_network(network: str):
-    if network not in NETWORKS: raise HTTPException(404, "Unknown network")
+    if network not in NETWORKS:
+        raise HTTPException(404, "Unknown network")
     with db() as s:
         items = (
             s.query(Service)
             .filter(Service.network == network, Service.active == True)  # noqa: E712
-            .order_by(Service.id.asc()).all()
+            .order_by(Service.id.asc())
+            .all()
         )
-        return [{
-            "service": it.id, "network": it.network, "name": it.name, "type": it.type,
-            "min": it.min, "max": it.max,
-            "rate_client_1000": float(it.rate_client_1000 or 0.0),
-            "currency": it.currency or CURRENCY, "description": it.description or ""
-        } for it in items]
+        return [
+            {
+                "service": it.id,
+                "network": it.network,
+                "name": it.name,
+                "type": it.type,
+                "min": it.min,
+                "max": it.max,
+                "rate_client_1000": float(it.rate_client_1000 or 0.0),
+                "currency": it.currency or CURRENCY,
+                "description": it.description or "",
+            }
+            for it in items
+        ]
 
-# --- favorites ---
-class FavIn(BaseModel):
-    user_id: int
-    service_id: int
 
+# ---- Favorites ----
 @app.get("/api/v1/favorites")
 async def fav_list(user_id: int = Query(...)):
     with db() as s:
@@ -344,20 +547,37 @@ async def fav_list(user_id: int = Query(...)):
         rows = (
             s.query(Service)
             .join(Favorite, Favorite.service_id == Service.id)
-            .filter(Favorite.user_id == u.id).all()
+            .filter(Favorite.user_id == u.id)
+            .all()
         )
-        return [{
-            "service": it.id, "network": it.network, "name": it.name, "type": it.type,
-            "min": it.min, "max": it.max,
-            "rate_client_1000": float(it.rate_client_1000 or 0.0),
-            "currency": it.currency or CURRENCY, "description": it.description or ""
-        } for it in rows]
+        return [
+            {
+                "service": it.id,
+                "network": it.network,
+                "name": it.name,
+                "type": it.type,
+                "min": it.min,
+                "max": it.max,
+                "rate_client_1000": float(it.rate_client_1000 or 0.0),
+                "currency": it.currency or CURRENCY,
+                "description": it.description or "",
+            }
+            for it in rows
+        ]
+
+
+class FavIn(BaseModel):
+    user_id: int
+    service_id: int
+
 
 @app.post("/api/v1/favorites", status_code=204)
 async def fav_add(body: FavIn):
     with db() as s:
         u = ensure_user(s, body.user_id)
-        s.merge(Favorite(user_id=u.id, service_id=int(body.service_id))); s.commit()
+        s.merge(Favorite(user_id=u.id, service_id=int(body.service_id)))
+        s.commit()
+
 
 @app.delete("/api/v1/favorites/{service_id}", status_code=204)
 async def fav_del(service_id: int, user_id: int = Query(...)):
@@ -366,70 +586,117 @@ async def fav_del(service_id: int, user_id: int = Query(...)):
         s.query(Favorite).filter(Favorite.user_id == u.id, Favorite.service_id == service_id).delete()
         s.commit()
 
-# --- order create ---
+
+# ---- Order create ----
 @app.post("/api/v1/order/create")
 async def api_order_create(body: CreateOrderIn):
     with db() as s:
         u = ensure_user(s, body.user_id)
         svc = s.get(Service, int(body.service))
-        if not svc: raise HTTPException(404, "service not found")
+        if not svc:
+            raise HTTPException(404, "service not found")
+
         if body.quantity < (svc.min or 0) or body.quantity > (svc.max or 0):
             raise HTTPException(400, f"Количество должно быть от {svc.min} до {svc.max}")
-        cost = round(float(svc.rate_client_1000 or 0.0) * body.quantity / 1000.0, 2)
-        if float(u.balance or 0.0) < cost: raise HTTPException(402, "Недостаточно средств")
 
+        cost = round(float(svc.rate_client_1000 or 0.0) * body.quantity / 1000.0, 2)
+        if float(u.balance or 0.0) < cost:
+            raise HTTPException(402, "Недостаточно средств")
+
+        # VEXBOOST create order
         try:
-            qp = httpx.QueryParams({"action": "add", "service": svc.id, "link": body.link,
-                                    "quantity": int(body.quantity), "key": VEX_KEY})
+            qp = httpx.QueryParams({
+                "action": "add",
+                "service": svc.id,
+                "link": body.link,
+                "quantity": int(body.quantity),
+                "key": VEX_KEY
+            })
             url = f"{API_BASE}?{qp}"
-            r = await _client.get(url); supplier_order = int(r.json().get("order"))
+            r = await _client.get(url)
+            supplier_order = int(r.json().get("order"))
         except Exception as e:
             raise HTTPException(502, f"Supplier error: {e}")
 
         u.balance = float(u.balance or 0.0) - cost
-        o = Order(user_id=u.id, service_id=svc.id, quantity=int(body.quantity), link=body.link,
-                  cost=cost, currency=svc.currency or CURRENCY, status="Awaiting",
-                  provider_id=str(supplier_order))
-        s.add(o); s.commit(); s.refresh(o)
+        o = Order(
+            user_id=u.id,
+            service_id=svc.id,
+            quantity=int(body.quantity),
+            link=body.link,
+            cost=cost,
+            currency=svc.currency or CURRENCY,
+            status="Awaiting",
+            provider_id=str(supplier_order),
+        )
+        s.add(o)
+        s.commit()
+        s.refresh(o)
         return {"order_id": o.id, "cost": cost, "currency": o.currency, "status": o.status}
 
-# --- payments ---
+
+# ---- Invoice create ----
 @app.post("/api/v1/pay/invoice")
 async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
     if not CRYPTOBOT_API_KEY:
         return {"error": "CryptoBot not configured"}, 501
+
     amount = float(payload.get("amount_usd") or 0.0)
     if amount < CRYPTOBOT_MIN_TOPUP_USD:
         raise HTTPException(400, f"Минимальная сумма — {CRYPTOBOT_MIN_TOPUP_USD} USDT")
+
     user_id = int(payload.get("user_id") or 0)
-    if user_id <= 0: raise HTTPException(400, "user_id required")
+    if user_id <= 0:
+        raise HTTPException(400, "user_id required")
 
     link = f"{CRYPTOBOT_BASE}/createInvoice"
     headers = {"Content-Type": "application/json", "Crypto-Pay-API-Token": CRYPTOBOT_API_KEY}
     body = {"asset": "USDT", "amount": round(amount, 2), "payload": str(user_id), "description": "SMMShop topup"}
+
     async with httpx.AsyncClient(timeout=15.0) as c:
-        r = await c.post(link, headers=headers, json=body); js = r.json()
+        r = await c.post(link, headers=headers, json=body)
+        js = r.json()
 
     if isinstance(js.get("result"), dict) and js["result"].get("pay_url"):
-        pay_url = js["result"]["pay_url"]; invoice_id = js["result"].get("invoice_id", "")
+        pay_url = js["result"]["pay_url"]
+        invoice_id = js["result"].get("invoice_id", "")
     elif isinstance(js.get("invoice"), dict) and js["invoice"].get("pay_url"):
-        pay_url = js["invoice"]["pay_url"]; invoice_id = js["invoice"].get("invoice_id", "")
+        pay_url = js["invoice"]["pay_url"]
+        invoice_id = js["invoice"].get("invoice_id", "")
     else:
         raise HTTPException(502, f"CryptoBot error: {js}")
 
     with db() as s:
         u = ensure_user(s, user_id)
-        t = Topup(user_id=u.id, provider="cryptobot", invoice_id=str(invoice_id),
-                  amount_usd=amount, currency="USD", status="created", applied=False, pay_url=pay_url)
-        s.add(t); s.commit()
+        t = Topup(
+            user_id=u.id,
+            provider="cryptobot",
+            invoice_id=str(invoice_id),
+            amount_usd=amount,
+            currency="USD",
+            status="created",
+            applied=False,
+            pay_url=pay_url,
+        )
+        s.add(t)
+        s.commit()
+
     return {"pay_url": pay_url}
 
+
+# ---- Webhook ----
 def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
-    if isinstance(data.get("invoice"), dict): inv = data["invoice"]
-    elif isinstance(data.get("result"), dict) and isinstance(data["result"].get("invoice"), dict): inv = data["result"]["invoice"]
-    elif isinstance(data.get("result"), dict): inv = data["result"]
-    elif isinstance(data.get("payload"), dict) and ("status" in data["payload"]): inv = data["payload"]
-    else: inv = {}
+    if isinstance(data.get("invoice"), dict):
+        inv = data["invoice"]
+    elif isinstance(data.get("result"), dict) and isinstance(data["result"].get("invoice"), dict):
+        inv = data["result"]["invoice"]
+    elif isinstance(data.get("result"), dict):
+        inv = data["result"]
+    elif isinstance(data.get("payload"), dict) and ("status" in data["payload"]):
+        inv = data["payload"]
+    else:
+        inv = {}
+
     return {
         "invoice_id": inv.get("invoice_id") or inv.get("id") or "",
         "status": str(inv.get("status") or "").lower(),
@@ -438,75 +705,39 @@ def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
         "payload": inv.get("payload") or data.get("payload") or "",
     }
 
+
 @app.post("/api/v1/cryptobot/webhook")
 async def cryptobot_webhook(request: Request):
     raw = await request.body()
-    try: data = json.loads(raw.decode("utf-8"))
-    except Exception: data = {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception:
+        data = {}
+
     inv = _extract_invoice(data)
     if inv["status"] not in ("paid", "finished", "success"):
         return {"ok": True}
-    try: user_tg_id = int(inv.get("payload") or 0)
-    except Exception: return {"ok": True}
+
+    try:
+        user_id = int(inv.get("payload") or 0)
+    except Exception:
+        return {"ok": True}
+
     amount = float(inv.get("amount") or 0.0)
 
     with db() as s:
-        u = ensure_user(s, user_tg_id)
-        t = Topup(user_id=u.id, provider="cryptobot",
-                  invoice_id=str(inv.get("invoice_id", "")), amount_usd=amount,
-                  currency="USD", status="paid", applied=False, pay_url=None)
-        s.add(t); s.commit(); s.refresh(t)
-
-        # бонус пригласителю (если есть связь)
-        ref = s.get(RefLink, u.id)
-        if ref:
-            rate, _ = _ref_rate_for(s, ref.referrer_id)
-            bonus = max(0.0, amount * rate)
-            # не дублируем: один топап -> одна запись
-            if s.query(RefReward.id).filter(RefReward.topup_id == t.id).first() is None:
-                s.add(RefReward(referrer_id=ref.referrer_id, topup_id=t.id,
-                                amount_usd=bonus, currency="USD", applied=False))
-                s.commit()
-    return {"ok": True}
-
-# --- referrals stats ---
-@app.get("/api/v1/referrals/stats")
-async def referrals_stats(user_id: int = Query(...)):
-    with db() as s:
         u = ensure_user(s, user_id)
-        # ссылка
-        invite_link = f"https://t.me/{BOT_USERNAME}?start=ref_{u.seq}"
-        # всего приглашённых
-        total = s.query(RefLink).filter(RefLink.referrer_id == u.id).count()
-        # с депозитом
-        deposit_cnt = (
-            s.query(Topup.user_id)
-            .join(RefLink, RefLink.user_id == Topup.user_id)
-            .filter(RefLink.referrer_id == u.id, Topup.status == "paid")
-            .distinct()
-            .count()
+        t = Topup(
+            user_id=u.id,
+            provider="cryptobot",
+            invoice_id=str(inv.get("invoice_id", "")),
+            amount_usd=amount,
+            currency="USD",
+            status="paid",
+            applied=False,
+            pay_url=None,
         )
-        rate, _ = _ref_rate_for(s, u.id)
-        # заработано
-        total_usd = (
-            s.query(RefReward)
-            .with_entities(RefReward.amount_usd)
-            .filter(RefReward.referrer_id == u.id)
-            .all()
-        )
-        total_usd = sum(float(x[0] or 0.0) for x in total_usd)
-        fx = 1.0 if CURRENCY == "USD" else (await fx_usd_rub())
-        total_client = total_usd * (fx if CURRENCY == "RUB" else 1.0)
+        s.add(t)
+        s.commit()
 
-        return {
-            "invite_link": invite_link,
-            "rate": rate,
-            "rate_percent": int(rate * 100),
-            "tier": "pro" if rate >= 0.20 else "base",
-            "invited_total": total,
-            "invited_with_deposit": deposit_cnt,
-            "earned_total": round(total_client, 2),
-            "earned_currency": CURRENCY,
-            "next_tier_target": REF_PRO_THRESHOLD,
-            "next_tier_remaining": max(0, REF_PRO_THRESHOLD - deposit_cnt),
-        }
+    return {"ok": True}
