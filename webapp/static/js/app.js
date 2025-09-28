@@ -91,6 +91,18 @@
     } catch(_) { return String(val); }
   }
 
+  // — сеть из текста + путь к иконке
+  function netFromText(name, category){
+    const t = `${name || ""} ${category || ""}`.toLowerCase();
+    if (t.includes('telegram') || t.includes(' tg ')) return 'telegram';
+    if (t.includes('tiktok')   || t.includes('tik tok')) return 'tiktok';
+    if (t.includes('instagram')|| t.includes(' insta') || t.includes(' ig ')) return 'instagram';
+    if (t.includes('youtube')  || t.includes(' yt '))   return 'youtube';
+    if (t.includes('facebook') || t.includes(' fb '))   return 'facebook';
+    return 'generic';
+  }
+  function netIcon(net){ return `static/img/${net}.svg`; }
+
   // --- modal helpers ---
   function ensureModal(){
     let m = document.getElementById('appModal');
@@ -112,24 +124,6 @@
   function closeModal(){
     const m = document.getElementById('appModal');
     if (m) m.setAttribute('aria-hidden','true');
-  }
-
-  // --- order/network icon helpers ---
-  function detectNetworkText(...parts){
-    const t = (parts.filter(Boolean).join(' ') || '').toLowerCase();
-    if (t.includes('tele') || t.includes(' tg')) return 'telegram';
-    if (t.includes('tik' )) return 'tiktok';
-    if (t.includes('insta')|| t.includes(' ig')) return 'instagram';
-    if (t.includes('you')  || t.includes(' yt')) return 'youtube';
-    if (t.includes('face') || t.includes(' fb') || t.includes('meta')) return 'facebook';
-    return 'telegram';
-  }
-  function orderNetwork(o){
-    return (o.network) || detectNetworkText(o.service, o.category);
-  }
-  function orderIconPath(o){
-    const net = orderNetwork(o);
-    return `static/img/networks/${net}.svg`;
   }
 
   // ====== Topup overlay ======
@@ -445,6 +439,18 @@
       const r = await fetch(bust(`${API_BASE}/services/${net}`));
       const arr = r.ok ? await r.json() : [];
       return arr.find(s => Number(s.service) === Number(serviceId)) || null;
+    }catch(_){ return null; }
+  }
+  async function findServiceByName(net, name){
+    const lower = String(name||'').toLowerCase();
+    if (Array.isArray(servicesAll) && servicesAll.length && net===currentNetwork){
+      const f = servicesAll.find(s => String(s.name||'').toLowerCase() === lower);
+      if (f) return f;
+    }
+    try{
+      const r = await fetch(bust(`${API_BASE}/services/${net}`));
+      const arr = r.ok ? await r.json() : [];
+      return arr.find(s => String(s.name||'').toLowerCase() === lower) || null;
     }catch(_){ return null; }
   }
 
@@ -830,7 +836,8 @@
         const title = o.service || "Услуга";
         const cat = o.category ? `${o.category} • ` : "";
         const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
-        const ico = orderIconPath(o);
+        const net = netFromText(o.service, o.category);
+        const ico = netIcon(net);
         return `
           <div class="order" data-id="${o.id}">
             <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
@@ -938,11 +945,10 @@
 
     function showOrderModal(o){
       const st = stInfo(o.status);
-      const net = orderNetwork(o);
-      const ico = `static/img/networks/${net}.svg`;
+      const net = netFromText(o.service, o.category);
+      const ico = netIcon(net);
       const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
       const linkHtml = o.link ? `<a href="${o.link}" target="_blank" rel="noopener">${o.link}</a>` : '—';
-      const canRepeat = Number(o.service_id || 0) > 0;
 
       openModal(`
         <h3>Заказ #${o.id}</h3>
@@ -964,14 +970,16 @@
 
         <div class="modal-actions">
           <button class="btn btn-secondary" id="orderClose">Закрыть</button>
-          <button class="btn btn-primary" id="orderRepeat" ${canRepeat?'':'disabled'}>Повторить заказ</button>
+          <button class="btn btn-primary" id="orderRepeat">Повторить заказ</button>
         </div>
       `);
 
       document.getElementById('orderClose')?.addEventListener('click', closeModal);
       document.getElementById('orderRepeat')?.addEventListener('click', async ()=>{
-        if (!canRepeat) return;
-        const svc = await fetchServiceById(o.service_id, net);
+        // 1) если бэк когда-нибудь отдаст service_id — используем его
+        let svc = o.service_id ? await fetchServiceById(o.service_id, net) : null;
+        // 2) иначе — пытаемся найти по имени в текущем/нужном каталоге
+        if (!svc) svc = await findServiceByName(net, o.service);
         if (!svc){ alert('Не удалось найти услугу для повтора'); return; }
         closeModal();
         openServicePage(svc, { link: o.link, qty: o.quantity });
