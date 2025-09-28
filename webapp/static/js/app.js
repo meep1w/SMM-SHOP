@@ -494,85 +494,132 @@
   // стартовая загрузка категорий
   loadCategories();
 
-  // ====== Referrals ======
- async function loadRefs(){
-  const box = pages.refs;
-  if (!box) return;
-  box.innerHTML = '<div class="empty">Загрузка…</div>';
-  try{
-    const uid = encodeURIComponent(userId || seq);
-    const r = await fetch(`${API_BASE}/referrals/stats?user_id=${uid}`, {cache:'no-store'});
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const s = await r.json();
+// === Рефералка: новый UI без изменения логики данных ===
+async function loadRefs() {
+  const tg = window.Telegram?.WebApp;
+  const page = document.getElementById("page-refs");
+  if (!page) return;
 
-    const progMax = Number(s.threshold ?? 50) || 50;
-    const withDep = Number(s.invited_with_deposit ?? 0) || 0;
-    const prog = Math.min(100, Math.round(100 * withDep / progMax));
-    const link = s.invite_link || s.link || '';   // ← ключевое
-    const rate = Number(s.rate_percent ?? 10) || 10;
+  // скелетон на время загрузки
+  page.innerHTML = `
+    <div class="card" style="padding:16px">
+      <div class="skeleton-line" style="width:60%"></div>
+      <div class="skeleton-line" style="width:90%;margin-top:10px"></div>
+    </div>
+  `;
 
-    box.innerHTML = `
-      <div class="card">
-        <div class="label">Ваша реферальная ссылка</div>
-        <div class="copy-row">
-          <input id="refLink" type="text" value="${link}" readonly>
-          <button class="btn" id="btnCopyLink">Копировать</button>
-          <button class="btn" id="btnShareLink">Поделиться</button>
+  try {
+    const API_BASE = window.API_BASE || "/api/v1";
+    const uid = tg?.initDataUnsafe?.user?.id || window.USER_ID || null;
+    const qs = uid ? `?user_id=${encodeURIComponent(uid)}` : "";
+    const res = await fetch(`${API_BASE}/referrals/stats${qs}`, { credentials: "include" });
+    if (!res.ok) throw new Error("Failed to load");
+    const data = await res.json();
+
+    // --- исходные поля из ответа (оставляем как раньше) ---
+    const inviteLink = data.invite_link || data.link || "";
+    const rate = Number(data.rate_percent ?? 10);
+    const threshold = Number(data.threshold ?? 50);
+    const invited = Number(data.invited_total ?? 0);
+    const withDep = Number(data.invited_with_deposit ?? 0);
+    const earned = (data.earned_total ?? 0);
+    const currency = data.earned_currency || (data.currency || "₽");
+
+    const prog = Math.max(0, Math.min(100, Math.round((withDep / (threshold || 1)) * 100)));
+
+    // --- разметка как в Скрин 2; "последние начисления" не рендерим ---
+    page.innerHTML = `
+      <div class="ref-hero card">
+        <div class="ref-hero-ico">
+          <img src="static/img/tab-referrals.svg" alt="" />
         </div>
-        <div class="hint">За каждое пополнение вашего рефера вы получаете <b>${rate}%</b> на баланс.<br>
-        При ${progMax} рефералах с депозитом ставка повышается до <b>20%</b>.</div>
+        <div class="ref-hero-text">
+          <div class="ref-hero-title">
+            Приглашайте пользователей и получайте от <span class="accent">10%</span> их платежей
+          </div>
+          <div class="ref-hero-sub muted">
+            Средства автоматически поступают на ваш баланс. Полученные деньги вы можете тратить на продвижение и испытывать удачу в рулетке.
+          </div>
+        </div>
+      </div>
+
+      <div class="card ref-link" id="refLinkBlock" data-link="${inviteLink}">
+        <input class="ref-link-input" value="${inviteLink}" readonly aria-label="Ваша ссылка" />
+        <button class="icon-btn ref-link-copy" aria-label="Копировать">
+          <!-- inline svg, чтобы не зависеть от ассетов -->
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M9 9.5A2.5 2.5 0 0 1 11.5 7H17a2 2 0 0 1 2 2v5.5A2.5 2.5 0 0 1 16.5 17H11a2 2 0 0 1-2-2V9.5Z" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M7 14.5A2.5 2.5 0 0 1 4.5 12V6a2 2 0 0 1 2-2H12.5A2.5 2.5 0 0 1 15 6.5" stroke="currentColor" stroke-width="1.6"/>
+          </svg>
+        </button>
       </div>
 
       <div class="card">
-        <div class="label">Прогресс до 20%</div>
+        <div class="row between">
+          <div class="muted">Прогресс до 20%</div>
+          <div class="muted">${withDep} из ${threshold}</div>
+        </div>
         <div class="progress"><div class="bar" style="width:${prog}%"></div></div>
-        <div class="muted">Рефералов с депозитом: <b>${withDep}</b> из <b>${progMax}</b></div>
       </div>
 
-      <div class="card">
-        <div class="stat-grid">
-          <div><div class="sm">Всего приглашено</div><div class="lg">${Number(s.invited_total||0)}</div></div>
-          <div><div class="sm">С депозитом</div><div class="lg">${withDep}</div></div>
-          <div><div class="sm">Начислено</div><div class="lg">${fmt(s.earned_total)}${curSign(s.earned_currency||currentCurrency)}</div></div>
+      <div class="card stat-grid stat-grid--3">
+        <div class="stat">
+          <div class="stat-num">${invited}</div>
+          <div class="stat-label muted">Приглашено</div>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="label">Последние начисления</div>
-        <div class="bonus-list" id="bonusList"></div>
+        <div class="stat">
+          <div class="stat-num">${withDep}</div>
+          <div class="stat-label muted">С депозитом</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">${earned} ${currency}</div>
+          <div class="stat-label muted">Начислено</div>
+        </div>
       </div>
     `;
 
-    // bonuses
-    const list = document.getElementById('bonusList');
-    list.innerHTML = '';
-    const bonuses = Array.isArray(s.last_bonuses) ? s.last_bonuses : [];
-    if (!bonuses.length){
-      list.innerHTML = '<div class="empty">Пока нет начислений.</div>';
-    } else {
-      bonuses.forEach(b=>{
-        const el = document.createElement('div');
-        el.className = 'bonus-row';
-        const dt = new Date((b.ts||0)*1000).toLocaleString('ru-RU');
-        el.innerHTML = `<div class="left">#${b.from_seq} • ${dt} • ${b.rate}%</div>
-                        <div class="right">+${fmt(b.amount_credit)}${curSign(b.currency||currentCurrency)}</div>`;
-        list.appendChild(el);
-      });
-    }
+    // --- единое копирование по клику на ВЕСЬ блок ---
+    const refBlock = document.getElementById("refLinkBlock");
+    const copyBtn = refBlock?.querySelector(".ref-link-copy");
 
-    // copy/share
-    document.getElementById('btnCopyLink')?.addEventListener('click', ()=>{
-      copy(link); try{ tg?.HapticFeedback?.impactOccurred?.('light'); }catch(_){}
-    });
-    document.getElementById('btnShareLink')?.addEventListener('click', ()=>{
-      if (tg?.openLink && link) tg.openLink(link); else if (link) window.open(link,'_blank');
+    const doCopy = async (text) => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          // fallback
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          ta.remove();
+        }
+        tg?.HapticFeedback?.notificationOccurred?.("success");
+        // небольшое визуальное подтверждение
+        refBlock?.classList.add("copied");
+        setTimeout(() => refBlock?.classList.remove("copied"), 600);
+      } catch (_) {
+        tg?.HapticFeedback?.notificationOccurred?.("error");
+      }
+    };
+
+    refBlock?.addEventListener("click", () => doCopy(inviteLink));
+    copyBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      doCopy(inviteLink);
     });
 
-  }catch(e){
-    console.error('refs load failed:', e);
-    box.innerHTML = `<div class="empty">Не удалось загрузить рефералку${e?.message ? ` (${e.message})` : ''}.</div>`;
+  } catch (e) {
+    page.innerHTML = `
+      <div class="card" style="padding:16px">
+        <div class="error-text">Не удалось загрузить данные рефералки. Повторите попытку позже.</div>
+      </div>
+    `;
+    console.error(e);
   }
 }
+
 
 
   // ====== Keyboard inset -> CSS var --kb ======

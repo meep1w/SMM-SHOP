@@ -90,12 +90,11 @@ body{
 .muted{color:var(--muted); font-size:12px}
 .empty{color:var(--muted); text-align:center; padding:20px 8px}
 
-/* ===== Универсальная карточка ===== */
+/* Универсальная карточка */
 .card{
   background:linear-gradient(180deg,#15181d,#111419);
   border:1px solid var(--stroke);
-  border-radius:14px;
-  padding:14px;
+  border-radius:14px; padding:14px;
   box-shadow:0 6px 18px rgba(0,0,0,.18);
 }
 
@@ -151,11 +150,10 @@ body{
 .subheader .search input::placeholder{color:var(--muted)}
 .subheader .search input:focus{outline:none}
 
-/* Список услуг (ровные карточки) */
+/* Список услуг */
 .services-list{
   display:flex; flex-direction:column;
-  gap:14px;                    /* увеличили расстояния */
-  margin-bottom:12px;
+  gap:14px; margin-bottom:12px;
 }
 .service{
   display:flex; align-items:center; gap:14px;
@@ -198,7 +196,7 @@ body{
 /* ===== Страница отдельной услуги ===== */
 .service-details{display:flex; flex-direction:column; gap:12px}
 .svc{display:flex; flex-direction:column; gap:14px}
-.svc .card{ /* оставляем для обратной совместимости */
+.svc .card{ /* (оставляем, чтобы не трогать верстку услуги) */
   background:linear-gradient(180deg,#15181d,#111419);
   border:1px solid var(--stroke);
   border-radius:14px; padding:14px;
@@ -273,6 +271,52 @@ body{
 .skel-lines, .skeleton__lines{flex:1}
 .skel-line, .skeleton__line{height:10px;border-radius:8px;background:#1b2028;margin:6px 0; width:70%}
 .skel-line.short, .skeleton__line--short{width:35%}
+
+/* ===== Referrals page — новый дизайн ===== */
+.ref{display:flex; flex-direction:column; gap:12px}
+
+/* hero */
+.ref-hero{
+  display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px;
+  padding:22px 16px;
+}
+.ref-ico{
+  width:56px;height:56px;border-radius:50%;
+  display:grid;place-items:center;color:#fff;margin-bottom:2px;
+  background:radial-gradient(110px 110px at 30% 30%,#ff6b6b 0%,#ff3e3e 60%,#b62828 100%);
+  box-shadow:0 10px 30px rgba(255,107,107,.25),inset 0 0 18px rgba(255,255,255,.08);
+}
+.ref-ico svg{width:28px;height:28px;display:block}
+.ref-h1{font:600 15px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0}
+.ref-h2{font:12px/1.5 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#a8afbd;}
+
+/* link bar */
+.ref-linkbar{
+  display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center;
+  background:var(--elev); border:1px solid var(--stroke); border-radius:12px; padding:8px;
+}
+.ref-linkbar input{
+  background:transparent; border:0; color:var(--text); font-size:13px; outline:none; padding:6px 8px; width:100%;
+  cursor:pointer; user-select:all;
+}
+.ref-copy{
+  width:36px;height:36px;border-radius:10px;border:1px solid var(--stroke);
+  background:var(--surface-2); display:grid; place-items:center; cursor:pointer;
+}
+.ref-copy svg{width:18px;height:18px;display:block;color:#cfd5e1}
+
+/* progress */
+.ref-progress{height:12px;background:var(--elev);border:1px solid var(--stroke);border-radius:999px;overflow:hidden}
+.ref-progress__bar{height:100%;background:linear-gradient(90deg,#2b81f7,#00d084)}
+
+/* stats */
+.ref-h3{font:600 13px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0 10px}
+.ref-stats{display:grid; grid-template-columns:repeat(3,1fr); gap:10px}
+.ref-stat{
+  background:var(--elev); border:1px solid var(--stroke); border-radius:12px; padding:12px; text-align:center;
+}
+.ref-stat .sm{color:var(--muted); font-size:12px; margin-bottom:6px}
+.ref-stat .lg{font-weight:700; font-size:18px}
 
 /* ===== Tabbar ===== */
 .tabbar{
@@ -368,38 +412,104 @@ body{
 /* Fav list layout */
 .fav-list{ display:flex; flex-direction:column; gap:14px; }
 
-/* ===== Referrals page (совместимо с app.js и старым CSS) ===== */
-.ref{display:flex; flex-direction:column; gap:12px}
+/* Старые стили рефералок (оставляем на всякий случай) */
 .ref .label{font-size:12px; color:var(--muted); margin-bottom:8px}
-
-/* copy link row */
-.ref__copy, .copy-row{display:grid; grid-template-columns:1fr auto auto; gap:8px}
-.ref__copy input, .copy-row input{
-  width:100%; background:var(--elev); border:1px solid var(--stroke);
-  border-radius:12px; padding:10px 12px; color:var(--text); font-weight:600
-}
-.copy-row .btn{min-width:118px}
-
-/* progress */
-.ref__progress, .progress{position:relative;height:10px;background:var(--elev);border:1px solid var(--stroke);border-radius:999px;overflow:hidden}
-.ref__bar, .progress .bar{height:100%;background:linear-gradient(90deg,#2b81f7,#00d084);transition:width .35s ease}
-
-/* stats grid */
-.ref__grid, .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center}
+.ref__copy input{ width:100%; background:var(--elev); border:1px solid var(--stroke); border-radius:12px; padding:10px 12px; color:var(--text)}
+.ref__progress{height:10px;background:var(--elev);border:1px solid var(--stroke);border-radius:999px;overflow:hidden}
+.ref__bar{height:100%;background:linear-gradient(90deg,#2b81f7,#00d084)}
+.ref__grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center}
 .ref .sm{color:var(--muted);font-size:12px;margin-bottom:6px}
 .ref .lg{font-weight:700;font-size:18px}
+.ref__bonuses{display:flex;flex-direction:column;gap:8px}
+.ref-bonus{ display:flex;align-items:center;justify-content:space-between; padding:10px 12px;border:1px solid var(--stroke);border-radius:12px;background:var(--elev)}
+.ref-bonus__left{color:#cfd5e1}
+.ref-bonus__right{font-weight:600}
 
-/* bonuses list */
-.ref__bonuses, .bonus-list{display:flex;flex-direction:column;gap:8px}
-.ref-bonus, .bonus-row{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:10px 12px;border:1px solid var(--stroke);border-radius:12px;background:var(--elev);
-  transition:transform .08s ease, border-color .2s ease;
+/* ===== Referrals (Скрин 2) ===== */
+.ref-hero {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 16px;
 }
-.ref-bonus:hover, .bonus-row:hover{transform:translateY(-1px);border-color:var(--stroke-2)}
-.ref-bonus__left, .bonus-row .left{color:#cfd5e1}
-.ref-bonus__right, .bonus-row .right{font-weight:600}
-.ref__empty{color:var(--muted);text-align:center;padding:16px 8px}
+.ref-hero-ico {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+  display: grid;
+  place-items: center;
+  flex: 0 0 48px;
+}
+.ref-hero-ico img { width: 28px; height: 28px; display: block; }
+.ref-hero-title { font-size: 16px; line-height: 1.25; font-weight: 600; }
+.ref-hero-sub { margin-top: 6px; font-size: 13px; line-height: 1.35; }
+.ref-hero .accent { color: var(--brand); }
+
+/* ссылка — кликабельный блок целиком */
+.ref-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: transform .05s ease, border-color .2s ease, background-color .2s ease;
+}
+.ref-link:hover { border-color: color-mix(in srgb, var(--brand) 45%, var(--stroke)); }
+.ref-link:active { transform: scale(0.998); }
+.ref-link.copied { outline: 2px solid color-mix(in srgb, var(--brand) 30%, transparent); }
+
+.ref-link-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 20px;
+  padding: 0;
+  user-select: all;
+}
+.ref-link-input:focus { outline: none; }
+.ref-link .ref-link-copy {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: grid; place-items: center;
+}
+.ref-link .ref-link-copy:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+
+/* прогресс */
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  overflow: hidden;
+  margin-top: 10px;
+}
+.progress .bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--brand), color-mix(in srgb, var(--brand) 60%, #fff));
+}
+
+/* статистика 3 колонки */
+.stat-grid { display: grid; gap: 10px; }
+.stat-grid--3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 380px) { .stat-grid--3 { grid-template-columns: 1fr; } }
+
+.stat { text-align: center; padding: 4px 2px; }
+.stat-num { font-size: 20px; font-weight: 700; line-height: 1.2; }
+.stat-label { font-size: 12px; margin-top: 2px; }
+
+/* утилиты */
+.row.between { display:flex; justify-content:space-between; align-items:center; }
+.muted { color: var(--muted); }
+.skeleton-line {
+  height: 12px; background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: 8px;
+}
+.error-text { color: #ff6b6b; }
+
 
 /* Скрыть скроллбары */
 body, .page, .app-main, .cats-list, .services-list{ -ms-overflow-style:none; scrollbar-width:none; }
