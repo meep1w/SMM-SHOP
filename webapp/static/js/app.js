@@ -3,7 +3,8 @@
  * - Профиль, баланс, оверлей успешного пополнения
  * - Категории / Услуги / Полная страница услуги
  * - Избранное (локально) + отправка на сервер
- * - Рефералка (линк, прогресс, статы, последние начисления)
+ * - Рефералка (линк, прогресс, статы)
+ * - Детализация (Заказы / Платежи)
  */
 
 (function () {
@@ -59,6 +60,20 @@
       const t=document.createElement('textarea'); t.value=text;
       document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove();
     }
+  }
+  function fmtDate(val){
+    try{
+      let ts = typeof val === 'number' ? val : Number(val);
+      if (!Number.isFinite(ts)) return String(val);
+      if (ts < 1e12) ts = ts * 1000; // пришло в секундах
+      const dt = new Date(ts);
+      const dd = String(dt.getDate()).padStart(2,"0");
+      const mm = String(dt.getMonth()+1).padStart(2,"0");
+      const yy = String(dt.getFullYear()).slice(-2);
+      const hh = String(dt.getHours()).padStart(2,"0");
+      const mi = String(dt.getMinutes()).padStart(2,"0");
+      return `${dd}.${mm}.${yy} ${hh}:${mi}`;
+    }catch(_){ return String(val); }
   }
 
   // ====== Topup overlay (CSS classes из app.css) ======
@@ -183,8 +198,9 @@
     const tab = btn?.dataset?.tab || 'catalog';
     const id  = pageIdByTab(tab);
     showPage(id);
-    if (tab==='favs') renderFavs();
-    if (tab==='refs') loadRefs();
+    if (tab==='favs')   renderFavs();
+    if (tab==='refs')   loadRefs();
+    if (tab==='details') loadDetails("orders");   // ← Детализация
   }
   document.querySelectorAll(".tabbar .tab").forEach(b=> b.addEventListener('click', ()=> activateTab(b)));
   // стартовая вкладка
@@ -494,158 +510,288 @@
   // стартовая загрузка категорий
   loadCategories();
 
-// === Рефералка: целевой UI (Скрин 2). Меняем только разметку и хендлеры. ===
-async function loadRefs() {
-  // безоп. доступ к TG объекту
-  const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-  const page = document.getElementById("page-refs");
-  if (!page) return;
+  // === Рефералка ===
+  async function loadRefs() {
+    const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+    const page = document.getElementById("page-refs");
+    if (!page) return;
 
-  // скелетон
-  page.innerHTML = `
-    <div class="card" style="padding:16px">
-      <div class="skeleton-line" style="width:60%"></div>
-      <div class="skeleton-line" style="width:90%;margin-top:10px"></div>
-    </div>
-  `;
-
-  try {
-    const API_BASE = (typeof window.API_BASE === "string" && window.API_BASE) ? window.API_BASE : "/api/v1";
-
-    // user id из TG или из глобали
-    let uid = null;
-    try { uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id; } catch (_) {}
-    if (!uid && window.USER_ID) uid = window.USER_ID;
-
-    const url = API_BASE + "/referrals/stats" + (uid ? ("?user_id=" + encodeURIComponent(uid)) : "");
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-
-    // данные (безопасные дефолты)
-    const inviteLink = String(data.invite_link || data.link || "");
-    const rate = Number(data.rate_percent != null ? data.rate_percent : 10);
-    const threshold = Number(data.threshold != null ? data.threshold : 50);
-    const invited = Number(data.invited_total != null ? data.invited_total : 0);
-    const withDep = Number(data.invited_with_deposit != null ? data.invited_with_deposit : 0);
-    const earnedRaw = (data.earned_total != null ? data.earned_total : 0);
-    const earned = typeof earnedRaw === "number" ? earnedRaw.toFixed(2) : String(earnedRaw);
-    const currency = String(data.earned_currency || data.currency || "₽");
-
-    const denom = threshold > 0 ? threshold : 50;
-    const prog = Math.max(0, Math.min(100, Math.round((withDep / denom) * 100)));
-
-    // разметка по Скрин 2
     page.innerHTML = `
-      <div class="ref">
-
-        <!-- HERO -->
-        <div class="card ref-hero">
-            <div class="ref-ico">
-                <img src="static/img/tab-referrals.svg" alt="" class="ref-ico-img">
-            </div>
-          <div class="ref-h1">
-            Приглашайте пользователей <br> и получайте от <span class="accent">10%</span> их платежей
-          </div>
-          <div class="ref-h2">
-            Средства автоматически поступают на ваш баланс.
-            Полученные деньги вы можете тратить на <br> продвижение и испытывать удачу в рулетке.
-          </div>
-        </div>
-
-        <!-- ССЫЛКА -->
-        <div class="label">Ваша ссылка</div>
-        <div class="card ref-linkbar" id="refLinkBar">
-          <input id="refLinkInput" type="text" readonly aria-label="Ваша ссылка" />
-          <button class="ref-copy" id="refCopyBtn" aria-label="Копировать">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M9 9.5A2.5 2.5 0 0 1 11.5 7H17a2 2 0 0 1 2 2v5.5A2.5 2.5 0 0 1 16.5 17H11a2 2 0 0 1-2-2V9.5Z" stroke="currentColor" stroke-width="1.6"/>
-              <path d="M7 14.5A2.5 2.5 0 0 1 4.5 12V6a2 2 0 0 1 2-2H12.5A2.5 2.5 0 0 1 15 6.5" stroke="currentColor" stroke-width="1.6"/>
-            </svg>
-          </button>
-        </div>
-        <div class="ref-note">
-          Пригласите 50 человек которые внесут депозит <br> и ваш процент увеличится до <span class="accent">20%</span> навсегда
-        </div>
-
-        <!-- ПРОГРЕСС -->
-        <div class="card ref-progress-card">
-          <div class="row between">
-            <div class="muted">Прогресс до 20%</div>
-          </div>
-          <div class="ref-progress"><div class="ref-progress__bar" style="width:${prog}%;"></div></div>
-          <div class="ref-progress-meta">
-            <span>Рефералов с депозитом ${withDep} из ${threshold}</span>
-          </div>
-        </div>
-
-        <!-- СТАТИСТИКА -->
-        <div class="ref-h3">Статистика</div>
-        <div class="ref-stats">
-          <div class="ref-stat">
-            <div class="sm">Приглашено</div>
-            <div class="lg">${invited}</div>
-          </div>
-          <div class="ref-stat">
-            <div class="sm">С депозитом</div>
-            <div class="lg">${withDep}</div>
-          </div>
-          <div class="ref-stat">
-            <div class="sm">Начислено</div>
-            <div class="lg">${earned} ${currency}</div>
-          </div>
-        </div>
-
+      <div class="card" style="padding:16px">
+        <div class="skeleton-line" style="width:60%"></div>
+        <div class="skeleton-line" style="width:90%;margin-top:10px"></div>
       </div>
     `;
 
-    // заполняем ссылку отдельно (чтобы не экранировать)
-    const input = document.getElementById("refLinkInput");
-    if (input) input.value = inviteLink;
+    try {
+      const API_BASE = (typeof window.API_BASE === "string" && window.API_BASE) ? window.API_BASE : "/api/v1";
 
-    // копирование (клик по ВЕСЬ блоку и по кнопке)
-    const bar  = document.getElementById("refLinkBar");
-    const btn  = document.getElementById("refCopyBtn");
+      let uid = null;
+      try { uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id; } catch (_) {}
+      if (!uid && window.USER_ID) uid = window.USER_ID;
 
-    async function copyLink() {
-      const text = (input && input.value) ? input.value : inviteLink;
+      const url = API_BASE + "/referrals/stats" + (uid ? ("?user_id=" + encodeURIComponent(uid)) : "");
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+
+      const inviteLink = String(data.invite_link || data.link || "");
+      const rate = Number(data.rate_percent != null ? data.rate_percent : 10);
+      const threshold = Number(data.threshold != null ? data.threshold : 50);
+      const invited = Number(data.invited_total != null ? data.invited_total : 0);
+      const withDep = Number(data.invited_with_deposit != null ? data.invited_with_deposit : 0);
+      const earnedRaw = (data.earned_total != null ? data.earned_total : 0);
+      const earned = typeof earnedRaw === "number" ? earnedRaw.toFixed(2) : String(earnedRaw);
+      const currency = String(data.earned_currency || data.currency || "₽");
+
+      const denom = threshold > 0 ? threshold : 50;
+      const prog = Math.max(0, Math.min(100, Math.round((withDep / denom) * 100)));
+
+      page.innerHTML = `
+        <div class="ref">
+
+          <!-- HERO -->
+          <div class="card ref-hero">
+              <div class="ref-ico">
+                  <img src="static/img/tab-referrals.svg" alt="" class="ref-ico-img">
+              </div>
+            <div class="ref-h1">
+              Приглашайте пользователей <br> и получайте от <span class="accent">10%</span> их платежей
+            </div>
+            <div class="ref-h2">
+              Средства автоматически поступают на ваш баланс.
+              Полученные деньги вы можете тратить на <br> продвижение и испытывать удачу в рулетке.
+            </div>
+          </div>
+
+          <!-- ССЫЛКА -->
+          <div class="label">Ваша ссылка</div>
+          <div class="card ref-linkbar" id="refLinkBar">
+            <input id="refLinkInput" type="text" readonly aria-label="Ваша ссылка" />
+            <button class="ref-copy" id="refCopyBtn" aria-label="Копировать">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M9 9.5A2.5 2.5 0 0 1 11.5 7H17a2 2 0 0 1 2 2v5.5A2.5 2.5 0 0 1 16.5 17H11a2 2 0 0 1-2-2V9.5Z" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M7 14.5A2.5 2.5 0 0 1 4.5 12V6a2 2 0 0 1 2-2H12.5A2.5 2.5 0 0 1 15 6.5" stroke="currentColor" stroke-width="1.6"/>
+              </svg>
+            </button>
+          </div>
+          <div class="ref-note">
+            Пригласите 50 человек которые внесут депозит <br> и ваш процент увеличится до <span class="accent">20%</span> навсегда
+          </div>
+
+          <!-- ПРОГРЕСС -->
+          <div class="card ref-progress-card">
+            <div class="row between">
+              <div class="muted">Прогресс до 20%</div>
+            </div>
+            <div class="ref-progress"><div class="ref-progress__bar" style="width:${prog}%;"></div></div>
+            <div class="ref-progress-meta">
+              <span>Рефералов с депозитом ${withDep} из ${threshold}</span>
+            </div>
+          </div>
+
+          <!-- СТАТИСТИКА -->
+          <div class="ref-h3">Статистика</div>
+          <div class="ref-stats">
+            <div class="ref-stat">
+              <div class="sm">Приглашено</div>
+              <div class="lg">${invited}</div>
+            </div>
+            <div class="ref-stat">
+              <div class="sm">С депозитом</div>
+              <div class="lg">${withDep}</div>
+            </div>
+            <div class="ref-stat">
+              <div class="sm">Начислено</div>
+              <div class="lg">${earned} ${currency}</div>
+            </div>
+          </div>
+
+        </div>
+      `;
+
+      const input = document.getElementById("refLinkInput");
+      if (input) input.value = inviteLink;
+
+      const bar  = document.getElementById("refLinkBar");
+      const btn  = document.getElementById("refCopyBtn");
+
+      async function copyLink() {
+        const text = (input && input.value) ? input.value : inviteLink;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+          }
+          if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
+            tg.HapticFeedback.notificationOccurred("success");
+          }
+          bar && bar.classList.add("copied");
+          setTimeout(() => { bar && bar.classList.remove("copied"); }, 600);
+        } catch (err) {
+          if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
+            tg.HapticFeedback.notificationOccurred("error");
+          }
+          console.error("copy failed", err);
+        }
+      }
+
+      bar && bar.addEventListener("click", copyLink);
+      btn && btn.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
+
+    } catch (err) {
+      console.error("loadRefs error:", err);
+      page.innerHTML = `
+        <div class="card" style="padding:16px">
+          <div class="error-text">Не удалось загрузить данные рефералки. Попробуйте позже.</div>
+        </div>
+      `;
+    }
+  }
+
+  // ====== Детализация ======
+
+  const STATUS_MAP = {
+    processing: { label: "В обработке", cls: "badge--processing" },
+    completed:  { label: "Завершён",   cls: "badge--completed"  },
+    failed:     { label: "Отклонён",   cls: "badge--failed"     },
+    pending:    { label: "Ожидает оплаты", cls: "badge--pending" },
+  };
+  const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || {label:code||"—", cls:"badge--processing"};
+
+  async function apiFetchOrders(uid, status) {
+    const q = new URLSearchParams({ user_id: String(uid) });
+    if (status && status !== "all") q.set("status", status);
+    const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials: "include" });
+    if (!r.ok) throw new Error("orders HTTP " + r.status);
+    return r.json();
+  }
+  async function apiFetchPayments(uid, status) {
+    const q = new URLSearchParams({ user_id: String(uid) });
+    if (status && status !== "all") q.set("status", status);
+    const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials: "include" });
+    if (!r.ok) throw new Error("payments HTTP " + r.status);
+    return r.json();
+  }
+
+  async function loadDetails(defaultTab = "orders") {
+    const page = document.getElementById("page-details");
+    if (!page) return;
+    const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
+
+    page.innerHTML = `
+      <div class="details-head">
+        <h2>Детализация</h2>
+        <div class="seg" id="detailsSeg">
+          <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
+          <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
+        </div>
+      </div>
+      <div id="detailsFilters"></div>
+      <div class="list" id="detailsList">
+        <div class="skeleton" style="height:60px"></div>
+        <div class="skeleton" style="height:60px"></div>
+      </div>
+    `;
+
+    const seg = document.getElementById("detailsSeg");
+    const filtersWrap = document.getElementById("detailsFilters");
+    const list = document.getElementById("detailsList");
+
+    async function renderOrders(filter = "all") {
+      filtersWrap.innerHTML = `
+        <div class="filters">
+          <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
+          <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
+          <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
+          <button class="filter ${filter==="pending"?"active":""}" data-f="pending">Ожидает оплаты</button>
+          <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отклонён</button>
+        </div>
+      `;
+      list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
+
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(text);
-        } else {
-          const ta = document.createElement("textarea");
-          ta.value = text;
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
-        }
-        if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
-          tg.HapticFeedback.notificationOccurred("success");
-        }
-        bar && bar.classList.add("copied");
-        setTimeout(() => { bar && bar.classList.remove("copied"); }, 600);
-      } catch (err) {
-        if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
-          tg.HapticFeedback.notificationOccurred("error");
-        }
-        console.error("copy failed", err);
+        const orders = await apiFetchOrders(uid, filter);
+        if (!orders.length) { list.innerHTML = `<div class="empty">Заказы не найдены</div>`; return; }
+        list.innerHTML = orders.map(o => {
+          const st = stInfo(o.status);
+          const title = o.service || "Услуга";
+          const cat = o.category ? `${o.category} • ` : "";
+          const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
+          return `
+            <div class="order">
+              <div class="order__avatar">${(o.category || o.service || "?").slice(0,1).toUpperCase()}</div>
+              <div class="order__body">
+                <div class="order__head">
+                  <div class="order__title">${title}</div>
+                  <span class="badge ${st.cls}">${st.label}</span>
+                </div>
+                <div class="order__meta">${cat}Количество: ${o.quantity} • ${fmtDate(o.created_at)}</div>
+                <div class="order__foot">
+                  <div class="order__sum">${sum}</div>
+                  <div class="order__id">#${o.id}</div>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("");
+      } catch (e) {
+        console.error(e);
+        list.innerHTML = `<div class="empty">Не удалось загрузить заказы</div>`;
+      }
+
+      filtersWrap.querySelectorAll(".filter").forEach(b=>{
+        b.addEventListener("click", ()=> renderOrders(b.dataset.f));
+      });
+    }
+
+    async function renderPayments(filter = "all") {
+      filtersWrap.innerHTML = ""; // фильтров пока нет
+      list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
+
+      try {
+        const pays = await apiFetchPayments(uid, filter);
+        if (!pays.length) { list.innerHTML = `<div class="empty">Платежей пока нет</div>`; return; }
+        list.innerHTML = pays.map(p => {
+          const st = stInfo(p.status);
+          const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+          const sub = `${p.method || "Пополнение"} • ${fmtDate(p.created_at)} • #${p.id}`;
+          return `
+            <div class="pay">
+              <div class="pay__ico">₽</div>
+              <div class="pay__body">
+                <div class="pay__top">
+                  <div class="pay__sum">${sum}</div>
+                  <span class="badge ${st.cls}">${st.label}</span>
+                </div>
+                <div class="pay__sub">${sub}</div>
+              </div>
+            </div>
+          `;
+        }).join("");
+      } catch (e) {
+        console.error(e);
+        list.innerHTML = `<div class="empty">Не удалось загрузить платежи</div>`;
       }
     }
 
-    bar && bar.addEventListener("click", copyLink);
-    btn && btn.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
+    async function switchTab(tab) {
+      seg.querySelectorAll(".seg__btn").forEach(b=>b.classList.toggle("seg__btn--active", b.dataset.tab===tab));
+      if (tab === "orders") await renderOrders("all");
+      else await renderPayments("all");
+    }
 
-  } catch (err) {
-    console.error("loadRefs error:", err);
-    page.innerHTML = `
-      <div class="card" style="padding:16px">
-        <div class="error-text">Не удалось загрузить данные рефералки. Попробуйте позже.</div>
-      </div>
-    `;
+    await switchTab(defaultTab);
+    seg.querySelectorAll(".seg__btn").forEach(btn=>{
+      btn.addEventListener("click", ()=> switchTab(btn.dataset.tab));
+    });
   }
-}
-
 
   // ====== Keyboard inset -> CSS var --kb ======
   (function keyboardLift(){

@@ -741,3 +741,124 @@ async def cryptobot_webhook(request: Request):
         s.commit()
 
     return {"ok": True}
+
+
+# ===== helpers: status normalize/synonyms (для детализации) =====
+def _order_status_norm(s: Optional[str]) -> str:
+    t = (s or "").strip().lower().replace("_", " ")
+    if t in ("awaiting", "in progress", "processing"):
+        return "processing"
+    if t in ("completed", "finished", "success", "done"):
+        return "completed"
+    if t in ("canceled", "cancelled", "failed", "error"):
+        return "failed"
+    if t in ("pending",):
+        return "pending"
+    return t or "processing"
+
+_ORDER_STATUS_SYNONYMS = {
+    "processing": ["awaiting", "in progress", "processing"],
+    "completed":  ["completed", "finished", "success", "done"],
+    "failed":     ["canceled", "cancelled", "failed", "error"],
+    "pending":    ["pending"],
+}
+
+def _pay_status_norm(s: Optional[str]) -> str:
+    t = (s or "").strip().lower()
+    if t in ("created", "pending"):
+        return "pending"
+    if t in ("paid", "finished", "success"):
+        return "completed"
+    if t in ("failed", "canceled", "cancelled", "expired", "error"):
+        return "failed"
+    return t or "pending"
+
+_PAY_STATUS_SYNONYMS = {
+    "pending":  ["created", "pending"],
+    "completed":["paid", "finished", "success"],
+    "failed":   ["failed", "canceled", "cancelled", "expired", "error"],
+}
+
+# ===== Orders list =====
+@app.get("/api/v1/orders")
+async def api_orders(
+    user_id: int = Query(...),
+    status: Optional[str] = None,  # one of: processing/completed/failed/pending
+    limit: int = 50,
+    offset: int = 0,
+):
+    limit = max(1, min(200, int(limit)))
+    offset = max(0, int(offset))
+    with db() as s:
+        u = s.query(User).filter((User.tg_id == user_id) | (User.seq == user_id)).one_or_none()
+        if not u:
+            raise HTTPException(404, "user_not_found")
+
+        q = (
+            s.query(Order, Service)
+            .join(Service, Service.id == Order.service_id)
+            .filter(Order.user_id == u.id)
+        )
+        if status:
+            key = _order_status_norm(status)
+            syns = _ORDER_STATUS_SYNONYMS.get(key, [key])
+            q = q.filter(func.lower(Order.status).in_(syns))
+
+        rows = q.order_by(Order.id.desc()).limit(limit).offset(offset).all()
+        out = []
+        for o, svc in rows:
+            out.append({
+                "id": o.id,
+                "created_at": int(getattr(o, "created_at", None) or now_ts()),
+                "service": svc.name,
+                "category": svc.description or "",
+                "quantity": int(o.quantity or 0),
+                "price": float(o.cost or 0.0),
+                "currency": o.currency or CURRENCY,
+                "status": _order_status_norm(o.status),
+                "provider_id": getattr(o, "provider_id", None),
+            })
+        return out
+
+# ===== Payments (topups) list =====
+@app.get("/api/v1/payments")
+async def api_payments(
+    user_id: int = Query(...),
+    status: Optional[str] = None,  # pending/completed/failed
+    limit: int = 50,
+    offset: int = 0,
+):
+    limit = max(1, min(200, int(limit)))
+    offset = max(0, int(offset))
+    with db() as s:
+        u = s.query(User).filter((User.tg_id == user_id) | (User.seq == user_id)).one_or_none()
+        if not u:
+            raise HTTPException(404, "user_not_found")
+
+        q = s.query(Topup).filter(Topup.user_id == u.id)
+        if status:
+            key = _pay_status_norm(status)
+            syns = _PAY_STATUS_SYNONYMS.get(key, [key])
+            q = q.filter(func.lower(Topup.status).in_(syns))
+
+        rows = q.order_by(Topup.id.desc()).limit(limit).offset(offset).all()
+
+        fx = await fx_usd_rub()
+        out = []
+        for t in rows:
+            usd = float(t.amount_usd or 0.0)
+            if CURRENCY == "USD":
+                amount = round(usd, 2); currency = "USD"
+            else:
+                amount = round(usd * fx, 2); currency = CURRENCY
+            out.append({
+                "id": t.id,
+                "created_at": int(getattr(t, "created_at", None) or now_ts()),
+                "amount": amount,
+                "amount_usd": round(usd, 2),
+                "currency": currency,
+                "method": t.provider or "cryptobot",
+                "status": _pay_status_norm(t.status),
+                "invoice_id": t.invoice_id,
+            })
+        return out
