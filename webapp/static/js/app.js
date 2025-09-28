@@ -542,7 +542,7 @@ async function loadRefs() {
         <!-- HERO -->
         <div class="card ref-hero">
             <div class="ref-ico">
-                <img src="static/img/tab-favorites.svg" alt="" class="ref-ico-img">
+                <img src="static/img/tab-referrals.svg" alt="" class="ref-ico-img">
             </div>
           <div class="ref-h1">
             Приглашайте пользователей <br> и получайте от <span class="accent">10%</span> их платежей
