@@ -442,7 +442,7 @@ body{
 .fav-list{ display:flex; flex-direction:column; gap:14px; }
 
 /* Старые стили рефералок (оставляем на всякий случай, не используются новым UI) */
-.ref .label{font-size:16px; color:var(--text);}
+.ref .label{font-size:16px; color:var(--text); font-weight: 600;}
 .ref__copy input{ width:100%; background:var(--elev); border:1px solid var(--stroke); border-radius:12px; padding:10px 12px; color:var(--text)}
 .ref__progress{height:10px;background:var(--elev);border:1px solid var(--stroke);border-radius:999px;overflow:hidden}
 .ref__bar{height:100%;background:linear-gradient(90deg,#2b81f7,#00d084)}
