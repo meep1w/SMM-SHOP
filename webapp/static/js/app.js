@@ -681,117 +681,127 @@
   }
 
   async function loadDetails(defaultTab = "orders") {
-    const page = document.getElementById("page-details");
-    if (!page) return;
-    const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
+  const page = document.getElementById("page-details");
+  if (!page) return;
+  const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
 
-    page.innerHTML = `
-      <div class="details-head">
-        <h2>Детализация</h2>
-        <div class="seg" id="detailsSeg">
-          <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
-          <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
-        </div>
+  page.innerHTML = `
+    <div class="details-head details-head--center">
+      <div class="seg" id="detailsSeg">
+        <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
+        <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
       </div>
-      <div id="detailsFilters"></div>
-      <div class="list" id="detailsList">
-        <div class="skeleton" style="height:60px"></div>
-        <div class="skeleton" style="height:60px"></div>
+    </div>
+    <div id="detailsFilters"></div>
+    <div class="list" id="detailsList">
+      <div class="skeleton" style="height:60px"></div>
+      <div class="skeleton" style="height:60px"></div>
+    </div>
+  `;
+
+  const seg = document.getElementById("detailsSeg");
+  const filtersWrap = document.getElementById("detailsFilters");
+  const list = document.getElementById("detailsList");
+
+  async function renderOrders(filter = "all") {
+    // горизонтальный скролл чипсов
+    filtersWrap.innerHTML = `
+      <div class="filters filters--scroll">
+        <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
+        <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
+        <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
+        <button class="filter ${filter==="pending"?"active":""}" data-f="pending">Ожидает оплаты</button>
+        <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отклонён</button>
       </div>
     `;
+    list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
 
-    const seg = document.getElementById("detailsSeg");
-    const filtersWrap = document.getElementById("detailsFilters");
-    const list = document.getElementById("detailsList");
+    try {
+      const q = new URLSearchParams({ user_id:String(uid) });
+      if (filter && filter!=="all") q.set("status", filter);
+      const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
+      const orders = r.ok ? await r.json() : [];
+      if (!orders.length) { list.innerHTML = `<div class="empty">Заказы не найдены</div>`; return; }
 
-    async function renderOrders(filter = "all") {
-      filtersWrap.innerHTML = `
-        <div class="filters">
-          <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
-          <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
-          <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
-          <button class="filter ${filter==="pending"?"active":""}" data-f="pending">Ожидает оплаты</button>
-          <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отклонён</button>
-        </div>
-      `;
-      list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
-
-      try {
-        const orders = await apiFetchOrders(uid, filter);
-        if (!orders.length) { list.innerHTML = `<div class="empty">Заказы не найдены</div>`; return; }
-        list.innerHTML = orders.map(o => {
-          const st = stInfo(o.status);
-          const title = o.service || "Услуга";
-          const cat = o.category ? `${o.category} • ` : "";
-          const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
-          return `
-            <div class="order">
-              <div class="order__avatar">${(o.category || o.service || "?").slice(0,1).toUpperCase()}</div>
-              <div class="order__body">
-                <div class="order__head">
-                  <div class="order__title">${title}</div>
-                  <span class="badge ${st.cls}">${st.label}</span>
-                </div>
-                <div class="order__meta">${cat}Количество: ${o.quantity} • ${fmtDate(o.created_at)}</div>
-                <div class="order__foot">
-                  <div class="order__sum">${sum}</div>
-                  <div class="order__id">#${o.id}</div>
-                </div>
+      list.innerHTML = orders.map(o=>{
+        const st = stInfo(o.status);
+        const title = o.service || "Услуга";
+        const cat = o.category ? `${o.category} • ` : "";
+        const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
+        return `
+          <div class="order">
+            <div class="order__avatar">${(o.category || o.service || "?").slice(0,1).toUpperCase()}</div>
+            <div class="order__body">
+              <div class="order__head">
+                <div class="order__title">${title}</div>
+                <span class="badge ${st.cls}">${st.label}</span>
+              </div>
+              <div class="order__meta">${cat}Количество: ${o.quantity} • ${fmtDate(o.created_at)}</div>
+              <div class="order__foot">
+                <div class="order__sum">${sum}</div>
+                <div class="order__id">#${o.id}</div>
               </div>
             </div>
-          `;
-        }).join("");
-      } catch (e) {
-        console.error(e);
-        list.innerHTML = `<div class="empty">Не удалось загрузить заказы</div>`;
-      }
-
-      filtersWrap.querySelectorAll(".filter").forEach(b=>{
-        b.addEventListener("click", ()=> renderOrders(b.dataset.f));
-      });
+          </div>
+        `;
+      }).join("");
+    } catch {
+      list.innerHTML = `<div class="empty">Не удалось загрузить заказы</div>`;
     }
 
-    async function renderPayments(filter = "all") {
-      filtersWrap.innerHTML = ""; // фильтров пока нет
-      list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
-
-      try {
-        const pays = await apiFetchPayments(uid, filter);
-        if (!pays.length) { list.innerHTML = `<div class="empty">Платежей пока нет</div>`; return; }
-        list.innerHTML = pays.map(p => {
-          const st = stInfo(p.status);
-          const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-          const sub = `${p.method || "Пополнение"} • ${fmtDate(p.created_at)} • #${p.id}`;
-          return `
-            <div class="pay">
-              <div class="pay__ico">₽</div>
-              <div class="pay__body">
-                <div class="pay__top">
-                  <div class="pay__sum">${sum}</div>
-                  <span class="badge ${st.cls}">${st.label}</span>
-                </div>
-                <div class="pay__sub">${sub}</div>
-              </div>
-            </div>
-          `;
-        }).join("");
-      } catch (e) {
-        console.error(e);
-        list.innerHTML = `<div class="empty">Не удалось загрузить платежи</div>`;
-      }
-    }
-
-    async function switchTab(tab) {
-      seg.querySelectorAll(".seg__btn").forEach(b=>b.classList.toggle("seg__btn--active", b.dataset.tab===tab));
-      if (tab === "orders") await renderOrders("all");
-      else await renderPayments("all");
-    }
-
-    await switchTab(defaultTab);
-    seg.querySelectorAll(".seg__btn").forEach(btn=>{
-      btn.addEventListener("click", ()=> switchTab(btn.dataset.tab));
+    // клики по чипсам
+    filtersWrap.querySelectorAll(".filter").forEach(b=>{
+      b.addEventListener("click", ()=> renderOrders(b.dataset.f));
     });
   }
+
+  async function renderPayments() {
+    filtersWrap.innerHTML = ""; // фильтров пока не рисуем
+    list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
+
+    try {
+      const q = new URLSearchParams({ user_id:String(uid) });
+      const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
+      const pays = r.ok ? await r.json() : [];
+      if (!pays.length) { list.innerHTML = `<div class="empty">Платежей пока нет</div>`; return; }
+
+      list.innerHTML = pays.map(p=>{
+        const st = stInfo(p.status);
+        const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+        const sub = `${p.method || "cryptobot"} • ${fmtDate(p.created_at)} • #${p.id}`;
+        // иконка провайдера
+        const prov = String(p.method||"cryptobot").toLowerCase();
+        const ico  = `static/img/${prov}.svg`; // положи static/img/cryptobot.svg
+        return `
+          <div class="pay">
+            <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
+            <div class="pay__body">
+              <div class="pay__top">
+                <div class="pay__sum">${sum}</div>
+                <span class="badge ${st.cls}">${st.label}</span>
+              </div>
+              <div class="pay__sub">${sub}</div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    } catch {
+      list.innerHTML = `<div class="empty">Не удалось загрузить платежи</div>`;
+    }
+  }
+
+  async function switchTab(tab) {
+    seg.querySelectorAll(".seg__btn").forEach(b=>b.classList.toggle("seg__btn--active", b.dataset.tab===tab));
+    if (tab === "orders") await renderOrders("all");
+    else await renderPayments();
+  }
+
+  await switchTab(defaultTab);
+  seg.querySelectorAll(".seg__btn").forEach(btn=>{
+    btn.addEventListener("click", ()=> switchTab(btn.dataset.tab));
+  });
+}
+
 
   // ====== Keyboard inset -> CSS var --kb ======
   (function keyboardLift(){
