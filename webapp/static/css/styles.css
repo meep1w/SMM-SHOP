@@ -274,7 +274,6 @@ body{
 
 /* ====================================================================== */
 /* ===== Referrals page — целевой дизайн (Скрин 2) ====================== */
-/* Контейнер страницы */
 .ref{display:flex; flex-direction:column; gap:12px}
 
 /* Hero */
@@ -292,7 +291,7 @@ body{
 .ref-h1 .accent{color:var(--brand)}
 .ref-h2{font:12px/1.5 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#a8afbd;}
 
-/* Ссылка (единый кликабельный блок) */
+/* Ссылка */
 .ref-linkbar,
 .ref-link{
   display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center;
@@ -319,11 +318,10 @@ body{
 .ref-copy svg,
 .ref-link .ref-link-copy svg{width:18px;height:18px;display:block;color:#cfd5e1}
 
-/* Подсказка под ссылкой */
-.ref-note{ color:var(--muted); font-size:12px; padding:0 2px }
+.ref-note{ color:var(--muted); font-size:12px; padding:0 2px; text-align:center }
 
 /* Прогресс */
-.ref-progress-card .row{ display:flex; justify-content:space-between; align-items:center; }
+.ref-progress-card .row{ display:flex; align-items:center; gap:8px; }
 .ref-progress{
   height:8px;background:rgba(255,255,255,.06);border:1px solid var(--stroke);border-radius:999px;overflow:hidden; margin-top:10px;
 }
@@ -336,13 +334,13 @@ body{
 /* Заголовок секции */
 .ref-h3{font:600 16px Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0 6px}
 
-/* Статистика (три отдельные карточки) */
+/* Статистика */
 .ref-stats{display:flex; flex-direction:column; gap:12px}
 .ref-stat{
   background:var(--elev); border:1px solid var(--stroke); border-radius:12px; padding:12px 14px;
-  display:flex; align-items:center; justify-content:space-between;
+  display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start;
 }
-.ref-stat .sm{color:var(--muted); font-size:12px}
+.ref-stat .sm{color:var(--muted); font-size:12px; margin-bottom:6px}
 .ref-stat .lg{font-weight:700; font-size:18px}
 
 /* ====================================================================== */
@@ -389,7 +387,7 @@ body{
 }
 .tabbar .tab.active .tab-icon{ opacity:1 }
 
-/* ===== Modal (осталось на будущее) ===== */
+/* ===== Modal ===== */
 .modal{position:fixed; inset:0; display:none}
 .modal[aria-hidden="false"]{display:block}
 .modal-backdrop{position:absolute; inset:0; background:rgba(0,0,0,.5)}
@@ -424,7 +422,7 @@ body{
 .overlay__subtitle{font:400 14px/1.5 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#a8afbd;margin-bottom:18px}
 .overlay__amount{font:600 16px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin-bottom:16px}
 
-/* ===== Buttons (унификация) ===== */
+/* ===== Buttons ===== */
 .btn{cursor:pointer; border:0; background:var(--surface-2); color:var(--text); border-radius:12px; padding:10px 12px; font-weight:600; line-height:1}
 .btn:hover{filter:brightness(1.05)}
 .btn:active{transform:translateY(1px)}
@@ -432,16 +430,16 @@ body{
 .btn-secondary{background:var(--surface-2); border:1px solid var(--stroke); color:var(--text)}
 .btn-lg{padding:12px 16px; border-radius:14px}
 
-/* Чипы общего назначения */
+/* Чипы */
 .chip{
   appearance:none; border:1px solid var(--stroke); background:var(--surface-2);
   color:var(--text); border-radius:10px; padding:8px 10px; cursor:pointer; font-size:12px
 }
 
-/* Fav list layout */
+/* Fav list */
 .fav-list{ display:flex; flex-direction:column; gap:14px; }
 
-/* Старые стили рефералок (оставляем на всякий случай, не используются новым UI) */
+/* Старые стили рефералок (для совместимости) */
 .ref .label{font-size:16px; color:var(--text); font-weight: 600;}
 .ref__copy input{ width:100%; background:var(--elev); border:1px solid var(--stroke); border-radius:12px; padding:10px 12px; color:var(--text)}
 .ref__progress{height:10px;background:var(--elev);border:1px solid var(--stroke);border-radius:999px;overflow:hidden}
@@ -454,7 +452,7 @@ body{
 .ref-bonus__left{color:#cfd5e1}
 .ref-bonus__right{font-weight:600}
 
-/* Утилиты/сервисные */
+/* Утилиты */
 .skeleton-line{height:12px; background:rgba(255,255,255,.06); border-radius:8px}
 .error-text{ color:#ff6b6b }
 .row.between{ display:flex; justify-content:space-between; align-items:center; }
@@ -464,71 +462,38 @@ body, .page, .app-main, .cats-list, .services-list{ -ms-overflow-style:none; scr
 body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar, .cats-list::-webkit-scrollbar, .services-list::-webkit-scrollbar{ width:0; height:0 }
 
 /* === REF: правки под целевой макет === */
-
-/* верхняя панель без .card */
 .ref-hero-panel{
   padding:22px 16px;
   border:1px solid var(--stroke);
   border-radius:14px;
   background:linear-gradient(180deg,#16191e,#12151a);
-  /* без тени, чтобы не было «тяжелым» */
 }
-.ref-hero{
-  display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px;
-}
-.ref-ico{
-  width:56px;height:56px;border-radius:30%; /* было 50% */
+.ref-hero{ display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; }
+.ref-ico{ width:56px;height:56px;border-radius:30%;
   display:grid;place-items:center;color:#fff;margin-bottom:2px;
   background:radial-gradient(110px 110px at 30% 30%,#ff6b6b 0%,#ff3e3e 60%,#b62828 100%);
-
 }
 .ref-ico svg{width:28px;height:28px;display:block}
 .ref-h1{font:600 15px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0}
 .ref-h1 .accent{color:var(--brand)}
 .ref-h2{font:12px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#a8afbd}
-
-/* подсказка под ссылкой — по центру */
 .ref-note{ color:var(--muted); font-size:12px; text-align:center; padding:0 2px }
-
-/* прогресс: верхняя строка без правого счетчика */
-.ref-progress-card .row{ display:flex; align-items:center; gap:8px; }
-/* остальное как было */
-.ref-progress{
-  height:8px;background:rgba(255,255,255,.06);
-  border:1px solid var(--stroke);border-radius:999px;overflow:hidden; margin-top:10px;
-}
-.ref-progress__bar{height:100%;background:linear-gradient(90deg,#ff6b6b,#ff3e3e)}
-.ref-progress-meta{
-  margin-top:8px; display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px;
-}
-.ref-dot{ width:8px; height:8px; border-radius:50%; background:#ff6b6b; box-shadow:0 0 0 2px rgba(255,107,107,.18) }
-
-/* статистика: всё слева */
-.ref-stats{display:flex; flex-direction:column; gap:12px}
-.ref-stat{
-  background:var(--elev); border:1px solid var(--stroke); border-radius:12px; padding:12px 14px;
-  display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start;
-}
-.ref-stat .sm{color:var(--muted); font-size:12px; margin-bottom:6px}
-.ref-stat .lg{font-weight:700; font-size:18px}
-
 
 /* ===== Детализация (Заказы / Платежи) ===== */
 
-/* Заголовок и сегментированный переключатель */
-/* центрируем переключатель, убираем заголовок */
+/* центрируем переключатель, без контейнерных стилей */
 .details-head{ margin:6px 0 10px; }
 .details-head--center{ display:flex; justify-content:center; }
 
-/* сегментированный контрол без изменений визуала */
-.seg{
-  display:inline-grid; grid-auto-flow:column; gap:6px;
-  padding:4px; border:1px solid var(--stroke);
-  background:linear-gradient(180deg,#15181d,#111419);
-  border-radius:12px;
+/* "переключатель без стилей" — прозрачный контейнер и простые текстовые кнопки */
+.seg{ display:flex; gap:8px; padding:0; border:0; background:transparent; }
+.seg__btn{
+  appearance:none; border:1px solid transparent; background:transparent; color:var(--text);
+  padding:6px 10px; border-radius:10px; font-size:13px; line-height:1; cursor:pointer;
 }
+.seg__btn--active{ border-color:var(--stroke); }
 
-/* фильтры — в одну строку, скроллятся горизонтально */
+/* фильтры — одна строка, горизонтальный скролл */
 #detailsFilters{ margin-bottom:8px }
 .filters{
   display:flex; gap:8px; flex-wrap:nowrap;
@@ -549,16 +514,6 @@ body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar,
   background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
 }
-
-/* платежи — иконка провайдера вместо символа ₽ */
-.pay__ico{
-  width:40px; height:40px; flex:0 0 40px;
-  display:grid; place-items:center; border-radius:12px;
-  background:linear-gradient(180deg,#1a1e24,#14181e);
-  border:1px solid var(--stroke);
-}
-.pay__ico-img{ width:22px; height:22px; display:block; opacity:.95 }
-
 
 /* Список */
 .list{ display:flex; flex-direction:column; gap:12px }
@@ -605,12 +560,18 @@ body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar,
 }
 .pay:hover{ transform:translateY(-1px); border-color:var(--stroke-2) }
 
+/* иконка провайдера — во весь квадрат */
 .pay__ico{
   width:40px; height:40px; flex:0 0 40px;
-  display:grid; place-items:center; border-radius:12px;
+  border-radius:12px; overflow:hidden;
   background:linear-gradient(180deg,#1a1e24,#14181e);
-  border:1px solid var(--stroke); color:#cfd5e1; font-weight:700;
+  border:1px solid var(--stroke);
+  display:block; /* чтобы img занял контейнер */
 }
+.pay__ico-img{
+  width:100%; height:100%; display:block; object-fit:cover; border-radius:inherit;
+}
+
 .pay__body{ flex:1; min-width:0 }
 .pay__top{ display:flex; align-items:center; justify-content:space-between; gap:8px }
 .pay__sum{ font-weight:700; font-size:14px }
@@ -650,7 +611,6 @@ body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar,
   .order__title, .pay__sum{ font-size:13px }
   .order__sum{ font-size:12px }
 }
-
 
 /* Responsive */
 @media (min-width:520px){

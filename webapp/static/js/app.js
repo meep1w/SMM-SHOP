@@ -657,13 +657,25 @@
 
   // ====== Детализация ======
 
-  const STATUS_MAP = {
-    processing: { label: "В обработке", cls: "badge--processing" },
-    completed:  { label: "Завершён",   cls: "badge--completed"  },
-    failed:     { label: "Отклонён",   cls: "badge--failed"     },
-    pending:    { label: "Ожидает оплаты", cls: "badge--pending" },
-  };
-  const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || {label:code||"—", cls:"badge--processing"};
+/* === statuses view map === */
+const STATUS_MAP = {
+  processing: { label: "В обработке", cls: "badge--processing" },
+  "in progress": { label: "В обработке", cls: "badge--processing" },
+  awaiting: { label: "В обработке", cls: "badge--processing" },
+  pending: { label: "В обработке", cls: "badge--processing" },
+
+  completed:  { label: "Завершён",   cls: "badge--completed"  },
+
+  canceled:   { label: "Отменён",    cls: "badge--failed"     },
+  cancelled:  { label: "Отменён",    cls: "badge--failed"     },
+  failed:     { label: "Отменён",    cls: "badge--failed"     },
+};
+
+const stInfo = (code) => {
+  const k = String(code || "").toLowerCase();
+  return STATUS_MAP[k] || { label: (code || "—"), cls: "badge--processing" };
+};
+
 
   async function apiFetchOrders(uid, status) {
     const q = new URLSearchParams({ user_id: String(uid) });
@@ -680,7 +692,8 @@
     return r.json();
   }
 
-  async function loadDetails(defaultTab = "orders") {
+ /* ===== Детализация (обновлённая) ===== */
+async function loadDetails(defaultTab = "orders") {
   const page = document.getElementById("page-details");
   if (!page) return;
   const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
@@ -704,14 +717,13 @@
   const list = document.getElementById("detailsList");
 
   async function renderOrders(filter = "all") {
-    // горизонтальный скролл чипсов
+    // чипсы в одну строку со скроллом (CSS .filters--scroll не нужен, уже по умолчанию)
     filtersWrap.innerHTML = `
-      <div class="filters filters--scroll">
+      <div class="filters">
         <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
         <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
         <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
-        <button class="filter ${filter==="pending"?"active":""}" data-f="pending">Ожидает оплаты</button>
-        <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отклонён</button>
+        <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отменённые</button>
       </div>
     `;
     list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
@@ -749,14 +761,13 @@
       list.innerHTML = `<div class="empty">Не удалось загрузить заказы</div>`;
     }
 
-    // клики по чипсам
     filtersWrap.querySelectorAll(".filter").forEach(b=>{
       b.addEventListener("click", ()=> renderOrders(b.dataset.f));
     });
   }
 
   async function renderPayments() {
-    filtersWrap.innerHTML = ""; // фильтров пока не рисуем
+    filtersWrap.innerHTML = "";
     list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
 
     try {
@@ -766,12 +777,11 @@
       if (!pays.length) { list.innerHTML = `<div class="empty">Платежей пока нет</div>`; return; }
 
       list.innerHTML = pays.map(p=>{
-        const st = stInfo(p.status);
+        const st  = stInfo(p.status);
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-        const sub = `${p.method || "cryptobot"} • ${fmtDate(p.created_at)} • #${p.id}`;
-        // иконка провайдера
-        const prov = String(p.method||"cryptobot").toLowerCase();
-        const ico  = `static/img/${prov}.svg`; // положи static/img/cryptobot.svg
+        const prov = String(p.method || "cryptobot").toLowerCase();
+        const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
+        const ico = `static/img/${prov}.svg`; // положи static/img/cryptobot.svg
         return `
           <div class="pay">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
@@ -801,7 +811,6 @@
     btn.addEventListener("click", ()=> switchTab(btn.dataset.tab));
   });
 }
-
 
   // ====== Keyboard inset -> CSS var --kb ======
   (function keyboardLift(){
