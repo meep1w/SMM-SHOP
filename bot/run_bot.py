@@ -1,65 +1,24 @@
 # -*- coding: utf-8 -*-
-from __future__ import annotations
 import asyncio
-import logging
-from aiogram import Bot, Dispatcher, Router, F
+from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandStart
-from aiogram.types import Message, BotCommand
+from aiogram.fsm.storage.memory import MemoryStorage
 
-from bot.config import BOT_TOKEN
-from bot.handlers import start as h_start
-from bot.handlers import registration as h_registration
+from bot.config import BOT_TOKEN  # если у тебя иначе – подставь свой импорт
 
-def _bot_kwargs():
-    try:
-        from aiogram.client.default import DefaultBotProperties
-        return {"default": DefaultBotProperties(parse_mode=ParseMode.HTML)}
-    except Exception:
-        return {"parse_mode": ParseMode.HTML}
+# РОУТЕРЫ
+from bot.handlers import start, registration
 
-async def set_commands(bot: Bot) -> None:
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Запуск"),
-        BotCommand(command="help",  description="Помощь"),
-    ])
+async def main():
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+    dp = Dispatcher(storage=MemoryStorage())
 
-def make_fallback_router() -> Router:
-    r = Router()
+    # ВАЖНО: порядок не критичен, но оба роутера должны быть подключены
+    dp.include_router(start.router)
+    dp.include_router(registration.router)
 
-    @r.message(CommandStart())
-    async def fallback_start(message: Message) -> None:
-        await message.answer("Бот запущен. Если меню не появилось, отправь /start ещё раз.")
-
-    @r.message(Command("help"))
-    async def help_cmd(message: Message) -> None:
-        await message.answer("Команда /help: отправь /start, чтобы открыть меню.")
-
-    @r.message(F.text.casefold() == "/start")
-    async def fallback_start_text(message: Message) -> None:
-        await fallback_start(message)
-
-    return r
-
-async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
-
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is empty")
-
-    bot = Bot(BOT_TOKEN, **_bot_kwargs())
-    dp = Dispatcher()
-
-    dp.include_router(h_start.router)
-    dp.include_router(h_registration.router)
-    dp.include_router(make_fallback_router())
-
-    await set_commands(bot)
-
-    allowed = dp.resolve_used_update_types()
-    logging.info("Allowed updates: %s", allowed)
-
-    await dp.start_polling(bot, allowed_updates=allowed)
+    print("Bot polling started...")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
