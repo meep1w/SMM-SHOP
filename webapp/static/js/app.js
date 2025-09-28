@@ -214,15 +214,24 @@ function fmtDate(val){
     if (tab==='details')                      return "page-details";
     return "page-categories";
   }
-  function activateTab(btn){
-    document.querySelectorAll(".tabbar .tab").forEach(b=> b.classList.toggle("active", b===btn));
-    const tab = btn?.dataset?.tab || 'catalog';
+    function activateTab(btn){
+        document.querySelectorAll(".tabbar .tab")
+        .forEach(b => b.classList.toggle("active", b === btn));
+
+        const tab = btn?.dataset?.tab || 'catalog';
     const id  = pageIdByTab(tab);
     showPage(id);
-    if (tab==='favs')   renderFavs();
-    if (tab==='refs')   loadRefs();
-    if (tab==='details') loadDetails("orders");   // ← Детализация
-  }
+
+        if (tab === 'favs') {
+     // сначала тянем с бэка, затем рисуем локально
+     syncFavsFromServer().then(renderFavs);
+        } else if (tab === 'refs') {
+      loadRefs();
+        } else if (tab === 'details') {
+      loadDetails('orders'); // или currentDetailsTab, если ведёшь состояние
+          }
+        }
+
   document.querySelectorAll(".tabbar .tab").forEach(b=> b.addEventListener('click', ()=> activateTab(b)));
   // стартовая вкладка
   activateTab(document.querySelector('.tabbar .tab.active') || document.querySelector('.tabbar .tab[data-tab="catalog"]') || document.querySelector('.tabbar .tab'));
@@ -356,6 +365,31 @@ function fmtDate(val){
       box.appendChild(row);
     });
   }
+async function syncFavsFromServer(){
+  try{
+    const uid = userId || seq;
+    const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
+    if(!r.ok) return;
+    const arr = await r.json();
+    if(!Array.isArray(arr)) return;
+
+    // сминаем серверные в локальные (объединяем по id)
+    const map = new Map(favLoad().map(x => [x.id, x]));
+    arr.forEach(s => {
+      map.set(s.service, {
+        id: s.service,
+        name: s.name,
+        network: s.network,
+        min: s.min, max: s.max,
+        rate: s.rate_client_1000,
+        currency: s.currency,
+        _raw: { ...s, service: s.service },
+      });
+    });
+    favSave(Array.from(map.values()));
+  }catch(_){}
+}
+
 
   // ====== Full service page ======
   function presetValues(min,max){
@@ -530,6 +564,7 @@ function fmtDate(val){
 
   // стартовая загрузка категорий
   loadCategories();
+  syncFavsFromServer().then(renderFavs);
 
   // === Рефералка ===
   async function loadRefs() {

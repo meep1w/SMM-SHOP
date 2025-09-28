@@ -130,8 +130,17 @@ def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
             u.nick = nick
         u.last_seen_at = now_ts()
         s.commit()
+
+        # 🔧 БЭКФИЛЛ: если у существующего пользователя нет избранных — добавим дефолтные
+        fav_cnt = s.query(Favorite).filter(Favorite.user_id == u.id).count()
+        if fav_cnt == 0:
+            for sid in (2127, 2453, 2454):
+                s.merge(Favorite(user_id=u.id, service_id=sid))
+            s.commit()
+
         return u
 
+    # пользователь создаётся впервые — как и было, добавляем дефолтные
     u = User(
         tg_id=tg_id,
         seq=stable_seq(tg_id),
@@ -144,11 +153,11 @@ def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
     s.commit()
     s.refresh(u)
 
-    # дефолтные избранные
     for sid in (2127, 2453, 2454):
         s.merge(Favorite(user_id=u.id, service_id=sid))
     s.commit()
     return u
+
 
 
 # --- схемы ---
