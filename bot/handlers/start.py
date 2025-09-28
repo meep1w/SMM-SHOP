@@ -1,23 +1,30 @@
 # -*- coding: utf-8 -*-
 import html
-import httpx
+from typing import Optional
+
 from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    FSInputFile, WebAppInfo,
+    Message, InlineKeyboardMarkup, InlineKeyboardButton,
+    FSInputFile, CallbackQuery, WebAppInfo
 )
+import httpx
 
 from bot.config import (
-    API_BASE, WEBAPP_URL, GROUP_URL, PUBLIC_CHAT_URL, SCHOOL_URL, REVIEWS_URL,
-    WELCOME_IMG, MENU_IMG,
+    API_BASE,
+    WEBAPP_URL,
+    GROUP_URL,
+    PUBLIC_CHAT_URL,
+    SCHOOL_URL,
+    REVIEWS_URL,
+    WELCOME_IMG,
+    MENU_IMG,
 )
-from .registration import *  # если нужно, но главное — import send_main_menu ниже
-from .start import send_main_menu as _send_main_menu  # если у тебя в другом файле — поправь импорт
-# Если send_main_menu в этом же файле — оставь как есть, ниже я его тоже даю.
 
 router = Router()
 _http = httpx.AsyncClient(timeout=15.0)
+
+# ---------------- UI ----------------
 
 def kb_welcome() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -37,8 +44,10 @@ def kb_main() -> InlineKeyboardMarkup:
         ],
     ])
 
-async def api_get_user(user_id: int):
-    """Вернёт dict пользователя без автосоздания или None (404)."""
+# ---------------- API helpers ----------------
+
+async def api_get_user(user_id: int) -> Optional[dict]:
+    """Вернёт профиль БЕЗ автосоздания или None, если его нет."""
     try:
         r = await _http.get(f"{API_BASE}/user", params={"user_id": user_id, "autocreate": 0})
         if r.status_code == 200:
@@ -47,33 +56,48 @@ async def api_get_user(user_id: int):
         pass
     return None
 
-async def bind_if_ref_code(user_id: int, payload: str) -> bool:
-    """Тихо применяем реф-код, если пришли по ссылке /start ref_xxx."""
-    if not payload or not payload.startswith("ref_"):
-        return False
-    code = payload[4:].strip().lower()
-    if not code:
-        return False
+def extract_start_payload(text: Optional[str]) -> str:
+    if not text:
+        return ""
+    parts = text.split(maxsplit=1)
+    return (parts[1] or "").strip() if len(parts) > 1 else ""
+
+def try_extract_ref_code(payload: str) -> Optional[str]:
+    if not payload:
+        return None
+    p = payload.strip().lower()
+    if not p.startswith("ref_"):
+        return None
+    code = p[4:].strip()
+    import re
+    code = re.sub(r"[^a-z0-9_-]", "", code)
+    return code or None
+
+async def bind_ref_silently(user_id: int, code: str) -> None:
+    """Тихая привязка реф-кода: не отправляем пользователю никаких сообщений."""
     try:
-        r = await _http.post(f"{API_BASE}/referrals/bind", json={"user_id": user_id, "code": code})
-        # 200 — привязали, 409 — уже привязан/некорректен — всё равно идём дальше без сообщений
-        return r.status_code in (200, 409)
+        await _http.post(f"{API_BASE}/referrals/bind", json={"user_id": user_id, "code": code})
     except Exception:
-        return False
+        pass
+
+# ---------------- Handlers ----------------
 
 @router.message(CommandStart())
 async def start_cmd(m: Message):
     uid = m.from_user.id
-    payload = (m.text.split(" ", 1)[1] if m.text and " " in m.text else "")
 
-    # 1) Привязываем код тихо (без лишних сообщений)
-    await bind_if_ref_code(uid, payload)
+    # 1) Если пришли по диплинку /start ref_xxx — привязываем код ТИХО
+    payload = extract_start_payload(m.text)
+    code = try_extract_ref_code(payload)
+    if code:
+        await bind_ref_silently(uid, code)
 
     # 2) Проверяем профиль без автосоздания
+    u = api_get_user.__wrapped__  # silence linter in some editors
     u = await api_get_user(uid)
 
-    # 3) Если юзера нет ИЛИ у него нет ника — показываем регистрацию
-    if (u is None) or (not u.get("nick")):
+    # 3) Если профиля нет ИЛИ ник не задан — показываем привет и регистрацию
+    if (u is None) or not u.get("nick"):
         caption = (
             "<b>Добро пожаловать в магазин "
             f"<a href=\"{html.escape(GROUP_URL or PUBLIC_CHAT_URL or '#')}\">Slovekiza</a>!</b>\n\n"
@@ -88,10 +112,9 @@ async def start_cmd(m: Message):
             await m.answer(caption, reply_markup=kb_welcome())
         return
 
-    # 4) Иначе сразу главное меню
+    # 4) Иначе — главное меню (без лишних уведомлений про реф-код)
     await send_main_menu(m)
 
-# Если у тебя send_main_menu не в этом файле — используй импорт выше и удали это.
 async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
     text = (
         f"Привет{',' if nick else ''} <b>{html.escape(nick) if nick else m.from_user.full_name}</b>!\n"
@@ -112,3 +135,20 @@ async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
             await m.answer_photo(photo, caption=text, reply_markup=kb_main())
         else:
             await m.answer(text, reply_markup=kb_main())
+
+# ------ простые заглушки меню ------
+
+from aiogram import F as _F  # если уже был импорт F — можешь оставить как было
+@router.callback_query(_F.data == "menu:about")
+async def about_cb(c: CallbackQuery):
+    await c.answer()
+    await c.message.answer("Мы продаём услуги продвижения по лучшим ценам. Вопросы — в чат поддержки.")
+
+@router.callback_query(_F.data == "menu:refs")
+async def refs_cb(c: CallbackQuery):
+    await c.answer()
+    await c.message.answer("Реферальная статистика доступна в мини-апп (вкладка «Рефералы»).")
+
+@router.callback_query(_F.data == "menu:roulette")
+async def roulette_cb(c: CallbackQuery):
+    await c.answer("В разработке", show_alert=True)
