@@ -194,17 +194,22 @@ async def vex_services_raw() -> List[Dict[str, Any]]:
 
 def _detect_network(name: str, category: str) -> Optional[str]:
     t = f"{name} {category}".lower()
-    if "telegram" in t or "tg " in t:
+    if "telegram" in t or " tg " in t or t.startswith("tg "):
         return "telegram"
     if "tiktok" in t or "tik tok" in t:
         return "tiktok"
-    if "instagram" in t or "insta" in t or "ig " in t:
+    if "instagram" in t or " insta" in t or " ig " in t:
         return "instagram"
-    if "youtube" in t or "you tube" in t or "yt " in t:
+    if "youtube" in t or "you tube" in t or " yt " in t:
         return "youtube"
-    if "facebook" in t or "fb " in t or "meta" in t:
+    if "facebook" in t or " fb " in t or " meta " in t:
         return "facebook"
+
+    # всё прочее: twitter/x, vk, twitch, etc — не показываем в нашем каталоге
+    if "twitter" in t or "x.com" in t or " x " in t or "tweet" in t or "retweet" in t:
+        return None
     return None
+
 
 
 async def sync_services_into_db():
