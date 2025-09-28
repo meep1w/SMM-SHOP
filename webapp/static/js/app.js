@@ -493,51 +493,67 @@
   // ==== Start ====
   loadCategories();
 
-  // ===== Referrals page =====
-  async function loadRefs(){
-    const box = pages.refs;
-    if (!box) return;
-    box.innerHTML = '<div class="empty">Загрузка…</div>';
-    try{
-      const r = await fetch(`${API_BASE}/referrals/stats?user_id=${encodeURIComponent(userId||seq)}`);
-      if (!r.ok) throw 0;
-      const s = await r.json();
+  // === Рефералка ===
+async function loadReferrals(){
+  const box = pages.refs;
+  if (!box) return;
+  box.innerHTML = '<div class="empty">Загрузка…</div>';
+  try{
+    const id = userId || seq;
+    const r = await fetch(`${API_BASE}/referrals/stats?user_id=${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    renderRefs(d);
+  }catch(e){
+    pages.refs.innerHTML = '<div class="empty">Не удалось загрузить рефералку.</div>';
+  }
+}
 
-      const prog = Math.min(100, Math.round(100 * (s.invited_with_deposit||0) / (s.threshold||50)));
-      const link = s.link || '';
-      const rate = s.rate_percent || 10;
+function renderRefs(d){
+  const pct = Math.min(100, Math.round((d.invited_with_deposit || 0) / (d.next_tier_target || 50) * 100));
+  const earned = Number(d.earned_total || 0).toFixed(2) + curSign(d.earned_currency || currentCurrency);
+  const link = d.invite_link;
 
-      box.innerHTML = `
-        <div class="card">
-          <div class="label">Ваша реферальная ссылка</div>
-          <div class="copy-row">
-            <input id="refLink" type="text" value="${link}" readonly>
-            <button class="btn" id="btnCopyLink">Копировать</button>
-            <button class="btn" id="btnShareLink">Поделиться</button>
-          </div>
-          <div class="hint">За каждое пополнение вашего рефера вы получаете <b>${rate}%</b> автоматически на баланс.<br>
-          При ${s.threshold} рефералах с депозитом ставка повышается до <b>20%</b>.</div>
-        </div>
+  pages.refs.innerHTML = `
+    <div class="card">
+      <div class="label">Ваша реферальная ссылка</div>
+      <div class="field" style="gap:8px;display:flex;align-items:center">
+        <input type="text" value="${link}" readonly style="flex:1">
+        <button class="chip" id="btnCopyRef">Копировать</button>
+        <button class="chip" id="btnShareRef">Поделиться</button>
+      </div>
+      <div class="hint">За каждое пополнение приглашённого — <b>${d.rate_percent}%</b> автоматически на баланс.</div>
+    </div>
 
-        <div class="card">
-          <div class="label">Прогресс до 20%</div>
-          <div class="progress"><div class="bar" style="width:${prog}%"></div></div>
-          <div class="muted">Рефералов с депозитом: <b>${s.invited_with_deposit}</b> из <b>${s.threshold}</b></div>
-        </div>
+    <div class="card summary">
+      <div class="sum-row"><span>Приглашено всего</span><b>${d.invited_total}</b></div>
+      <div class="sum-row"><span>С депозитом</span><b>${d.invited_with_deposit}</b></div>
+      <div class="sum-row"><span>Заработано</span><b>${earned}</b></div>
+      <div class="sum-row"><span>Текущая ставка</span>
+        <b>${d.rate_percent}% ${d.tier === 'pro' ? '• PRO' : ''}</b>
+      </div>
+    </div>
 
-        <div class="card">
-          <div class="stat-grid">
-            <div><div class="sm">Всего приглашено</div><div class="lg">${s.invited_total}</div></div>
-            <div><div class="sm">С депозитом</div><div class="lg">${s.invited_with_deposit}</div></div>
-            <div><div class="sm">Начислено</div><div class="lg">${fmt(s.earned_total)}${curSign(s.currency||currentCurrency)}</div></div>
-          </div>
-        </div>
+    <div class="card">
+      <div class="label">Повышенная ставка до 20%</div>
+      <div class="hint">Пригласите 50 рефералов, которые сделают депозит — ставка вырастет до 20%.</div>
+      <div class="progress" style="background:#1c222b;border-radius:10px;height:12px;overflow:hidden;margin-top:8px">
+        <div style="height:100%;width:${pct}%;background:#2b81f7"></div>
+      </div>
+      <div class="hint" style="margin-top:6px">Прогресс: ${d.invited_with_deposit}/${d.next_tier_target} (${pct}%)</div>
+    </div>
+  `;
 
-        <div class="card">
-          <div class="label">Последние начисления</div>
-          <div class="bonus-list" id="bonusList"></div>
-        </div>
-      `;
+  pages.refs.querySelector('#btnCopyRef')?.addEventListener('click', async ()=>{
+    try{ await navigator.clipboard.writeText(link); alert('Ссылка скопирована'); }catch(_){ prompt('Скопируйте ссылку:', link); }
+  });
+  pages.refs.querySelector('#btnShareRef')?.addEventListener('click', ()=>{
+    const text = 'Присоединяйся! Получай услуги SMM по лучшим ценам:';
+    const u = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
+    (tg?.openLink ? tg.openLink(u) : window.open(u, '_blank'));
+  });
+}
+
 
       // styles for progress/stat grid if not present
       const styleId = 'refs-extra-css';
