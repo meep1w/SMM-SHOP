@@ -62,43 +62,42 @@
       document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove();
     }
   }
-function fmtDate(val){
-  try{
-    if (val == null || val === '') return '';
+  function fmtDate(val){
+    try{
+      if (val == null || val === '') return '';
 
-    // 1) ISO-строки вида 2025-09-28T05:41:48Z
-    if (typeof val === 'string' && !/^\d+(\.\d+)?$/.test(val.trim())) {
-      const d = new Date(val);
-      if (!isNaN(d.getTime())) {
-        const dd = String(d.getDate()).padStart(2,'0');
-        const mm = String(d.getMonth()+1).padStart(2,'0');
-        const yy = String(d.getFullYear()).slice(-2);
-        const hh = String(d.getHours()).padStart(2,'0');
-        const mi = String(d.getMinutes()).padStart(2,'0');
-        return `${dd}.${mm}.${yy} ${hh}:${mi}`;
+      // 1) ISO-строки
+      if (typeof val === 'string' && !/^\d+(\.\d+)?$/.test(val.trim())) {
+        const d = new Date(val);
+        if (!isNaN(d.getTime())) {
+          const dd = String(d.getDate()).padStart(2,'0');
+          const mm = String(d.getMonth()+1).padStart(2,'0');
+          const yy = String(d.getFullYear()).slice(-2);
+          const hh = String(d.getHours()).padStart(2,'0');
+          const mi = String(d.getMinutes()).padStart(2,'0');
+          return `${dd}.${mm}.${yy} ${hh}:${mi}`;
+        }
+        return val;
       }
-      return val;
+
+      // 2) числа: сек/мс
+      let ts = typeof val === 'number' ? val : Number(val);
+      if (!Number.isFinite(ts)) return String(val);
+      if (ts < 1e12) ts *= 1000; // сек → мс
+
+      const dt = new Date(ts);
+      const dd = String(dt.getDate()).padStart(2,'0');
+      const mm = String(dt.getMonth()+1).padStart(2,'0');
+      const yy = String(dt.getFullYear()).slice(-2);
+      const hh = String(dt.getHours()).padStart(2,'0');
+      const mi = String(dt.getMinutes()).padStart(2,'0');
+      return `${dd}.${mm}.${yy} ${hh}:${mi}`;
+    } catch(_) {
+      return String(val);
     }
-
-    // 2) Числа/строки-числа: сек или мс
-    let ts = typeof val === 'number' ? val : Number(val);
-    if (!Number.isFinite(ts)) return String(val);
-    if (ts < 1e12) ts *= 1000; // пришло в секундах
-
-    const dt = new Date(ts);
-    const dd = String(dt.getDate()).padStart(2,'0');
-    const mm = String(dt.getMonth()+1).padStart(2,'0');
-    const yy = String(dt.getFullYear()).slice(-2);
-    const hh = String(dt.getHours()).padStart(2,'0');
-    const mi = String(dt.getMinutes()).padStart(2,'0');
-    return `${dd}.${mm}.${yy} ${hh}:${mi}`;
-  } catch(_) {
-    return String(val);
   }
-}
 
-
-  // ====== Topup overlay (CSS classes из app.css) ======
+  // ====== Topup overlay ======
   function ensureOverlay(){
     let el = document.getElementById("topupOverlay");
     if (el) return el;
@@ -212,27 +211,26 @@ function fmtDate(val){
     if (tab==='catalog'||tab==='categories') return "page-categories";
     if (tab==='favs'||tab==='favorites')     return "page-favs";
     if (tab==='refs'||tab==='referrals')     return "page-refs";
-    if (tab==='details')                      return "page-details";
+    if (tab==='details')                     return "page-details";
     return "page-categories";
   }
-    function activateTab(btn){
-        document.querySelectorAll(".tabbar .tab")
-        .forEach(b => b.classList.toggle("active", b === btn));
+  function activateTab(btn){
+    document.querySelectorAll(".tabbar .tab")
+      .forEach(b => b.classList.toggle("active", b === btn));
 
-        const tab = btn?.dataset?.tab || 'catalog';
+    const tab = btn?.dataset?.tab || 'catalog';
     const id  = pageIdByTab(tab);
     showPage(id);
 
-        if (tab === 'favs') {
-     // сначала тянем с бэка, затем рисуем локально
-     syncFavsFromServer().then(renderFavs);
-        } else if (tab === 'refs') {
+    if (tab === 'favs') {
+      // сначала тянем с бэка, затем рисуем локально
+      syncFavsFromServer().then(renderFavs);
+    } else if (tab === 'refs') {
       loadRefs();
-        } else if (tab === 'details') {
-      loadDetails('orders'); // или currentDetailsTab, если ведёшь состояние
-          }
-        }
-
+    } else if (tab === 'details') {
+      loadDetails('orders');
+    }
+  }
   document.querySelectorAll(".tabbar .tab").forEach(b=> b.addEventListener('click', ()=> activateTab(b)));
   // стартовая вкладка
   activateTab(document.querySelector('.tabbar .tab.active') || document.querySelector('.tabbar .tab[data-tab="catalog"]') || document.querySelector('.tabbar .tab'));
@@ -366,31 +364,30 @@ function fmtDate(val){
       box.appendChild(row);
     });
   }
-async function syncFavsFromServer(){
-  try{
-    const uid = userId || seq;
-    const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
-    if(!r.ok) return;
-    const arr = await r.json();
-    if(!Array.isArray(arr)) return;
+  async function syncFavsFromServer(){
+    try{
+      const uid = userId || seq;
+      const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
+      if(!r.ok) return;
+      const arr = await r.json();
+      if(!Array.isArray(arr)) return;
 
-    // сминаем серверные в локальные (объединяем по id)
-    const map = new Map(favLoad().map(x => [x.id, x]));
-    arr.forEach(s => {
-      map.set(s.service, {
-        id: s.service,
-        name: s.name,
-        network: s.network,
-        min: s.min, max: s.max,
-        rate: s.rate_client_1000,
-        currency: s.currency,
-        _raw: { ...s, service: s.service },
+      // сминаем серверные в локальные (объединяем по id)
+      const map = new Map(favLoad().map(x => [x.id, x]));
+      arr.forEach(s => {
+        map.set(s.service, {
+          id: s.service,
+          name: s.name,
+          network: s.network,
+          min: s.min, max: s.max,
+          rate: s.rate_client_1000,
+          currency: s.currency,
+          _raw: { ...s, service: s.service },
+        });
       });
-    });
-    favSave(Array.from(map.values()));
-  }catch(_){}
-}
-
+      favSave(Array.from(map.values()));
+    }catch(_){}
+  }
 
   // ====== Full service page ======
   function presetValues(min,max){
@@ -714,22 +711,20 @@ async function syncFavsFromServer(){
 
   // ====== Детализация ======
 
-/* === statuses view map === */
-const STATUS_MAP = {
-  processing:   { label: "В обработке", cls: "badge--processing" },
-  "in progress":{ label: "В обработке", cls: "badge--processing" },
-  awaiting:     { label: "В обработке", cls: "badge--processing" },
-  pending:      { label: "В обработке", cls: "badge--processing" },
+  /* === statuses view map === */
+  const STATUS_MAP = {
+    processing:   { label: "В обработке", cls: "badge--processing" },
+    "in progress":{ label: "В обработке", cls: "badge--processing" },
+    awaiting:     { label: "В обработке", cls: "badge--processing" },
+    pending:      { label: "В обработке", cls: "badge--processing" },
 
-  completed:    { label: "Завершён",    cls: "badge--completed"  },
+    completed:    { label: "Завершён",    cls: "badge--completed"  },
 
-  canceled:     { label: "Отменён",     cls: "badge--failed"     },
-  cancelled:    { label: "Отменён",     cls: "badge--failed"     },
-  failed:       { label: "Отменён",     cls: "badge--failed"     },
-};
-const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
-
-
+    canceled:     { label: "Отменён",     cls: "badge--failed"     },
+    cancelled:    { label: "Отменён",     cls: "badge--failed"     },
+    failed:       { label: "Отменён",     cls: "badge--failed"     },
+  };
+  const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
 
   async function apiFetchOrders(uid, status) {
     const q = new URLSearchParams({ user_id: String(uid) });
@@ -746,163 +741,161 @@ const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:Str
     return r.json();
   }
 
+  /* ===== Детализация (Orders/Payments) — кэш и мгновенная фильтрация ===== */
+  async function loadDetails(defaultTab = "orders") {
+    const page = document.getElementById("page-details");
+    if (!page) return;
+    const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
 
-/* ===== Детализация (Orders/Payments) — кэш и мгновенная фильтрация ===== */
-async function loadDetails(defaultTab = "orders") {
-  const page = document.getElementById("page-details");
-  if (!page) return;
-  const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
+    // локальные кэши
+    let ORDERS_CACHE = null;
+    let PAYMENTS_CACHE = null;
 
-  // локальные кэши (живут, пока не уйдём со страницы)
-  let ORDERS_CACHE = null;   // массив заказов или null, если не загружали
-  let PAYMENTS_CACHE = null; // массив платежей или null
-
-  page.innerHTML = `
-    <div class="details-head details-head--center">
-      <div class="seg" id="detailsSeg">
-        <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
-        <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
-      </div>
-    </div>
-    <div id="detailsFilters"></div>
-    <div class="list" id="detailsList">
-      <div class="skeleton" style="height:60px"></div>
-      <div class="skeleton" style="height:60px"></div>
-    </div>
-  `;
-
-  const seg = document.getElementById("detailsSeg");
-  const filtersWrap = document.getElementById("detailsFilters");
-  const list = document.getElementById("detailsList");
-
-  function renderOrdersFromCache(filter = "all") {
-    if (!Array.isArray(ORDERS_CACHE) || !ORDERS_CACHE.length) {
-      list.innerHTML = `<div class="empty">Заказы не найдены</div>`;
-      return;
-    }
-    const norm = s => String(s||"").toLowerCase();
-    const items = ORDERS_CACHE.filter(o => {
-      if (filter === "all") return true;
-      const s = norm(o.status);
-      if (filter === "processing") return ["processing","in progress","awaiting","pending"].includes(s);
-      if (filter === "completed")  return s === "completed";
-      if (filter === "failed")     return ["failed","canceled","cancelled"].includes(s);
-      return true;
-    });
-
-    if (!items.length) {
-      list.innerHTML = `<div class="empty">По этому фильтру ничего нет</div>`;
-      return;
-    }
-
-    list.innerHTML = items.map(o => {
-      const st = stInfo(o.status);
-      const title = o.service || "Услуга";
-      const cat = o.category ? `${o.category} • ` : "";
-      const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
-      return `
-        <div class="order">
-          <div class="order__avatar">${(o.category || o.service || "?").slice(0,1).toUpperCase()}</div>
-          <div class="order__body">
-            <div class="order__head">
-              <div class="order__title">${title}</div>
-              <span class="badge ${st.cls}">${st.label}</span>
-            </div>
-            <div class="order__meta">${cat}Количество: ${o.quantity} • ${fmtDate(o.created_at)}</div>
-            <div class="order__foot">
-              <div class="order__sum">${sum}</div>
-              <div class="order__id">#${o.id}</div>
-            </div>
-          </div>
+    page.innerHTML = `
+      <div class="details-head details-head--center">
+        <div class="seg" id="detailsSeg">
+          <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
+          <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
         </div>
-      `;
-    }).join("");
-  }
-
-  async function renderOrders(filter = "all") {
-    // чипсы (гориз. скролл) — и сразу навешиваем обработчики
-    filtersWrap.innerHTML = `
-      <div class="filters">
-        <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
-        <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
-        <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
-        <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отменённые</button>
+      </div>
+      <div id="detailsFilters"></div>
+      <div class="list" id="detailsList">
+        <div class="skeleton" style="height:60px"></div>
+        <div class="skeleton" style="height:60px"></div>
       </div>
     `;
-    filtersWrap.querySelectorAll(".filter").forEach(b => {
-      b.addEventListener("click", () => {
-        filtersWrap.querySelectorAll(".filter").forEach(x=>x.classList.toggle("active", x===b));
-        renderOrdersFromCache(b.dataset.f);
+
+    const seg = document.getElementById("detailsSeg");
+    const filtersWrap = document.getElementById("detailsFilters");
+    const list = document.getElementById("detailsList");
+
+    function renderOrdersFromCache(filter = "all") {
+      if (!Array.isArray(ORDERS_CACHE) || !ORDERS_CACHE.length) {
+        list.innerHTML = `<div class="empty">Заказы не найдены</div>`;
+        return;
+      }
+      const norm = s => String(s||"").toLowerCase();
+      const items = ORDERS_CACHE.filter(o => {
+        if (filter === "all") return true;
+        const s = norm(o.status);
+        if (filter === "processing") return ["processing","in progress","awaiting","pending"].includes(s);
+        if (filter === "completed")  return s === "completed";
+        if (filter === "failed")     return ["failed","canceled","cancelled"].includes(s);
+        return true;
       });
-    });
 
-    // если уже есть кэш — только перерисовываем
-    if (Array.isArray(ORDERS_CACHE)) {
-      renderOrdersFromCache(filter);
-      return;
-    }
+      if (!items.length) {
+        list.innerHTML = `<div class="empty">По этому фильтру ничего нет</div>`;
+        return;
+      }
 
-    // иначе грузим один раз
-    list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
-    try {
-      const q = new URLSearchParams({ user_id:String(uid) });
-      const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
-      ORDERS_CACHE = r.ok ? await r.json() : [];
-    } catch { ORDERS_CACHE = []; }
-
-    renderOrdersFromCache(filter);
-  }
-
-  function renderPaymentsFromCache() {
-    if (!Array.isArray(PAYMENTS_CACHE) || !PAYMENTS_CACHE.length) {
-      list.innerHTML = `<div class="empty">Платежей пока нет</div>`;
-      return;
-    }
-    list.innerHTML = PAYMENTS_CACHE.map(p=>{
-      const st  = stInfo(p.status);
-      const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-      const prov = String(p.method || "cryptobot").toLowerCase();
-      const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-      const ico = `static/img/${prov}.svg`; // cryptobot.svg положить в static/img
-      return `
-        <div class="pay">
-          <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
-          <div class="pay__body">
-            <div class="pay__top">
-              <div class="pay__sum">${sum}</div>
-              <span class="badge ${st.cls}">${st.label}</span>
+      list.innerHTML = items.map(o => {
+        const st = stInfo(o.status);
+        const title = o.service || "Услуга";
+        const cat = o.category ? `${o.category} • ` : "";
+        const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
+        return `
+          <div class="order">
+            <div class="order__avatar">${(o.category || o.service || "?").slice(0,1).toUpperCase()}</div>
+            <div class="order__body">
+              <div class="order__head">
+                <div class="order__title">${title}</div>
+                <span class="badge ${st.cls}">${st.label}</span>
+              </div>
+              <div class="order__meta">${cat}Количество: ${o.quantity} • ${fmtDate(o.created_at)}</div>
+              <div class="order__foot">
+                <div class="order__sum">${sum}</div>
+                <div class="order__id">#${o.id}</div>
+              </div>
             </div>
-            <div class="pay__sub">${sub}</div>
           </div>
+        `;
+      }).join("");
+    }
+
+    async function renderOrders(filter = "all") {
+      // чипсы
+      filtersWrap.innerHTML = `
+        <div class="filters">
+          <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
+          <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
+          <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
+          <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отменённые</button>
         </div>
       `;
-    }).join("");
-  }
+      filtersWrap.querySelectorAll(".filter").forEach(b => {
+        b.addEventListener("click", () => {
+          filtersWrap.querySelectorAll(".filter").forEach(x=>x.classList.toggle("active", x===b));
+          renderOrdersFromCache(b.dataset.f);
+        });
+      });
 
-  async function renderPayments() {
-    filtersWrap.innerHTML = "";
-    if (Array.isArray(PAYMENTS_CACHE)) {
-      renderPaymentsFromCache();
-      return;
+      // уже есть кэш — перерисовали
+      if (Array.isArray(ORDERS_CACHE)) {
+        renderOrdersFromCache(filter);
+        return;
+      }
+
+      // иначе грузим
+      list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
+      try {
+        const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
+        const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
+        ORDERS_CACHE = r.ok ? await r.json() : [];
+      } catch { ORDERS_CACHE = []; }
+
+      renderOrdersFromCache(filter);
     }
-    list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
-    try {
-      const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
-      const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-      PAYMENTS_CACHE = r.ok ? await r.json() : [];
-    } catch { PAYMENTS_CACHE = []; }
-    renderPaymentsFromCache();
+
+    function renderPaymentsFromCache() {
+      if (!Array.isArray(PAYMENTS_CACHE) || !PAYMENTS_CACHE.length) {
+        list.innerHTML = `<div class="empty">Платежей пока нет</div>`;
+        return;
+      }
+      list.innerHTML = PAYMENTS_CACHE.map(p=>{
+        const st  = stInfo(p.status);
+        const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+        const prov = String(p.method || "cryptobot").toLowerCase();
+        const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
+        const ico = `static/img/${prov}.svg`;
+        return `
+          <div class="pay">
+            <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
+            <div class="pay__body">
+              <div class="pay__top">
+                <div class="pay__sum">${sum}</div>
+                <span class="badge ${st.cls}">${st.label}</span>
+              </div>
+              <div class="pay__sub">${sub}</div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function renderPayments() {
+      filtersWrap.innerHTML = "";
+      if (Array.isArray(PAYMENTS_CACHE)) {
+        renderPaymentsFromCache();
+        return;
+      }
+      list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
+      try {
+        const q = new URLSearchParams({ user_id:String(uid) });
+        const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
+        PAYMENTS_CACHE = r.ok ? await r.json() : [];
+      } catch { PAYMENTS_CACHE = []; }
+      renderPaymentsFromCache();
+    }
+
+    async function switchTab(tab) {
+      seg.querySelectorAll(".seg__btn").forEach(b=>b.classList.toggle("seg__btn--active", b.dataset.tab===tab));
+      if (tab === "orders") await renderOrders("all"); else await renderPayments();
+    }
+
+    await switchTab(defaultTab);
+    seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
   }
-
-  async function switchTab(tab) {
-    seg.querySelectorAll(".seg__btn").forEach(b=>b.classList.toggle("seg__btn--active", b.dataset.tab===tab));
-    if (tab === "orders") await renderOrders("all"); else await renderPayments();
-  }
-
-  await switchTab(defaultTab);
-  seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
-}
-
 
   // ====== Keyboard inset -> CSS var --kb ======
   (function keyboardLift(){
