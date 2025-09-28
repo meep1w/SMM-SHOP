@@ -494,13 +494,13 @@
   // стартовая загрузка категорий
   loadCategories();
 
-// === Рефералка: новый UI (Скрин 2), без изменения бэка ===
+// === Рефералка: новый UI без изменения логики данных ===
 async function loadRefs() {
   const tg = window.Telegram?.WebApp;
   const page = document.getElementById("page-refs");
   if (!page) return;
 
-  // скелетон
+  // скелетон на время загрузки
   page.innerHTML = `
     <div class="card" style="padding:16px">
       <div class="skeleton-line" style="width:60%"></div>
@@ -511,105 +511,83 @@ async function loadRefs() {
   try {
     const API_BASE = window.API_BASE || "/api/v1";
     const uid = tg?.initDataUnsafe?.user?.id || window.USER_ID || null;
-    const qs = uid ? \`?user_id=\${encodeURIComponent(uid)}\` : "";
-    const res = await fetch(\`\${API_BASE}/referrals/stats\${qs}\`, { credentials: "include" });
+    const qs = uid ? `?user_id=${encodeURIComponent(uid)}` : "";
+    const res = await fetch(`${API_BASE}/referrals/stats${qs}`, { credentials: "include" });
     if (!res.ok) throw new Error("Failed to load");
     const data = await res.json();
 
-    // --- поля из API (оставляем как есть) ---
+    // --- исходные поля из ответа (оставляем как раньше) ---
     const inviteLink = data.invite_link || data.link || "";
     const rate = Number(data.rate_percent ?? 10);
     const threshold = Number(data.threshold ?? 50);
     const invited = Number(data.invited_total ?? 0);
     const withDep = Number(data.invited_with_deposit ?? 0);
     const earned = (data.earned_total ?? 0);
-    const currency = data.earned_currency || data.currency || "₽";
+    const currency = data.earned_currency || (data.currency || "₽");
 
     const prog = Math.max(0, Math.min(100, Math.round((withDep / (threshold || 1)) * 100)));
 
-    // --- разметка как в целевом макете ---
+    // --- разметка как в Скрин 2; "последние начисления" не рендерим ---
     page.innerHTML = `
-      <div class="ref">
-        <!-- HERO -->
-        <div class="card ref-hero">
-          <div class="ref-ico">
-            <svg viewBox="0 0 24 24" width="28" height="28" fill="none">
-              <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" stroke="white" stroke-width="1.6"/>
-              <path d="M3.5 20a6.5 6.5 0 0 1 13 0" stroke="white" stroke-width="1.6"/>
-              <circle cx="18" cy="8" r="2.5" stroke="white" stroke-width="1.6"/>
-              <path d="M16.5 20a5.5 5.5 0 0 1 5.5 0" stroke="white" stroke-width="1.6"/>
-            </svg>
-          </div>
-          <div class="ref-h1">
+      <div class="ref-hero card">
+        <div class="ref-hero-ico">
+          <img src="static/img/tab-referrals.svg" alt="" />
+        </div>
+        <div class="ref-hero-text">
+          <div class="ref-hero-title">
             Приглашайте пользователей и получайте от <span class="accent">10%</span> их платежей
           </div>
-          <div class="ref-h2">
-            Средства автоматически поступают на ваш баланс.
-            Полученные деньги вы можете тратить на продвижение и испытывать удачу в рулетке.
+          <div class="ref-hero-sub muted">
+            Средства автоматически поступают на ваш баланс. Полученные деньги вы можете тратить на продвижение и испытывать удачу в рулетке.
           </div>
         </div>
+      </div>
 
-        <!-- ССЫЛКА -->
-        <div class="label">Ваша ссылка</div>
-        <div class="card ref-linkbar" id="refLinkBar">
-          <input id="refLinkInput" type="text" readonly aria-label="Ваша ссылка"/>
-          <button class="ref-copy" id="refCopyBtn" aria-label="Копировать">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M9 9.5A2.5 2.5 0 0 1 11.5 7H17a2 2 0 0 1 2 2v5.5A2.5 2.5 0 0 1 16.5 17H11a2 2 0 0 1-2-2V9.5Z" stroke="currentColor" stroke-width="1.6"/>
-              <path d="M7 14.5A2.5 2.5 0 0 1 4.5 12V6a2 2 0 0 1 2-2H12.5A2.5 2.5 0 0 1 15 6.5" stroke="currentColor" stroke-width="1.6"/>
-            </svg>
-          </button>
-        </div>
-        <div class="ref-note">
-          Пригласите 50 человек которые внесут депозит и ваш процент увеличится до <span class="accent">20%</span> навсегда
-        </div>
+      <div class="card ref-link" id="refLinkBlock" data-link="${inviteLink}">
+        <input class="ref-link-input" value="${inviteLink}" readonly aria-label="Ваша ссылка" />
+        <button class="icon-btn ref-link-copy" aria-label="Копировать">
+          <!-- inline svg, чтобы не зависеть от ассетов -->
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M9 9.5A2.5 2.5 0 0 1 11.5 7H17a2 2 0 0 1 2 2v5.5A2.5 2.5 0 0 1 16.5 17H11a2 2 0 0 1-2-2V9.5Z" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M7 14.5A2.5 2.5 0 0 1 4.5 12V6a2 2 0 0 1 2-2H12.5A2.5 2.5 0 0 1 15 6.5" stroke="currentColor" stroke-width="1.6"/>
+          </svg>
+        </button>
+      </div>
 
-        <!-- ПРОГРЕСС -->
-        <div class="card ref-progress-card">
-          <div class="row between">
-            <div class="muted">Прогресс до 20%</div>
-            <div class="muted">${withDep} из ${threshold}</div>
-          </div>
-          <div class="ref-progress"><div class="ref-progress__bar" style="width:${prog}%"></div></div>
-          <div class="ref-progress-meta">
-            <span class="ref-dot"></span>
-            <span>Рефералов с депозитом ${withDep} из ${threshold}</span>
-          </div>
+      <div class="card">
+        <div class="row between">
+          <div class="muted">Прогресс до 20%</div>
+          <div class="muted">${withDep} из ${threshold}</div>
         </div>
+        <div class="progress"><div class="bar" style="width:${prog}%"></div></div>
+      </div>
 
-        <!-- СТАТИСТИКА -->
-        <div class="ref-h3">Статистика</div>
-        <div class="ref-stats">
-          <div class="ref-stat">
-            <div class="sm">Приглашено</div>
-            <div class="lg">${invited}</div>
-          </div>
-          <div class="ref-stat">
-            <div class="sm">С депозитом</div>
-            <div class="lg">${withDep}</div>
-          </div>
-          <div class="ref-stat">
-            <div class="sm">Начислено</div>
-            <div class="lg">${earned} ${currency}</div>
-          </div>
+      <div class="card stat-grid stat-grid--3">
+        <div class="stat">
+          <div class="stat-num">${invited}</div>
+          <div class="stat-label muted">Приглашено</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">${withDep}</div>
+          <div class="stat-label muted">С депозитом</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">${earned} ${currency}</div>
+          <div class="stat-label muted">Начислено</div>
         </div>
       </div>
     `;
 
-    // выставляем ссылку, чтобы не париться с экранированием
-    const input = document.getElementById("refLinkInput");
-    if (input) input.value = inviteLink;
+    // --- единое копирование по клику на ВЕСЬ блок ---
+    const refBlock = document.getElementById("refLinkBlock");
+    const copyBtn = refBlock?.querySelector(".ref-link-copy");
 
-    // копирование по клику на весь блок
-    const bar = document.getElementById("refLinkBar");
-    const btn = document.getElementById("refCopyBtn");
-
-    const doCopy = async () => {
+    const doCopy = async (text) => {
       try {
-        const text = input?.value || inviteLink || "";
         if (navigator.clipboard?.writeText) {
           await navigator.clipboard.writeText(text);
         } else {
+          // fallback
           const ta = document.createElement("textarea");
           ta.value = text;
           document.body.appendChild(ta);
@@ -618,15 +596,19 @@ async function loadRefs() {
           ta.remove();
         }
         tg?.HapticFeedback?.notificationOccurred?.("success");
-        bar?.classList.add("copied");
-        setTimeout(() => bar?.classList.remove("copied"), 600);
-      } catch {
+        // небольшое визуальное подтверждение
+        refBlock?.classList.add("copied");
+        setTimeout(() => refBlock?.classList.remove("copied"), 600);
+      } catch (_) {
         tg?.HapticFeedback?.notificationOccurred?.("error");
       }
     };
 
-    bar?.addEventListener("click", doCopy);
-    btn?.addEventListener("click", (e) => { e.stopPropagation(); doCopy(); });
+    refBlock?.addEventListener("click", () => doCopy(inviteLink));
+    copyBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      doCopy(inviteLink);
+    });
 
   } catch (e) {
     page.innerHTML = `
@@ -637,7 +619,6 @@ async function loadRefs() {
     console.error(e);
   }
 }
-
 
 
 
