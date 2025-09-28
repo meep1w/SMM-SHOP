@@ -577,11 +577,9 @@ async function loadRefs() {
         <div class="card ref-progress-card">
           <div class="row between">
             <div class="muted">Прогресс до 20%</div>
-            <div class="muted">${withDep} из ${threshold}</div>
           </div>
           <div class="ref-progress"><div class="ref-progress__bar" style="width:${prog}%;"></div></div>
           <div class="ref-progress-meta">
-            <span class="ref-dot"></span>
             <span>Рефералов с депозитом ${withDep} из ${threshold}</span>
           </div>
         </div>
