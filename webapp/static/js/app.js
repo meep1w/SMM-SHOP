@@ -1,6 +1,6 @@
 /* Slovekiza Mini-App
  * - Пополнение через CryptoBot (инвойс)
- * - Поп-ап «Оплата прошла успешно» по server-side флагу topup_delta
+ * - Поп-ап «Оплата прошла успешно» (server-side флаг topup_delta)
  * - Категории / Услуги / Полная страница создания заказа
  * - Реферальная страница: ссылка, прогресс, статистика, последние бонусы
  */
@@ -43,9 +43,17 @@
   const btnBackToServices  = document.getElementById('btnBackToServices');
 
   // ==== helpers ====
-  function curSign(c){ return c==='RUB'?' ₽':(c==='USD'?' $':` ${c}`); }
+  function curSign(c){ return c==='RUB'?' ₽':(c==='USD'?' $':` ${c||''}`); }
   function fmt(n, d=2){ return Number(n||0).toFixed(d); }
-  function copy(text){ try{ navigator.clipboard?.writeText(text) }catch(_){ const t=document.createElement('textarea'); t.value=text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); } }
+  function copy(text){
+    try { navigator.clipboard?.writeText(text); }
+    catch(_) {
+      const t = document.createElement('textarea');
+      t.value = text; document.body.appendChild(t); t.select();
+      try{ document.execCommand('copy'); }catch(_){}
+      t.remove();
+    }
+  }
 
   // ==== Topup overlay ====
   function showTopupOverlay(delta, currency){
@@ -54,17 +62,17 @@
     if (!overlay){
       overlay = document.createElement('div');
       overlay.id = id;
+      overlay.className = 'overlay';
       overlay.setAttribute('aria-hidden','true');
-      overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(10,12,16,.92);display:none;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(4px)';
       overlay.innerHTML = `
-        <div style="width:min(440px,92vw);background:#14171f;border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:28px;text-align:center;color:#e6e8ee;border:1px solid rgba(255,255,255,.06)">
-          <div style="width:88px;height:88px;margin:0 auto 16px;border-radius:50%;background:radial-gradient(110px 110px at 30% 30%,#2ed47a 0%,#1a9f55 60%,#117a3f 100%);display:grid;place-items:center;box-shadow:0 10px 30px rgba(46,212,122,.35),inset 0 0 18px rgba(255,255,255,.15)">
-            <svg viewBox="0 0 24 24" fill="none" style="width:44px;height:44px;color:#fff"><path d="M9 16.2 4.8 12 3.4 13.4 9 19 21 7 19.6 5.6 9 16.2Z" fill="currentColor"/></svg>
+        <div class="overlay__dialog">
+          <div class="overlay__icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.2 4.8 12 3.4 13.4 9 19 21 7 19.6 5.6 9 16.2Z" fill="currentColor"/></svg>
           </div>
-          <div style="font:600 20px/1.3 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:6px 0 8px">Оплата прошла успешно</div>
-          <div style="font:400 14px/1.5 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#a8afbd;margin-bottom:18px">Баланс пополнен. Средства уже доступны для оформления заказов.</div>
-          <div id="topupAmount" style="font:600 16px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin-bottom:16px"></div>
-          <button id="topupOkBtn" style="width:100%;padding:12px 16px;border-radius:14px;border:0;cursor:pointer;background:linear-gradient(180deg,#2b81f7 0%,#1f6cdc 100%);color:#fff;font:600 15px/1 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;box-shadow:0 8px 20px rgba(43,129,247,.35)">Окей</button>
+          <div class="overlay__title">Оплата прошла успешно</div>
+          <div class="overlay__subtitle">Баланс пополнен. Средства уже доступны для оформления заказов.</div>
+          <div id="topupAmount" class="overlay__amount"></div>
+          <button id="topupOkBtn" class="btn btn-primary btn-lg">Окей</button>
         </div>`;
       document.body.appendChild(overlay);
       overlay.addEventListener('click', e => { if (e.target === overlay) overlay.setAttribute('aria-hidden','true'); });
@@ -72,9 +80,9 @@
     }
     try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch(_) {}
     try { navigator.vibrate?.([30,20,30]); } catch(_) {}
-    overlay.querySelector('#topupAmount').textContent = `+${Number(delta||0).toFixed(2)} ${currency||''}`.trim();
+    overlay.querySelector('#topupAmount').textContent = `+${fmt(delta,2)} ${currency||''}`.trim();
     overlay.setAttribute('aria-hidden','false');
-    overlay.style.display = 'flex';
+    overlay.classList.add('overlay--show');
   }
 
   // ==== profile ====
@@ -113,7 +121,7 @@
 
       currentCurrency = (p.currency || 'RUB').toUpperCase();
       lastBalance = Number(p.balance || 0);
-      if (balanceEl) balanceEl.textContent = `${lastBalance.toFixed(2)}${curSign(currentCurrency)}`;
+      if (balanceEl) balanceEl.textContent = `${fmt(lastBalance,2)}${curSign(currentCurrency)}`;
 
       if (p.topup_delta && Number(p.topup_delta) > 0) {
         showTopupOverlay(Number(p.topup_delta), (p.topup_currency || currentCurrency));
@@ -206,10 +214,10 @@
       a.className = 'cat';
       a.dataset.cat = c.id;
       a.innerHTML = `
-        <div class="cat-icon"><img src="static/img/${c.id}.svg" alt=""></div>
-        <div class="cat-body">
-          <div class="cat-name">${c.name}</div>
-          <div class="cat-desc">${c.desc || ''}${c.count ? ' • '+c.count : ''}</div>
+        <div class="cat__icon"><img src="static/img/${c.id}.svg" alt=""></div>
+        <div class="cat__body">
+          <div class="cat__name">${c.name}</div>
+          <div class="cat__desc">${c.desc || ''}${c.count ? ' • '+c.count : ''}</div>
         </div>`;
       a.addEventListener('click', e => { e.preventDefault(); openServices(c.id, c.name); });
       catsListEl.appendChild(a);
@@ -237,11 +245,11 @@
     for(let i=0;i<n;i++){
       servicesListEl.insertAdjacentHTML('beforeend', `
         <div class="skeleton">
-          <div class="skel-row">
-            <div class="skel-avatar"></div>
-            <div class="skel-lines">
-              <div class="skel-line"></div>
-              <div class="skel-line short"></div>
+          <div class="skeleton__row">
+            <div class="skeleton__avatar"></div>
+            <div class="skeleton__lines">
+              <div class="skeleton__line"></div>
+              <div class="skeleton__line skeleton__line--short"></div>
             </div>
           </div>
         </div>`);
@@ -269,13 +277,13 @@
       const row = document.createElement('div');
       row.className = 'service';
       row.innerHTML = `
-        <div class="left">
-          <div class="name">${s.name}</div>
-          <div class="meta">Тип: ${s.type} • Мин: ${s.min} • Макс: ${s.max}</div>
+        <div class="service__left">
+          <div class="service__name">${s.name}</div>
+          <div class="service__meta">Тип: ${s.type} • Мин: ${s.min} • Макс: ${s.max}</div>
         </div>
-        <div class="right">
-          <div class="price">от ${Number(s.rate_client_1000).toFixed(2)}${curSign(s.currency||currentCurrency)} / 1000</div>
-          <button class="btn" data-id="${s.service}">Купить</button>
+        <div class="service__right">
+          <div class="service__price">от ${fmt(s.rate_client_1000,2)}${curSign(s.currency||currentCurrency)} / 1000</div>
+          <button class="btn btn-secondary service__buy" data-id="${s.service}">Купить</button>
         </div>`;
       row.addEventListener('click', ()=> openServicePage(s));
       row.querySelector('button').addEventListener('click', (e)=>{ e.stopPropagation(); openServicePage(s); });
@@ -297,12 +305,12 @@
     items.forEach(s=>{
       const row = document.createElement('div'); row.className = 'service';
       row.innerHTML = `
-        <div class="left">
-          <div class="name">${s.name}</div>
-          <div class="meta">Сервис ID: ${s.id}${s.network ? ' • ' + s.network : ''}</div>
+        <div class="service__left">
+          <div class="service__name">${s.name}</div>
+          <div class="service__meta">Сервис ID: ${s.id}${s.network ? ' • ' + s.network : ''}</div>
         </div>
-        <div class="right">
-          <button class="btn" data-id="${s.id}">Открыть</button>
+        <div class="service__right">
+          <button class="btn btn-secondary" data-id="${s.id}">Открыть</button>
         </div>`;
       row.querySelector('button').addEventListener('click', ()=> openServicePage(s._raw || {service:s.id, name:s.name, min:s.min||1, max:s.max||100000, rate_client_1000:s.rate||0, currency:s.currency||currentCurrency}));
       box.appendChild(row);
@@ -361,7 +369,7 @@
         <div class="card summary">
           <div class="sum-row"><span>Количество</span><b id="sumQty">${cur}</b></div>
           <div class="sum-row"><span>Цена</span><b id="sumPrice">${priceFor(cur,s).toFixed(4)}${curSign(currency)}</b></div>
-          <button class="btn-primary" id="svcCreate">Создать заказ</button>
+          <button class="btn btn-primary" id="svcCreate">Создать заказ</button>
         </div>
 
         <div class="card desc" id="svcDesc">${s.description || s.desc || s.note || s.notes || 'Описание будет добавлено позже.'}</div>
@@ -400,8 +408,8 @@
     presetValues(min,max).forEach(q=>{
       const btn = document.createElement('button');
       btn.className = 'qty';
-      btn.innerHTML = `<div class="num">${q.toLocaleString('ru-RU')}</div>
-                       <div class="price">${priceFor(q,s).toFixed(4)}${curSign(currency)}</div>`;
+      btn.innerHTML = `<div class="qty__num">${q.toLocaleString('ru-RU')}</div>
+                       <div class="qty__price">${priceFor(q,s).toFixed(4)}${curSign(currency)}</div>`;
       if (q===cur) btn.classList.add('active');
       btn.addEventListener('click', ()=>{
         qtyGrid.querySelectorAll('.qty').forEach(x=>x.classList.remove('active'));
@@ -448,7 +456,6 @@
     favToggle.addEventListener('change', ()=>{
       if (favToggle.checked){
         favAdd({ id: s.service, name: s.name, network: currentNetwork, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency, _raw:s });
-        // Параллельно шлём на сервер
         fetch(`${API_BASE}/favorites`, {method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({user_id: userId||seq, service_id: s.service})
         }).catch(()=>{});
@@ -493,84 +500,53 @@
   // ==== Start ====
   loadCategories();
 
-  // === Рефералка ===
-async function loadReferrals(){
-  const box = pages.refs;
-  if (!box) return;
-  box.innerHTML = '<div class="empty">Загрузка…</div>';
-  try{
-    const id = userId || seq;
-    const r = await fetch(`${API_BASE}/referrals/stats?user_id=${encodeURIComponent(id)}`);
-    if (!r.ok) throw new Error(await r.text());
-    const d = await r.json();
-    renderRefs(d);
-  }catch(e){
-    pages.refs.innerHTML = '<div class="empty">Не удалось загрузить рефералку.</div>';
-  }
-}
+  // ===== Referrals page =====
+  async function loadRefs(){
+    const box = pages.refs;
+    if (!box) return;
+    box.innerHTML = '<div class="empty">Загрузка…</div>';
+    try{
+      const r = await fetch(`${API_BASE}/referrals/stats?user_id=${encodeURIComponent(userId||seq)}`);
+      if (!r.ok) throw 0;
+      const s = await r.json();
 
-function renderRefs(d){
-  const pct = Math.min(100, Math.round((d.invited_with_deposit || 0) / (d.next_tier_target || 50) * 100));
-  const earned = Number(d.earned_total || 0).toFixed(2) + curSign(d.earned_currency || currentCurrency);
-  const link = d.invite_link;
+      const link = s.invite_link || '';
+      const rate = s.rate_percent ?? Math.round((s.rate||0)*100) || 10;
+      const target = Number(s.next_tier_target ?? 50);
+      const withDep = Number(s.invited_with_deposit || 0);
+      const pct = Math.max(0, Math.min(100, Math.round(100 * withDep / (target || 1))));
 
-  pages.refs.innerHTML = `
-    <div class="card">
-      <div class="label">Ваша реферальная ссылка</div>
-      <div class="field" style="gap:8px;display:flex;align-items:center">
-        <input type="text" value="${link}" readonly style="flex:1">
-        <button class="chip" id="btnCopyRef">Копировать</button>
-        <button class="chip" id="btnShareRef">Поделиться</button>
-      </div>
-      <div class="hint">За каждое пополнение приглашённого — <b>${d.rate_percent}%</b> автоматически на баланс.</div>
-    </div>
+      box.innerHTML = `
+        <div class="card ref">
+          <div class="label">Ваша реферальная ссылка</div>
+          <div class="ref__copy">
+            <input id="refLink" type="text" value="${link}" readonly>
+            <button class="chip" id="btnCopyLink">Копировать</button>
+            <button class="chip" id="btnShareLink">Поделиться</button>
+          </div>
+          <div class="hint">За каждое пополнение приглашённого — <b>${rate}%</b> автоматически на баланс.<br>
+          При ${target} рефералах с депозитом ставка повышается до <b>20%</b>.</div>
+        </div>
 
-    <div class="card summary">
-      <div class="sum-row"><span>Приглашено всего</span><b>${d.invited_total}</b></div>
-      <div class="sum-row"><span>С депозитом</span><b>${d.invited_with_deposit}</b></div>
-      <div class="sum-row"><span>Заработано</span><b>${earned}</b></div>
-      <div class="sum-row"><span>Текущая ставка</span>
-        <b>${d.rate_percent}% ${d.tier === 'pro' ? '• PRO' : ''}</b>
-      </div>
-    </div>
+        <div class="card ref">
+          <div class="label">Прогресс до 20%</div>
+          <div class="ref__progress"><div class="ref__bar" style="width:${pct}%"></div></div>
+          <div class="muted">С депозитом: <b>${withDep}</b> из <b>${target}</b> • Прогресс: ${pct}%</div>
+        </div>
 
-    <div class="card">
-      <div class="label">Повышенная ставка до 20%</div>
-      <div class="hint">Пригласите 50 рефералов, которые сделают депозит — ставка вырастет до 20%.</div>
-      <div class="progress" style="background:#1c222b;border-radius:10px;height:12px;overflow:hidden;margin-top:8px">
-        <div style="height:100%;width:${pct}%;background:#2b81f7"></div>
-      </div>
-      <div class="hint" style="margin-top:6px">Прогресс: ${d.invited_with_deposit}/${d.next_tier_target} (${pct}%)</div>
-    </div>
-  `;
+        <div class="card ref">
+          <div class="ref__grid">
+            <div><div class="sm">Приглашено всего</div><div class="lg">${s.invited_total || 0}</div></div>
+            <div><div class="sm">С депозитом</div><div class="lg">${withDep}</div></div>
+            <div><div class="sm">Заработано</div><div class="lg">${fmt(s.earned_total)}${curSign(s.earned_currency||currentCurrency)}</div></div>
+          </div>
+        </div>
 
-  pages.refs.querySelector('#btnCopyRef')?.addEventListener('click', async ()=>{
-    try{ await navigator.clipboard.writeText(link); alert('Ссылка скопирована'); }catch(_){ prompt('Скопируйте ссылку:', link); }
-  });
-  pages.refs.querySelector('#btnShareRef')?.addEventListener('click', ()=>{
-    const text = 'Присоединяйся! Получай услуги SMM по лучшим ценам:';
-    const u = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
-    (tg?.openLink ? tg.openLink(u) : window.open(u, '_blank'));
-  });
-}
-
-
-      // styles for progress/stat grid if not present
-      const styleId = 'refs-extra-css';
-      if (!document.getElementById(styleId)){
-        const st = document.createElement('style'); st.id = styleId; st.textContent = `
-          .copy-row{display:grid;grid-template-columns:1fr auto auto;gap:8px}
-          .copy-row input{width:100%;background:#0f1319;border:1px solid #2a2f36;border-radius:12px;padding:10px 12px;color:#e6e8ee}
-          .progress{height:10px;background:#0f1319;border:1px solid #2a2f36;border-radius:999px;overflow:hidden}
-          .progress .bar{height:100%;background:linear-gradient(90deg,#2b81f7,#00d084)}
-          .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center}
-          .stat-grid .sm{color:#9aa3b2;font-size:12px;margin-bottom:6px}
-          .stat-grid .lg{font-weight:700;font-size:18px}
-          .bonus-row{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid #2a2f36;border-radius:12px;margin-top:8px;background:#0f1319}
-          .bonus-row .left{color:#cfd5e1}
-          .bonus-row .right{font-weight:600}
-        `; document.head.appendChild(st);
-      }
+        <div class="card ref">
+          <div class="label">Последние начисления</div>
+          <div class="ref__bonuses" id="bonusList"></div>
+        </div>
+      `;
 
       const list = document.getElementById('bonusList');
       list.innerHTML = '';
@@ -579,10 +555,10 @@ function renderRefs(d){
       } else {
         s.last_bonuses.forEach(b=>{
           const el = document.createElement('div');
-          el.className = 'bonus-row';
+          el.className = 'ref-bonus';
           const dt = new Date((b.ts||0)*1000).toLocaleString('ru-RU');
-          el.innerHTML = `<div class="left">#${b.from_seq} • ${dt} • ${b.rate}%</div>
-                          <div class="right">+${fmt(b.amount_credit)}${curSign(b.currency||currentCurrency)}</div>`;
+          el.innerHTML = `<div class="ref-bonus__left">#${b.from_seq} • ${dt} • ${b.rate}%</div>
+                          <div class="ref-bonus__right">+${fmt(b.amount_credit)}${curSign(b.currency||currentCurrency)}</div>`;
           list.appendChild(el);
         });
       }
@@ -591,7 +567,9 @@ function renderRefs(d){
         copy(link); try{ tg?.HapticFeedback?.impactOccurred?.('light'); }catch(_){}
       });
       document.getElementById('btnShareLink')?.addEventListener('click', ()=>{
-        if (tg?.openLink) tg.openLink(link); else window.open(link,'_blank');
+        const text = 'Присоединяйся! Получай услуги SMM по лучшим ценам:';
+        const u = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
+        (tg?.openLink ? tg.openLink(u) : window.open(u, '_blank'));
       });
 
     }catch(e){
