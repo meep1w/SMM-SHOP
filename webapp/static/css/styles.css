@@ -90,6 +90,15 @@ body{
 .muted{color:var(--muted); font-size:12px}
 .empty{color:var(--muted); text-align:center; padding:20px 8px}
 
+/* ===== Универсальная карточка ===== */
+.card{
+  background:linear-gradient(180deg,#15181d,#111419);
+  border:1px solid var(--stroke);
+  border-radius:14px;
+  padding:14px;
+  box-shadow:0 6px 18px rgba(0,0,0,.18);
+}
+
 /* ===== Категории ===== */
 .cats-list{display:flex; flex-direction:column; gap:12px;}
 .cat{
@@ -189,7 +198,7 @@ body{
 /* ===== Страница отдельной услуги ===== */
 .service-details{display:flex; flex-direction:column; gap:12px}
 .svc{display:flex; flex-direction:column; gap:14px}
-.svc .card{
+.svc .card{ /* оставляем для обратной совместимости */
   background:linear-gradient(180deg,#15181d,#111419);
   border:1px solid var(--stroke);
   border-radius:14px; padding:14px;
@@ -359,25 +368,38 @@ body{
 /* Fav list layout */
 .fav-list{ display:flex; flex-direction:column; gap:14px; }
 
-/* ===== Referrals page ===== */
+/* ===== Referrals page (совместимо с app.js и старым CSS) ===== */
+.ref{display:flex; flex-direction:column; gap:12px}
 .ref .label{font-size:12px; color:var(--muted); margin-bottom:8px}
-.ref__copy{display:grid; grid-template-columns:1fr auto auto; gap:8px}
-.ref__copy input{
+
+/* copy link row */
+.ref__copy, .copy-row{display:grid; grid-template-columns:1fr auto auto; gap:8px}
+.ref__copy input, .copy-row input{
   width:100%; background:var(--elev); border:1px solid var(--stroke);
-  border-radius:12px; padding:10px 12px; color:var(--text)
+  border-radius:12px; padding:10px 12px; color:var(--text); font-weight:600
 }
-.ref__progress{height:10px;background:var(--elev);border:1px solid var(--stroke);border-radius:999px;overflow:hidden}
-.ref__bar{height:100%;background:linear-gradient(90deg,#2b81f7,#00d084)}
-.ref__grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center}
+.copy-row .btn{min-width:118px}
+
+/* progress */
+.ref__progress, .progress{position:relative;height:10px;background:var(--elev);border:1px solid var(--stroke);border-radius:999px;overflow:hidden}
+.ref__bar, .progress .bar{height:100%;background:linear-gradient(90deg,#2b81f7,#00d084);transition:width .35s ease}
+
+/* stats grid */
+.ref__grid, .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center}
 .ref .sm{color:var(--muted);font-size:12px;margin-bottom:6px}
 .ref .lg{font-weight:700;font-size:18px}
-.ref__bonuses{display:flex;flex-direction:column;gap:8px}
-.ref-bonus{
+
+/* bonuses list */
+.ref__bonuses, .bonus-list{display:flex;flex-direction:column;gap:8px}
+.ref-bonus, .bonus-row{
   display:flex;align-items:center;justify-content:space-between;
-  padding:10px 12px;border:1px solid var(--stroke);border-radius:12px;background:var(--elev)
+  padding:10px 12px;border:1px solid var(--stroke);border-radius:12px;background:var(--elev);
+  transition:transform .08s ease, border-color .2s ease;
 }
-.ref-bonus__left{color:#cfd5e1}
-.ref-bonus__right{font-weight:600}
+.ref-bonus:hover, .bonus-row:hover{transform:translateY(-1px);border-color:var(--stroke-2)}
+.ref-bonus__left, .bonus-row .left{color:#cfd5e1}
+.ref-bonus__right, .bonus-row .right{font-weight:600}
+.ref__empty{color:var(--muted);text-align:center;padding:16px 8px}
 
 /* Скрыть скроллбары */
 body, .page, .app-main, .cats-list, .services-list{ -ms-overflow-style:none; scrollbar-width:none; }
