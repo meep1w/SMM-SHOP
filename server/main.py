@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, time, json, logging
+import os, time, json, logging, re
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
@@ -7,15 +7,10 @@ from fastapi import FastAPI, HTTPException, Body, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from sqlalchemy import func, distinct
 from sqlalchemy.orm import Session
+from sqlalchemy import func  # для case-insensitive проверки ника
 
-from .db import (
-    Base, engine, SessionLocal,
-    User, Service, Favorite, Order, Topup,
-    Referral, ReferralPayout,
-    stable_seq,
-)
+from .db import Base, engine, SessionLocal, User, Service, Favorite, Order, Topup, stable_seq
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -36,18 +31,12 @@ origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 CURRENCY = (os.getenv("CURRENCY", "RUB") or "RUB").strip().upper()
 MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER", "5.0"))
 
-# CryptoBot
+# CryptoBot (учтены возможные опечатки)
 CRYPTOBOT_API_KEY  = os.getenv("CRYPTOBOT_API_KEY") or os.getenv("CRYPTOPBOT_API_KEY") or ""
 CRYPTOBOT_BASE     = os.getenv("CRYPTOBOT_BASE") or os.getenv("CRYPTOPBOT_BASE") or "https://pay.crypt.bot/api"
 CRYPTOBOT_MIN_TOPUP_USD = float(os.getenv("CRYPTOBOT_MIN_TOPUP_USD", os.getenv("CRYPTOPBOT_MIN_TOPUP_USD", "0.10")))
 
 FX_CACHE_TTL = int(os.getenv("FX_CACHE_TTL", "600"))
-
-# Referral config
-REF_BOT_USERNAME   = (os.getenv("BOT_USERNAME", "") or "").lstrip("@")  # для t.me/<bot>?start=refXXXX
-REF_PERCENT_BASE   = int(os.getenv("REF_PERCENT_BASE", "10"))           # базовый %
-REF_PERCENT_PRO    = int(os.getenv("REF_PERCENT_PRO", "20"))            # повышенный %
-REF_PRO_THRESHOLD  = int(os.getenv("REF_PRO_THRESHOLD", "50"))          # активных рефералов для PRO
 
 NETWORKS = ["telegram", "tiktok", "instagram", "youtube", "facebook"]
 DISPLAY = {
@@ -68,20 +57,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# глобальный HTTP клиент
 _client = httpx.AsyncClient(timeout=30.0)
 
 # --- FX cache ---
 _fx_cache: Dict[str, Dict[str, Any]] = {}
+
 def _fx_get(k: str) -> Optional[float]:
     obj = _fx_cache.get(k)
-    if not obj: return None
-    if time.time() - obj.get("t", 0) > FX_CACHE_TTL: return None
+    if not obj:
+        return None
+    if time.time() - obj.get("t", 0) > FX_CACHE_TTL:
+        return None
     return float(obj.get("v", 0))
+
 def _fx_put(k: str, v: float) -> None:
     _fx_cache[k] = {"v": float(v), "t": time.time()}
+
 async def fx_usd_rub() -> float:
     cached = _fx_get("USD_RUB")
-    if cached: return cached
+    if cached:
+        return cached
     for url in (
         "https://api.exchangerate.host/latest?base=USD&symbols=RUB",
         "https://open.er-api.com/v6/latest/USD",
@@ -95,6 +91,7 @@ async def fx_usd_rub() -> float:
                 return v
         except Exception:
             continue
+    # запасной вариант
     _fx_put("USD_RUB", 100.0)
     return 100.0
 
@@ -104,46 +101,35 @@ def client_rate_view_per_1k(base_usd_per_1k: float, fx: float) -> float:
         return usd_client * fx
     return usd_client
 
-def db() -> Session: return SessionLocal()
+def db() -> Session:
+    return SessionLocal()
 
-def _bind_referral_if_needed(s: Session, new_user: User, ref_code: Optional[int]):
-    """Привязать реферера по коду (seq), если он есть и привязка ещё не создана."""
-    if not ref_code: return
-    # уже привязан?
-    exists = s.query(Referral).filter(Referral.referred_id == new_user.id).one_or_none()
-    if exists: return
-    referrer = s.query(User).filter(User.seq == int(ref_code)).one_or_none()
-    if not referrer: return
-    if referrer.id == new_user.id: return
-    s.add(Referral(referrer_id=referrer.id, referred_id=new_user.id))
-    s.commit()
-
-def ensure_user(s: Session, tg_id: int, nick: Optional[str]=None, ref_code: Optional[int]=None) -> User:
-    u = s.query(User).filter(User.tg_id==tg_id).one_or_none()
+def ensure_user(db: Session, tg_id: int, nick: Optional[str] = None) -> User:
+    u = db.query(User).filter(User.tg_id == tg_id).one_or_none()
     if u:
-        if nick and not u.nick: u.nick = nick
-        u.last_seen_at = int(time.time()); s.commit()
-        # если уже есть пользователь, но привязки нет и пришёл ref_code — разрешаем один раз привязать
-        if ref_code:
-            _bind_referral_if_needed(s, u, ref_code)
+        if nick and not u.nick:
+            u.nick = nick
+        u.last_seen_at = int(time.time())
+        db.commit()
         return u
-    u = User(tg_id=tg_id, seq=stable_seq(tg_id), nick=nick, currency=CURRENCY, balance=0.0, last_seen_at=int(time.time()))
-    s.add(u); s.commit(); s.refresh(u)
+
+    u = User(
+        tg_id=tg_id,
+        seq=stable_seq(tg_id),
+        nick=nick,
+        currency=CURRENCY,
+        balance=0.0,
+        last_seen_at=int(time.time()),
+    )
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+
     # дефолтные избранные
     for sid in (2127, 2453, 2454):
-        s.merge(Favorite(user_id=u.id, service_id=sid))
-    s.commit()
-    _bind_referral_if_needed(s, u, ref_code)
+        db.merge(Favorite(user_id=u.id, service_id=sid))
+    db.commit()
     return u
-
-def ref_active_count(s: Session, referrer_id: int) -> int:
-    """Количество активных рефералов (у кого был хотя бы один платёж)."""
-    q = s.query(func.count(distinct(ReferralPayout.referred_id)))\
-        .filter(ReferralPayout.referrer_id == referrer_id)
-    return int(q.scalar() or 0)
-
-def ref_rate_percent(s: Session, referrer_id: int) -> int:
-    return REF_PERCENT_PRO if ref_active_count(s, referrer_id) >= REF_PRO_THRESHOLD else REF_PERCENT_BASE
 
 # --- схемы ---
 class UserOut(BaseModel):
@@ -161,11 +147,17 @@ class CreateOrderIn(BaseModel):
     quantity: int
     promo_code: Optional[str] = None
 
+class RegisterIn(BaseModel):
+    user_id: int
+    nick: str
+
 # --- VEXBOOST ----
 async def vex_services_raw() -> List[Dict[str, Any]]:
-    if not VEX_KEY: raise HTTPException(500, "VEXBOOST_KEY not set")
+    if not VEX_KEY:
+        raise HTTPException(500, "VEXBOOST_KEY not set")
     url = f"{API_BASE}?action=services&key={VEX_KEY}"
-    r = await _client.get(url); r.raise_for_status()
+    r = await _client.get(url)
+    r.raise_for_status()
     data = r.json()
     if not isinstance(data, list):
         raise HTTPException(502, "Unexpected services payload")
@@ -173,11 +165,16 @@ async def vex_services_raw() -> List[Dict[str, Any]]:
 
 def _detect_network(name: str, category: str) -> Optional[str]:
     t = f"{name} {category}".lower()
-    if "telegram" in t or "tg " in t: return "telegram"
-    if "tiktok" in t or "tik tok" in t: return "tiktok"
-    if "instagram" in t or "insta" in t or "ig " in t: return "instagram"
-    if "youtube" in t or "you tube" in t or "yt " in t: return "youtube"
-    if "facebook" in t or "fb " in t or "meta" in t: return "facebook"
+    if "telegram" in t or "tg " in t:
+        return "telegram"
+    if "tiktok" in t or "tik tok" in t:
+        return "tiktok"
+    if "instagram" in t or "insta" in t or "ig " in t:
+        return "instagram"
+    if "youtube" in t or "you tube" in t or "yt " in t:
+        return "youtube"
+    if "facebook" in t or "fb " in t or "meta" in t:
+        return "facebook"
     return None
 
 async def sync_services_into_db():
@@ -185,20 +182,41 @@ async def sync_services_into_db():
     fx = await fx_usd_rub()
     with db() as s:
         for it in raw:
-            sid = int(it.get("service")); name = it.get("name") or f"Service {sid}"
-            type_ = it.get("type"); cat = it.get("category") or ""
-            min_ = int(it.get("min") or 0); max_ = int(it.get("max") or 0)
+            sid = int(it.get("service"))
+            name = it.get("name") or f"Service {sid}"
+            type_ = it.get("type")
+            cat = it.get("category") or ""
+            min_ = int(it.get("min") or 0)
+            max_ = int(it.get("max") or 0)
             base_rate_usd = float(it.get("rate") or 0.0)
             rate_view = client_rate_view_per_1k(base_rate_usd, fx)
             net = _detect_network(name, cat) or "telegram"
+
             obj = s.get(Service, sid)
             if not obj:
-                obj = Service(id=sid, network=net, name=name, type=type_, min=min_, max=max_,
-                              rate_client_1000=rate_view, currency=CURRENCY, description=cat, active=True)
+                obj = Service(
+                    id=sid,
+                    network=net,
+                    name=name,
+                    type=type_,
+                    min=min_,
+                    max=max_,
+                    rate_client_1000=rate_view,
+                    currency=CURRENCY,
+                    description=cat,
+                    active=True,
+                )
                 s.add(obj)
             else:
-                obj.network = net; obj.name = name; obj.type = type_; obj.min = min_; obj.max = max_
-                obj.rate_client_1000 = rate_view; obj.currency = CURRENCY; obj.description = cat; obj.active = True
+                obj.network = net
+                obj.name = name
+                obj.type = type_
+                obj.min = min_
+                obj.max = max_
+                obj.rate_client_1000 = rate_view
+                obj.currency = CURRENCY
+                obj.description = cat
+                obj.active = True
         s.commit()
 
 # --- lifecycle ---
@@ -212,57 +230,67 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
-    try: await _client.aclose()
-    except Exception: pass
+    try:
+        await _client.aclose()
+    except Exception:
+        pass
 
 # --- endpoints ---
 @app.get("/api/v1/ping")
-async def ping(): return {"ok": True}
+async def ping():
+    return {"ok": True}
 
+# ===== Регистрация =====
+
+# строгая валидация ника + длина
+NICK_RE = re.compile(r"^[A-Za-z0-9_]{3,24}$")
+def _validate_nick(n: str) -> str:
+    n = (n or "").strip()
+    if not NICK_RE.fullmatch(n):
+        raise HTTPException(400, "Ник 3–24 символа: латиница, цифры, _")
+    return n
+
+# Проверка наличия пользователя: 200 если есть, 404 если нет
+@app.get("/api/v1/user/exists")
+async def api_user_exists(user_id: int = Query(...)):
+    with db() as s:
+        u = s.query(User).filter(User.tg_id == user_id).one_or_none()
+        if not u:
+            raise HTTPException(404, "not_found")
+        return {"exists": True, "has_nick": bool(u.nick), "nick": u.nick, "seq": u.seq}
+
+# Профиль: можно выключить автосоздание
 @app.get("/api/v1/user", response_model=UserOut)
 async def api_user(
     user_id: int = Query(...),
     consume_topup: int = 0,
     nick: Optional[str] = None,
-    ref: Optional[int] = None,  # <- примем реф-код (seq) на всякий случай и из мини-аппа
+    autocreate: int = 1,  # 1 — как раньше; 0 — без создания (вернёт 404)
 ):
     with db() as s:
-        u = ensure_user(s, user_id, nick=nick, ref_code=ref)
+        u = s.query(User).filter(User.tg_id == user_id).one_or_none()
+        if not u:
+            if not autocreate:
+                raise HTTPException(404, "user_not_found")
+            u = ensure_user(s, user_id, nick=nick)
+        else:
+            if nick and not u.nick:
+                u.nick = nick
+                s.commit()
+
         delta = 0.0
         if consume_topup:
-            pays = s.query(Topup).filter(
-                Topup.user_id==u.id, Topup.status=="paid", Topup.applied==False
-            ).all()
+            pays = (
+                s.query(Topup)
+                .filter(Topup.user_id == u.id, Topup.status == "paid", Topup.applied == False)  # noqa: E712
+                .all()
+            )
             for t in pays:
-                # 1) кредит самому пользователю
                 delta += float(t.amount_usd or 0.0)
                 t.applied = True
-                add_user = delta if CURRENCY=="USD" else (delta * (await fx_usd_rub()))
-                # не суммируем по всем — начисляем по t
-                add_user = (float(t.amount_usd or 0.0) if CURRENCY=="USD"
-                            else float(t.amount_usd or 0.0) * (await fx_usd_rub()))
-                u.balance = float(u.balance or 0.0) + round(add_user, 2)
-
-                # 2) реферальный бонус
-                ref_rel = s.query(Referral).filter(Referral.referred_id==u.id).one_or_none()
-                if ref_rel:
-                    # не дублируем выплаты по одному topup
-                    exists = s.query(ReferralPayout).filter(ReferralPayout.topup_id==t.id).one_or_none()
-                    if not exists:
-                        percent = ref_rate_percent(s, ref_rel.referrer_id)
-                        reward_usd = float(t.amount_usd or 0.0) * (percent / 100.0)
-                        # пополняем баланс реферера в валюте магазина
-                        referrer = s.get(User, ref_rel.referrer_id)
-                        if referrer:
-                            add_ref = reward_usd if CURRENCY=="USD" else reward_usd * (await fx_usd_rub())
-                            referrer.balance = float(referrer.balance or 0.0) + round(add_ref, 2)
-                            s.add(ReferralPayout(
-                                referrer_id=referrer.id,
-                                referred_id=u.id,
-                                topup_id=t.id,
-                                amount_usd=reward_usd,
-                                rate_percent=percent,
-                            ))
+            if delta > 0:
+                add = delta if CURRENCY == "USD" else (delta * (await fx_usd_rub()))
+                u.balance = float(u.balance or 0.0) + round(add, 2)
             s.commit()
 
         return UserOut(
@@ -274,42 +302,101 @@ async def api_user(
             topup_currency="USD",
         )
 
+# Регистрация (ник должен быть уникальным, case-insensitive)
+@app.post("/api/v1/register")
+async def api_register(body: RegisterIn):
+    nick = _validate_nick(body.nick)
+    with db() as s:
+        # уникальность ника без учёта регистра
+        taken = s.query(User.id).filter(func.lower(User.nick) == nick.lower()).first()
+        if taken:
+            raise HTTPException(409, "Ник уже занят")
+
+        u = s.query(User).filter(User.tg_id == body.user_id).one_or_none()
+        if not u:
+            u = User(
+                tg_id=body.user_id,
+                seq=stable_seq(body.user_id),
+                nick=None,
+                currency=CURRENCY,
+                balance=0.0,
+                last_seen_at=int(time.time()),
+            )
+            s.add(u)
+            s.commit()
+            s.refresh(u)
+            for sid in (2127, 2453, 2454):
+                s.merge(Favorite(user_id=u.id, service_id=sid))
+
+        if u.nick:
+            raise HTTPException(409, "Профиль уже создан")
+
+        u.nick = nick
+        u.updated_at = int(time.time())
+        s.commit()
+        return {"ok": True, "seq": u.seq, "nick": u.nick}
+
+# ===== Категории / услуги =====
 @app.get("/api/v1/services")
 async def api_services():
     with db() as s:
         groups = {k: {**DISPLAY[k], "count": 0} for k in DISPLAY}
-        for it in s.query(Service).filter(Service.active==True).all():  # noqa: E712
-            if it.network in groups: groups[it.network]["count"] += 1
-        return [groups[k] for k in ["telegram","tiktok","instagram","youtube","facebook"]]
+        for it in s.query(Service).filter(Service.active == True).all():  # noqa: E712
+            if it.network in groups:
+                groups[it.network]["count"] += 1
+        return [groups[k] for k in ["telegram", "tiktok", "instagram", "youtube", "facebook"]]
 
 @app.get("/api/v1/services/{network}")
 async def api_services_by_network(network: str):
-    if network not in NETWORKS: raise HTTPException(404, "Unknown network")
+    if network not in NETWORKS:
+        raise HTTPException(404, "Unknown network")
     with db() as s:
         items = (
             s.query(Service)
-            .filter(Service.network==network, Service.active==True)  # noqa: E712
+            .filter(Service.network == network, Service.active == True)  # noqa: E712
             .order_by(Service.id.asc())
             .all()
         )
-        return [{
-            "service": it.id, "network": it.network, "name": it.name, "type": it.type,
-            "min": it.min, "max": it.max, "rate_client_1000": float(it.rate_client_1000 or 0.0),
-            "currency": it.currency or CURRENCY, "description": it.description or ""
-        } for it in items]
+        return [
+            {
+                "service": it.id,
+                "network": it.network,
+                "name": it.name,
+                "type": it.type,
+                "min": it.min,
+                "max": it.max,
+                "rate_client_1000": float(it.rate_client_1000 or 0.0),
+                "currency": it.currency or CURRENCY,
+                "description": it.description or "",
+            }
+            for it in items
+        ]
 
-# ---- Favorites
+# ===== Избранное =====
 @app.get("/api/v1/favorites")
 async def fav_list(user_id: int = Query(...)):
     with db() as s:
         u = ensure_user(s, user_id)
-        rows = s.query(Service).join( Favorite, Favorite.service_id==Service.id )\
-                               .filter(Favorite.user_id==u.id).all()
-        return [{
-            "service": it.id, "network": it.network, "name": it.name, "type": it.type,
-            "min": it.min, "max": it.max, "rate_client_1000": float(it.rate_client_1000 or 0.0),
-            "currency": it.currency or CURRENCY, "description": it.description or ""
-        } for it in rows]
+        rows = (
+            s.query(Service)
+            .join(Favorite, Favorite.service_id == Service.id)
+            .filter(Favorite.user_id == u.id)
+            .all()
+        )
+        return [
+            {
+                "service": it.id,
+                "network": it.network,
+                "name": it.name,
+                "type": it.type,
+                "min": it.min,
+                "max": it.max,
+                "rate_client_1000": float(it.rate_client_1000 or 0.0),
+                "currency": it.currency or CURRENCY,
+                "description": it.description or "",
+            }
+            for it in rows
+        ]
 
 class FavIn(BaseModel):
     user_id: int
@@ -319,80 +406,122 @@ class FavIn(BaseModel):
 async def fav_add(body: FavIn):
     with db() as s:
         u = ensure_user(s, body.user_id)
-        s.merge(Favorite(user_id=u.id, service_id=int(body.service_id))); s.commit()
+        s.merge(Favorite(user_id=u.id, service_id=int(body.service_id)))
+        s.commit()
 
 @app.delete("/api/v1/favorites/{service_id}", status_code=204)
 async def fav_del(service_id: int, user_id: int = Query(...)):
     with db() as s:
         u = ensure_user(s, user_id)
-        s.query(Favorite).filter(Favorite.user_id==u.id, Favorite.service_id==service_id).delete(); s.commit()
+        s.query(Favorite).filter(Favorite.user_id == u.id, Favorite.service_id == service_id).delete()
+        s.commit()
 
-# ---- Order create
+# ===== Создание заказа =====
 @app.post("/api/v1/order/create")
 async def api_order_create(body: CreateOrderIn):
     with db() as s:
         u = ensure_user(s, body.user_id)
         svc = s.get(Service, int(body.service))
-        if not svc: raise HTTPException(404, "service not found")
+        if not svc:
+            raise HTTPException(404, "service not found")
+
         if body.quantity < (svc.min or 0) or body.quantity > (svc.max or 0):
             raise HTTPException(400, f"Количество должно быть от {svc.min} до {svc.max}")
+
         cost = round(float(svc.rate_client_1000 or 0.0) * body.quantity / 1000.0, 2)
-        if float(u.balance or 0.0) < cost: raise HTTPException(402, "Недостаточно средств")
+        if float(u.balance or 0.0) < cost:
+            raise HTTPException(402, "Недостаточно средств")
 
         # VEXBOOST create order
-        qp = httpx.QueryParams({
-            "action": "add", "service": svc.id, "link": body.link,
-            "quantity": int(body.quantity), "key": VEX_KEY
-        })
         try:
-            r = await _client.get(f"{API_BASE}?{qp}"); supplier_order = int(r.json().get("order"))
+            qp = httpx.QueryParams({
+                "action": "add",
+                "service": svc.id,
+                "link": body.link,
+                "quantity": int(body.quantity),
+                "key": VEX_KEY
+            })
+            url = f"{API_BASE}?{qp}"
+            r = await _client.get(url)
+            supplier_order = int(r.json().get("order"))
         except Exception as e:
             raise HTTPException(502, f"Supplier error: {e}")
 
         u.balance = float(u.balance or 0.0) - cost
-        o = Order(user_id=u.id, service_id=svc.id, quantity=int(body.quantity), link=body.link,
-                  cost=cost, currency=svc.currency or CURRENCY, status="Awaiting", provider_id=str(supplier_order))
-        s.add(o); s.commit(); s.refresh(o)
+        o = Order(
+            user_id=u.id,
+            service_id=svc.id,
+            quantity=int(body.quantity),
+            link=body.link,
+            cost=cost,
+            currency=svc.currency or CURRENCY,
+            status="Awaiting",
+            provider_id=str(supplier_order),
+        )
+        s.add(o)
+        s.commit()
+        s.refresh(o)
         return {"order_id": o.id, "cost": cost, "currency": o.currency, "status": o.status}
 
-# ---- Invoice create
+# ===== Инвойсы / пополнения =====
 @app.post("/api/v1/pay/invoice")
 async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
     if not CRYPTOBOT_API_KEY:
         return {"error": "CryptoBot not configured"}, 501
+
     amount = float(payload.get("amount_usd") or 0.0)
     if amount < CRYPTOBOT_MIN_TOPUP_USD:
         raise HTTPException(400, f"Минимальная сумма — {CRYPTOBOT_MIN_TOPUP_USD} USDT")
+
     user_id = int(payload.get("user_id") or 0)
-    if user_id <= 0: raise HTTPException(400, "user_id required")
+    if user_id <= 0:
+        raise HTTPException(400, "user_id required")
 
     link = f"{CRYPTOBOT_BASE}/createInvoice"
     headers = {"Content-Type": "application/json", "Crypto-Pay-API-Token": CRYPTOBOT_API_KEY}
     body = {"asset": "USDT", "amount": round(amount, 2), "payload": str(user_id), "description": "SMMShop topup"}
+
     async with httpx.AsyncClient(timeout=15.0) as c:
-        r = await c.post(link, headers=headers, json=body); js = r.json()
+        r = await c.post(link, headers=headers, json=body)
+        js = r.json()
 
     if isinstance(js.get("result"), dict) and js["result"].get("pay_url"):
-        pay_url = js["result"]["pay_url"]; invoice_id = js["result"].get("invoice_id", "")
+        pay_url = js["result"]["pay_url"]
+        invoice_id = js["result"].get("invoice_id", "")
     elif isinstance(js.get("invoice"), dict) and js["invoice"].get("pay_url"):
-        pay_url = js["invoice"]["pay_url"]; invoice_id = js["invoice"].get("invoice_id", "")
+        pay_url = js["invoice"]["pay_url"]
+        invoice_id = js["invoice"].get("invoice_id", "")
     else:
         raise HTTPException(502, f"CryptoBot error: {js}")
 
     with db() as s:
         u = ensure_user(s, user_id)
-        t = Topup(user_id=u.id, provider="cryptobot", invoice_id=str(invoice_id),
-                  amount_usd=amount, currency="USD", status="created", applied=False, pay_url=pay_url)
-        s.add(t); s.commit()
+        t = Topup(
+            user_id=u.id,
+            provider="cryptobot",
+            invoice_id=str(invoice_id),
+            amount_usd=amount,
+            currency="USD",
+            status="created",
+            applied=False,
+            pay_url=pay_url,
+        )
+        s.add(t)
+        s.commit()
+
     return {"pay_url": pay_url}
 
-# ---- Webhook (пришёл paid — записываем, применится при consume_topup)
 def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
-    if isinstance(data.get("invoice"), dict): inv = data["invoice"]
-    elif isinstance(data.get("result"), dict) and isinstance(data["result"].get("invoice"), dict): inv = data["result"]["invoice"]
-    elif isinstance(data.get("result"), dict): inv = data["result"]
-    elif isinstance(data.get("payload"), dict) and ("status" in data["payload"]): inv = data["payload"]
-    else: inv = {}
+    if isinstance(data.get("invoice"), dict):
+        inv = data["invoice"]
+    elif isinstance(data.get("result"), dict) and isinstance(data["result"].get("invoice"), dict):
+        inv = data["result"]["invoice"]
+    elif isinstance(data.get("result"), dict):
+        inv = data["result"]
+    elif isinstance(data.get("payload"), dict) and ("status" in data["payload"]):
+        inv = data["payload"]
+    else:
+        inv = {}
     return {
         "invoice_id": inv.get("invoice_id") or inv.get("id") or "",
         "status": str(inv.get("status") or "").lower(),
@@ -404,59 +533,30 @@ def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
 @app.post("/api/v1/cryptobot/webhook")
 async def cryptobot_webhook(request: Request):
     raw = await request.body()
-    try: data = json.loads(raw.decode("utf-8"))
-    except Exception: data = {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception:
+        data = {}
     inv = _extract_invoice(data)
     if inv["status"] not in ("paid", "finished", "success"):
         return {"ok": True}
-    try: user_id = int(inv.get("payload") or 0)
-    except Exception: return {"ok": True}
+    try:
+        user_id = int(inv.get("payload") or 0)
+    except Exception:
+        return {"ok": True}
     amount = float(inv.get("amount") or 0.0)
     with db() as s:
         u = ensure_user(s, user_id)
-        t = Topup(user_id=u.id, provider="cryptobot", invoice_id=str(inv.get("invoice_id","")),
-                  amount_usd=amount, currency="USD", status="paid", applied=False, pay_url=None)
-        s.add(t); s.commit()
-    return {"ok": True}
-
-# ---- Referral stats page API for mini-app ----
-@app.get("/api/v1/referrals")
-async def api_referrals_stats(user_id: int = Query(...)):
-    with db() as s:
-        u = ensure_user(s, user_id)
-        # общая реф-статистика
-        total = int(s.query(func.count(Referral.id)).filter(Referral.referrer_id==u.id).scalar() or 0)
-        active = ref_active_count(s, u.id)
-        percent_now = ref_rate_percent(s, u.id)
-        # суммарный заработок (переводим в валюту магазина)
-        total_reward_usd = float(s.query(func.coalesce(func.sum(ReferralPayout.amount_usd), 0.0))
-                                  .filter(ReferralPayout.referrer_id==u.id).scalar() or 0.0)
-        fx = (await fx_usd_rub())
-        earned_display = total_reward_usd if CURRENCY=="USD" else total_reward_usd * fx
-
-        # последние начисления
-        rows = (
-            s.query(ReferralPayout, User)
-             .join(User, User.id==ReferralPayout.referred_id)
-             .filter(ReferralPayout.referrer_id==u.id)
-             .order_by(ReferralPayout.id.desc()).limit(20).all()
+        t = Topup(
+            user_id=u.id,
+            provider="cryptobot",
+            invoice_id=str(inv.get("invoice_id", "")),
+            amount_usd=amount,
+            currency="USD",
+            status="paid",
+            applied=False,
+            pay_url=None,
         )
-        recent = [{
-            "nick": r[1].nick or f"#{r[1].seq}",
-            "amount": float(r[0].amount_usd if CURRENCY=="USD" else r[0].amount_usd * fx),
-            "currency": CURRENCY,
-            "rate_percent": r[0].rate_percent,
-            "ts": r[0].created_at,
-        } for r in rows]
-
-        link = f"https://t.me/{REF_BOT_USERNAME}?start=ref{u.seq}" if REF_BOT_USERNAME else ""
-        return {
-            "invite_link": link,
-            "percent": percent_now,
-            "threshold": REF_PRO_THRESHOLD,
-            "referred_total": total,
-            "referred_active": active,
-            "earned_total": round(earned_display, 2),
-            "currency": CURRENCY,
-            "recent": recent,
-        }
+        s.add(t)
+        s.commit()
+    return {"ok": True}
