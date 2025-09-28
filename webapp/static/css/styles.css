@@ -334,7 +334,7 @@ body{
 .ref-dot{ width:8px; height:8px; border-radius:50%; background:#ff6b6b; box-shadow:0 0 0 2px rgba(255,107,107,.18) }
 
 /* Заголовок секции */
-.ref-h3{font:600 13px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0 6px}
+.ref-h3{font:600 16px Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0 6px}
 
 /* Статистика (три отдельные карточки) */
 .ref-stats{display:flex; flex-direction:column; gap:12px}
