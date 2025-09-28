@@ -1,10 +1,10 @@
 /* Slovekiza Mini-App
  * Совместимо с данным index.html и app.css
  * - Профиль, баланс, оверлей успешного пополнения
- * - Категории / Услуги / Полная страница услуги
- * - Избранное (локально) + отправка на сервер
+ * - Категории / Услуги / Полная страница услуги (поддержка "Повторить")
+ * - Избранное (локально) + синк с сервером
  * - Рефералка (линк, прогресс, статы)
- * - Детализация (Заказы / Платежи)
+ * - Детализация (Заказы / Платежи) + модалки
  */
 
 (function () {
@@ -47,7 +47,6 @@
   const btnBackToServices = document.getElementById("btnBackToServices");
 
   // ====== helpers ======
-
   function curSign(c){ return c==='RUB' ? ' ₽' : (c==='USD' ? ' $' : ` ${c}`); }
   function fmt(n, d=2){ return Number(n||0).toFixed(d); }
   function bust(url){
@@ -65,8 +64,7 @@
   function fmtDate(val){
     try{
       if (val == null || val === '') return '';
-
-      // 1) ISO-строки
+      // ISO
       if (typeof val === 'string' && !/^\d+(\.\d+)?$/.test(val.trim())) {
         const d = new Date(val);
         if (!isNaN(d.getTime())) {
@@ -79,12 +77,10 @@
         }
         return val;
       }
-
-      // 2) числа: сек/мс
+      // sec/ms
       let ts = typeof val === 'number' ? val : Number(val);
       if (!Number.isFinite(ts)) return String(val);
-      if (ts < 1e12) ts *= 1000; // сек → мс
-
+      if (ts < 1e12) ts *= 1000;
       const dt = new Date(ts);
       const dd = String(dt.getDate()).padStart(2,'0');
       const mm = String(dt.getMonth()+1).padStart(2,'0');
@@ -92,9 +88,48 @@
       const hh = String(dt.getHours()).padStart(2,'0');
       const mi = String(dt.getMinutes()).padStart(2,'0');
       return `${dd}.${mm}.${yy} ${hh}:${mi}`;
-    } catch(_) {
-      return String(val);
-    }
+    } catch(_) { return String(val); }
+  }
+
+  // --- modal helpers ---
+  function ensureModal(){
+    let m = document.getElementById('appModal');
+    if (m) return m;
+    m = document.createElement('div');
+    m.className = 'modal'; m.id = 'appModal'; m.setAttribute('aria-hidden','true');
+    m.innerHTML = `
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true"><div class="modal-content"></div></div>`;
+    document.body.appendChild(m);
+    m.querySelector('.modal-backdrop').addEventListener('click', closeModal);
+    return m;
+  }
+  function openModal(html){
+    const m = ensureModal();
+    m.querySelector('.modal-content').innerHTML = html;
+    m.setAttribute('aria-hidden','false');
+  }
+  function closeModal(){
+    const m = document.getElementById('appModal');
+    if (m) m.setAttribute('aria-hidden','true');
+  }
+
+  // --- order/network icon helpers ---
+  function detectNetworkText(...parts){
+    const t = (parts.filter(Boolean).join(' ') || '').toLowerCase();
+    if (t.includes('tele') || t.includes(' tg')) return 'telegram';
+    if (t.includes('tik' )) return 'tiktok';
+    if (t.includes('insta')|| t.includes(' ig')) return 'instagram';
+    if (t.includes('you')  || t.includes(' yt')) return 'youtube';
+    if (t.includes('face') || t.includes(' fb') || t.includes('meta')) return 'facebook';
+    return 'telegram';
+  }
+  function orderNetwork(o){
+    return (o.network) || detectNetworkText(o.service, o.category);
+  }
+  function orderIconPath(o){
+    const net = orderNetwork(o);
+    return `static/img/networks/${net}.svg`;
   }
 
   // ====== Topup overlay ======
@@ -223,7 +258,7 @@
     showPage(id);
 
     if (tab === 'favs') {
-      // сначала тянем с бэка, затем рисуем локально
+      // сначала тянем с бэка, потом рисуем локально
       syncFavsFromServer().then(renderFavs);
     } else if (tab === 'refs') {
       loadRefs();
@@ -232,8 +267,9 @@
     }
   }
   document.querySelectorAll(".tabbar .tab").forEach(b=> b.addEventListener('click', ()=> activateTab(b)));
-  // стартовая вкладка
-  activateTab(document.querySelector('.tabbar .tab.active') || document.querySelector('.tabbar .tab[data-tab="catalog"]') || document.querySelector('.tabbar .tab'));
+  activateTab(document.querySelector('.tabbar .tab.active')
+           || document.querySelector('.tabbar .tab[data-tab="catalog"]')
+           || document.querySelector('.tabbar .tab'));
 
   // ====== Categories / Services ======
   let currentNetwork = null;
@@ -340,7 +376,7 @@
     });
   }
 
-  // ====== Favorites (local mirror + server ping) ======
+  // ====== Favorites (local mirror + server sync) ======
   function favLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]'); } catch(_){ return []; } }
   function favSave(a){ localStorage.setItem('smm_favs', JSON.stringify(a||[])); }
   function favHas(id){ return favLoad().some(x=>x.id===id); }
@@ -372,7 +408,6 @@
       const arr = await r.json();
       if(!Array.isArray(arr)) return;
 
-      // сминаем серверные в локальные (объединяем по id)
       const map = new Map(favLoad().map(x => [x.id, x]));
       arr.forEach(s => {
         map.set(s.service, {
@@ -400,7 +435,20 @@
   }
   function priceFor(q,s){ return Math.max(0, Number(s.rate_client_1000||0) * Number(q||0) / 1000); }
 
-  function openServicePage(s){
+  async function fetchServiceById(serviceId, netHint){
+    if (Array.isArray(servicesAll) && servicesAll.length){
+      const found = servicesAll.find(s => Number(s.service) === Number(serviceId));
+      if (found) return found;
+    }
+    const net = netHint || currentNetwork || 'telegram';
+    try{
+      const r = await fetch(bust(`${API_BASE}/services/${net}`));
+      const arr = r.ok ? await r.json() : [];
+      return arr.find(s => Number(s.service) === Number(serviceId)) || null;
+    }catch(_){ return null; }
+  }
+
+  function openServicePage(s, opts={}){
     if (!s) return;
     const min = Number(s.min||1), max = Number(s.max||100000);
     const presets = presetValues(min,max);
@@ -530,6 +578,21 @@
       }
     });
 
+    // Prefill из opts (для "Повторить заказ")
+    const presetQty  = Number(opts.qty || 0);
+    const presetLink = String(opts.link || '');
+    if (presetLink && linkEl) linkEl.value = presetLink;
+    if (presetQty && qtyInput){
+      const q = Math.max(min, Math.min(max, presetQty));
+      qtyInput.value = String(q);
+      sumQty.textContent = q;
+      sumPrice.textContent = `${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+      qtyGrid?.querySelectorAll('.qty').forEach(btn=>{
+        const num = parseInt(btn.querySelector('.num')?.textContent.replace(/\s/g,'')||'0',10);
+        btn.classList.toggle('active', num === q);
+      });
+    }
+
     btnCreate?.addEventListener('click', async ()=>{
       const link=(linkEl?.value||'').trim();
       const q   = parseInt(qtyInput?.value||'0',10);
@@ -560,7 +623,7 @@
   btnBackToCats?.addEventListener('click', ()=> showPage("page-categories"));
   btnBackToServices?.addEventListener('click', ()=> showPage("page-services"));
 
-  // стартовая загрузка категорий
+  // стартовая загрузка
   loadCategories();
   syncFavsFromServer().then(renderFavs);
 
@@ -579,7 +642,6 @@
 
     try {
       const API_BASE = (typeof window.API_BASE === "string" && window.API_BASE) ? window.API_BASE : "/api/v1";
-
       let uid = null;
       try { uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id; } catch (_) {}
       if (!uid && window.USER_ID) uid = window.USER_ID;
@@ -603,12 +665,10 @@
 
       page.innerHTML = `
         <div class="ref">
-
-          <!-- HERO -->
           <div class="card ref-hero">
-              <div class="ref-ico">
-                  <img src="static/img/tab-referrals.svg" alt="" class="ref-ico-img">
-              </div>
+            <div class="ref-ico">
+              <img src="static/img/tab-referrals.svg" alt="" class="ref-ico-img">
+            </div>
             <div class="ref-h1">
               Приглашайте пользователей <br> и получайте от <span class="accent">10%</span> их платежей
             </div>
@@ -618,7 +678,6 @@
             </div>
           </div>
 
-          <!-- ССЫЛКА -->
           <div class="label">Ваша ссылка</div>
           <div class="card ref-linkbar" id="refLinkBar">
             <input id="refLinkInput" type="text" readonly aria-label="Ваша ссылка" />
@@ -633,7 +692,6 @@
             Пригласите 50 человек которые внесут депозит <br> и ваш процент увеличится до <span class="accent">20%</span> навсегда
           </div>
 
-          <!-- ПРОГРЕСС -->
           <div class="card ref-progress-card">
             <div class="row between">
               <div class="muted">Прогресс до 20%</div>
@@ -644,7 +702,6 @@
             </div>
           </div>
 
-          <!-- СТАТИСТИКА -->
           <div class="ref-h3">Статистика</div>
           <div class="ref-stats">
             <div class="ref-stat">
@@ -660,7 +717,6 @@
               <div class="lg">${earned} ${currency}</div>
             </div>
           </div>
-
         </div>
       `;
 
@@ -669,7 +725,6 @@
 
       const bar  = document.getElementById("refLinkBar");
       const btn  = document.getElementById("refCopyBtn");
-
       async function copyLink() {
         const text = (input && input.value) ? input.value : inviteLink;
         try {
@@ -695,7 +750,6 @@
           console.error("copy failed", err);
         }
       }
-
       bar && bar.addEventListener("click", copyLink);
       btn && btn.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
 
@@ -711,49 +765,31 @@
 
   // ====== Детализация ======
 
-  /* === statuses view map === */
+  /* statuses view map */
   const STATUS_MAP = {
     processing:   { label: "В обработке", cls: "badge--processing" },
     "in progress":{ label: "В обработке", cls: "badge--processing" },
     awaiting:     { label: "В обработке", cls: "badge--processing" },
     pending:      { label: "В обработке", cls: "badge--processing" },
-
     completed:    { label: "Завершён",    cls: "badge--completed"  },
-
     canceled:     { label: "Отменён",     cls: "badge--failed"     },
     cancelled:    { label: "Отменён",     cls: "badge--failed"     },
     failed:       { label: "Отменён",     cls: "badge--failed"     },
   };
   const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
 
-  async function apiFetchOrders(uid, status) {
-    const q = new URLSearchParams({ user_id: String(uid) });
-    if (status && status !== "all") q.set("status", status);
-    const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials: "include" });
-    if (!r.ok) throw new Error("orders HTTP " + r.status);
-    return r.json();
-  }
-  async function apiFetchPayments(uid, status) {
-    const q = new URLSearchParams({ user_id: String(uid) });
-    if (status && status !== "all") q.set("status", status);
-    const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials: "include" });
-    if (!r.ok) throw new Error("payments HTTP " + r.status);
-    return r.json();
-  }
-
-  /* ===== Детализация (Orders/Payments) — кэш и мгновенная фильтрация ===== */
+  /* Детализация (Orders/Payments) — кэш и мгновенная фильтрация + модалки */
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
     if (!page) return;
     const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
 
-    // локальные кэши
-    let ORDERS_CACHE = null;
-    let PAYMENTS_CACHE = null;
+    let ORDERS_CACHE = null;   // массив заказов
+    let PAYMENTS_CACHE = null; // массив платежей
 
     page.innerHTML = `
       <div class="details-head details-head--center">
-        <div class="seg" id="detailsSeg">
+        <div class="seg seg--accent" id="detailsSeg">
           <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
           <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
         </div>
@@ -780,7 +816,7 @@
         const s = norm(o.status);
         if (filter === "processing") return ["processing","in progress","awaiting","pending"].includes(s);
         if (filter === "completed")  return s === "completed";
-        if (filter === "failed")     return ["failed","canceled","cancelled"].includes(s);
+        if (filter === "failed")     return ["failed","canceled","cancelled","failed"].includes(s);
         return true;
       });
 
@@ -794,9 +830,10 @@
         const title = o.service || "Услуга";
         const cat = o.category ? `${o.category} • ` : "";
         const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
+        const ico = orderIconPath(o);
         return `
-          <div class="order">
-            <div class="order__avatar">${(o.category || o.service || "?").slice(0,1).toUpperCase()}</div>
+          <div class="order" data-id="${o.id}">
+            <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
             <div class="order__body">
               <div class="order__head">
                 <div class="order__title">${title}</div>
@@ -811,10 +848,17 @@
           </div>
         `;
       }).join("");
+
+      // клики -> модалка
+      list.querySelectorAll('.order').forEach(card=>{
+        const id = Number(card.dataset.id);
+        const o = ORDERS_CACHE.find(x => Number(x.id) === id);
+        if (!o) return;
+        card.addEventListener('click', ()=> showOrderModal(o));
+      });
     }
 
     async function renderOrders(filter = "all") {
-      // чипсы
       filtersWrap.innerHTML = `
         <div class="filters">
           <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
@@ -830,16 +874,14 @@
         });
       });
 
-      // уже есть кэш — перерисовали
       if (Array.isArray(ORDERS_CACHE)) {
         renderOrdersFromCache(filter);
         return;
       }
 
-      // иначе грузим
       list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
       try {
-        const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
+        const q = new URLSearchParams({ user_id:String(uid) });
         const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
         ORDERS_CACHE = r.ok ? await r.json() : [];
       } catch { ORDERS_CACHE = []; }
@@ -859,7 +901,7 @@
         const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
         const ico = `static/img/${prov}.svg`;
         return `
-          <div class="pay">
+          <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
             <div class="pay__body">
               <div class="pay__top">
@@ -871,6 +913,12 @@
           </div>
         `;
       }).join("");
+
+      list.querySelectorAll('.pay').forEach(card=>{
+        const id = Number(card.dataset.id);
+        const p = PAYMENTS_CACHE.find(x => Number(x.id) === id);
+        if (p) card.addEventListener('click', ()=> showPaymentModal(p));
+      });
     }
 
     async function renderPayments() {
@@ -881,11 +929,82 @@
       }
       list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
       try {
-        const q = new URLSearchParams({ user_id:String(uid) });
+        const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
         const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
         PAYMENTS_CACHE = r.ok ? await r.json() : [];
       } catch { PAYMENTS_CACHE = []; }
       renderPaymentsFromCache();
+    }
+
+    function showOrderModal(o){
+      const st = stInfo(o.status);
+      const net = orderNetwork(o);
+      const ico = `static/img/networks/${net}.svg`;
+      const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
+      const linkHtml = o.link ? `<a href="${o.link}" target="_blank" rel="noopener">${o.link}</a>` : '—';
+      const canRepeat = Number(o.service_id || 0) > 0;
+
+      openModal(`
+        <h3>Заказ #${o.id}</h3>
+        <div class="modal-row">
+          <div style="display:flex; gap:10px; align-items:center">
+            <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
+            <div>
+              <div style="font-weight:700">${o.service || 'Услуга'}</div>
+              <div class="muted">${o.category || ''}</div>
+            </div>
+            <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+          </div>
+        </div>
+        <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(o.created_at)}</div></div>
+        <div class="modal-row"><div class="muted">Количество</div><div>${o.quantity}</div></div>
+        <div class="modal-row"><div class="muted">Сумма</div><div>${sum}</div></div>
+        <div class="modal-row"><div class="muted">Ссылка</div><div style="word-break:break-all">${linkHtml}</div></div>
+        ${o.provider_id ? `<div class="modal-row"><div class="muted">Поставщик</div><div>#${o.provider_id}</div></div>` : ''}
+
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="orderClose">Закрыть</button>
+          <button class="btn btn-primary" id="orderRepeat" ${canRepeat?'':'disabled'}>Повторить заказ</button>
+        </div>
+      `);
+
+      document.getElementById('orderClose')?.addEventListener('click', closeModal);
+      document.getElementById('orderRepeat')?.addEventListener('click', async ()=>{
+        if (!canRepeat) return;
+        const svc = await fetchServiceById(o.service_id, net);
+        if (!svc){ alert('Не удалось найти услугу для повтора'); return; }
+        closeModal();
+        openServicePage(svc, { link: o.link, qty: o.quantity });
+      });
+    }
+
+    function showPaymentModal(p){
+      const st = stInfo(p.status);
+      const prov = String(p.method || "cryptobot").toLowerCase();
+      const ico = `static/img/${prov}.svg`;
+      const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+
+      openModal(`
+        <h3>Платёж #${p.id}</h3>
+        <div class="modal-row">
+          <div style="display:flex; gap:10px; align-items:center">
+            <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
+            <div>
+              <div style="font-weight:700">${sum}</div>
+              <div class="muted">${prov}</div>
+            </div>
+            <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+          </div>
+        </div>
+        <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>
+        ${p.invoice_id ? `<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`:''}
+        ${p.amount_usd != null ? `<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`:''}
+        ${p.pay_url ? `<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`:''}
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="payClose">Закрыть</button>
+        </div>
+      `);
+      document.getElementById('payClose')?.addEventListener('click', closeModal);
     }
 
     async function switchTab(tab) {
