@@ -745,6 +745,14 @@ const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:Str
     return r.json();
   }
 
+function stInfo(s){
+  const t = String(s||'').toLowerCase();
+  if (t==='completed' || t==='success' || t==='finished') return { cls:'badge--completed', label:'Завершён' };
+  if (t==='failed' || t==='canceled' || t==='cancelled' || t==='error') return { cls:'badge--failed', label:'Отменён' };
+  // pending/awaiting/in progress → «В обработке»
+  return { cls:'badge--processing', label:'В обработке' };
+}
+
 /* ===== Детализация (Orders/Payments) — кэш и мгновенная фильтрация ===== */
 async function loadDetails(defaultTab = "orders") {
   const page = document.getElementById("page-details");
@@ -885,7 +893,7 @@ async function loadDetails(defaultTab = "orders") {
     }
     list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
     try {
-      const q = new URLSearchParams({ user_id:String(uid) });
+      const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
       const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
       PAYMENTS_CACHE = r.ok ? await r.json() : [];
     } catch { PAYMENTS_CACHE = []; }

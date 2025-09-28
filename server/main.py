@@ -797,20 +797,80 @@ _PAY_STATUS_SYNONYMS = {
     "failed":   ["failed", "canceled", "cancelled", "expired", "error"],
 }
 
+# ===== VEXBOOST: проверка статуса заказа и массовое обновление =====
+async def vex_order_status(provider_order_id: str | int) -> Optional[str]:
+    """
+    Возвращает сырой статус от поставщика (In progress / Completed / Canceled ...)
+    или None, если не удалось.
+    """
+    if not VEX_KEY:
+        return None
+    try:
+        qp = httpx.QueryParams({"action": "status", "key": VEX_KEY, "order": str(provider_order_id)})
+        url = f"{API_BASE}?{qp}"
+        r = await _client.get(url)
+        r.raise_for_status()
+        js = r.json()
+        st = (js.get("status") or js.get("order_status") or js.get("state") or "").strip()
+        return st or None
+    except Exception as e:
+        logging.warning("vex_order_status fail for %s: %s", provider_order_id, e)
+        return None
+
+
+async def refresh_orders_for_user(s: Session, u: User, limit: int = 40) -> int:
+    """
+    Обновляет статусы последних НЕфинальных заказов пользователя из VEXBOOST.
+    Возвращает кол-во обновлённых строк.
+    """
+    NON_FINAL = ("Awaiting", "In progress", "Processing", "Pending")
+    q = (
+        s.query(Order)
+        .filter(Order.user_id == u.id)
+        .filter(func.lower(Order.status).in_([x.lower() for x in NON_FINAL]))
+        .order_by(Order.id.desc())
+        .limit(limit)
+    )
+    rows = q.all()
+    updated = 0
+    for o in rows:
+        if not o.provider_id:
+            continue
+        st_raw = await vex_order_status(o.provider_id)
+        if not st_raw:
+            continue
+        new_norm = _order_status_norm(st_raw)
+        old_norm = _order_status_norm(o.status)
+        if new_norm != old_norm or st_raw != (o.status or ""):
+            o.status = st_raw  # храним сырой статус от поставщика
+            o.updated_at = now_ts()
+            updated += 1
+    if updated:
+        s.commit()
+    return updated
+
+
 # ===== Orders list =====
 @app.get("/api/v1/orders")
 async def api_orders(
     user_id: int = Query(...),
-    status: Optional[str] = None,  # one of: processing/completed/failed/pending
+    status: Optional[str] = None,  # processing/completed/failed/pending
     limit: int = 50,
     offset: int = 0,
+    refresh: int = 0,              # <— НОВОЕ: 1 = обновить статусы перед выдачей
 ):
+
     limit = max(1, min(200, int(limit)))
     offset = max(0, int(offset))
     with db() as s:
         u = s.query(User).filter((User.tg_id == user_id) | (User.seq == user_id)).one_or_none()
         if not u:
             raise HTTPException(404, "user_not_found")
+        if refresh:
+            try:
+                await refresh_orders_for_user(s, u, limit=40)
+            except Exception as e:
+                logging.warning("orders refresh failed: %s", e)
 
         q = (
             s.query(Order, Service)
