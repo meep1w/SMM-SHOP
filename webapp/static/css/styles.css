@@ -283,10 +283,9 @@ body{
   padding:22px 16px;
 }
 .ref-ico{
-  width:56px;height:56px;border-radius:50%;
+  width:56px;height:56px;border-radius:30%;
   display:grid;place-items:center;color:#fff;margin-bottom:2px;
   background:radial-gradient(110px 110px at 30% 30%,#ff6b6b 0%,#ff3e3e 60%,#b62828 100%);
-  box-shadow:0 10px 30px rgba(255,107,107,.25),inset 0 0 18px rgba(255,255,255,.08);
 }
 .ref-ico svg{width:28px;height:28px;display:block}
 .ref-h1{font:600 15px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0}
@@ -463,6 +462,56 @@ body{
 /* Скрыть скроллбары */
 body, .page, .app-main, .cats-list, .services-list{ -ms-overflow-style:none; scrollbar-width:none; }
 body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar, .cats-list::-webkit-scrollbar, .services-list::-webkit-scrollbar{ width:0; height:0 }
+
+/* === REF: правки под целевой макет === */
+
+/* верхняя панель без .card */
+.ref-hero-panel{
+  padding:22px 16px;
+  border:1px solid var(--stroke);
+  border-radius:14px;
+  background:linear-gradient(180deg,#16191e,#12151a);
+  /* без тени, чтобы не было «тяжелым» */
+}
+.ref-hero{
+  display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px;
+}
+.ref-ico{
+  width:56px;height:56px;border-radius:30%; /* было 50% */
+  display:grid;place-items:center;color:#fff;margin-bottom:2px;
+  background:radial-gradient(110px 110px at 30% 30%,#ff6b6b 0%,#ff3e3e 60%,#b62828 100%);
+  box-shadow:0 10px 30px rgba(255,107,107,.25),inset 0 0 18px rgba(255,255,255,.08);
+}
+.ref-ico svg{width:28px;height:28px;display:block}
+.ref-h1{font:600 15px/1.4 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:2px 0}
+.ref-h1 .accent{color:var(--brand)}
+.ref-h2{font:12px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#a8afbd}
+
+/* подсказка под ссылкой — по центру */
+.ref-note{ color:var(--muted); font-size:12px; text-align:center; padding:0 2px }
+
+/* прогресс: верхняя строка без правого счетчика */
+.ref-progress-card .row{ display:flex; align-items:center; gap:8px; }
+/* остальное как было */
+.ref-progress{
+  height:8px;background:rgba(255,255,255,.06);
+  border:1px solid var(--stroke);border-radius:999px;overflow:hidden; margin-top:10px;
+}
+.ref-progress__bar{height:100%;background:linear-gradient(90deg,#ff6b6b,#ff3e3e)}
+.ref-progress-meta{
+  margin-top:8px; display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px;
+}
+.ref-dot{ width:8px; height:8px; border-radius:50%; background:#ff6b6b; box-shadow:0 0 0 2px rgba(255,107,107,.18) }
+
+/* статистика: всё слева */
+.ref-stats{display:flex; flex-direction:column; gap:12px}
+.ref-stat{
+  background:var(--elev); border:1px solid var(--stroke); border-radius:12px; padding:12px 14px;
+  display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start;
+}
+.ref-stat .sm{color:var(--muted); font-size:12px; margin-bottom:6px}
+.ref-stat .lg{font-weight:700; font-size:18px}
+
 
 /* Responsive */
 @media (min-width:520px){

@@ -494,14 +494,12 @@
   // стартовая загрузка категорий
   loadCategories();
 
-// === Рефералка: целевой UI (Скрин 2). Меняем только разметку и хендлеры. ===
+// === Рефералка: финальный UI по макету ===
 async function loadRefs() {
-  // безоп. доступ к TG объекту
-  const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+  const tg = window.Telegram?.WebApp || null;
   const page = document.getElementById("page-refs");
   if (!page) return;
 
-  // скелетон
   page.innerHTML = `
     <div class="card" style="padding:16px">
       <div class="skeleton-line" style="width:60%"></div>
@@ -510,51 +508,45 @@ async function loadRefs() {
   `;
 
   try {
-    const API_BASE = (typeof window.API_BASE === "string" && window.API_BASE) ? window.API_BASE : "/api/v1";
-
-    // user id из TG или из глобали
-    let uid = null;
-    try { uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id; } catch (_) {}
-    if (!uid && window.USER_ID) uid = window.USER_ID;
-
-    const url = API_BASE + "/referrals/stats" + (uid ? ("?user_id=" + encodeURIComponent(uid)) : "");
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
+    const API_BASE = window.API_BASE || "/api/v1";
+    const uid = tg?.initDataUnsafe?.user?.id || window.USER_ID || null;
+    const qs = uid ? \`?user_id=\${encodeURIComponent(uid)}\` : "";
+    const res = await fetch(\`\${API_BASE}/referrals/stats\${qs}\`, { credentials: "include" });
+    if (!res.ok) throw new Error("Failed " + res.status);
     const data = await res.json();
 
-    // данные (безопасные дефолты)
     const inviteLink = String(data.invite_link || data.link || "");
-    const rate = Number(data.rate_percent != null ? data.rate_percent : 10);
-    const threshold = Number(data.threshold != null ? data.threshold : 50);
-    const invited = Number(data.invited_total != null ? data.invited_total : 0);
-    const withDep = Number(data.invited_with_deposit != null ? data.invited_with_deposit : 0);
-    const earnedRaw = (data.earned_total != null ? data.earned_total : 0);
-    const earned = typeof earnedRaw === "number" ? earnedRaw.toFixed(2) : String(earnedRaw);
-    const currency = String(data.earned_currency || data.currency || "₽");
+    const threshold  = Number(data.threshold ?? 50);
+    const invited    = Number(data.invited_total ?? 0);
+    const withDep    = Number(data.invited_with_deposit ?? 0);
+    const earnedRaw  = (data.earned_total ?? 0);
+    const earned     = typeof earnedRaw === "number" ? earnedRaw.toFixed(2) : String(earnedRaw);
+    const currency   = String(data.earned_currency || data.currency || "₽");
 
     const denom = threshold > 0 ? threshold : 50;
     const prog = Math.max(0, Math.min(100, Math.round((withDep / denom) * 100)));
 
-    // разметка по Скрин 2
     page.innerHTML = `
       <div class="ref">
 
-        <!-- HERO -->
-        <div class="card ref-hero">
-          <div class="ref-ico">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" stroke="white" stroke-width="1.6"/>
-              <path d="M3.5 20a6.5 6.5 0 0 1 13 0" stroke="white" stroke-width="1.6"/>
-              <circle cx="18" cy="8" r="2.5" stroke="white" stroke-width="1.6"/>
-              <path d="M16.5 20a5.5 5.5 0 0 1 5.5 0" stroke="white" stroke-width="1.6"/>
-            </svg>
-          </div>
-          <div class="ref-h1">
-            Приглашайте пользователей и получайте от <span class="accent">10%</span> их платежей
-          </div>
-          <div class="ref-h2">
-            Средства автоматически поступают на ваш баланс.
-            Полученные деньги вы можете тратить на продвижение и испытывать удачу в рулетке.
+        <!-- HERO без .card -->
+        <div class="ref-hero-panel">
+          <div class="ref-hero">
+            <div class="ref-ico">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" stroke="white" stroke-width="1.6"/>
+                <path d="M3.5 20a6.5 6.5 0 0 1 13 0" stroke="white" stroke-width="1.6"/>
+                <circle cx="18" cy="8" r="2.5" stroke="white" stroke-width="1.6"/>
+                <path d="M16.5 20a5.5 5.5 0 0 1 5.5 0" stroke="white" stroke-width="1.6"/>
+              </svg>
+            </div>
+            <div class="ref-h1">
+              Приглашайте пользователей и получайте от <span class="accent">10%</span> их платежей
+            </div>
+            <div class="ref-h2">
+              Средства автоматически поступают на ваш баланс.
+              Полученные деньги вы можете тратить на продвижение и испытывать удачу в рулетке.
+            </div>
           </div>
         </div>
 
@@ -573,11 +565,10 @@ async function loadRefs() {
           Пригласите 50 человек которые внесут депозит и ваш процент увеличится до <span class="accent">20%</span> навсегда
         </div>
 
-        <!-- ПРОГРЕСС -->
+        <!-- ПРОГРЕСС (без правого счетчика) -->
         <div class="card ref-progress-card">
-          <div class="row between">
+          <div class="row">
             <div class="muted">Прогресс до 20%</div>
-            <div class="muted">${withDep} из ${threshold}</div>
           </div>
           <div class="ref-progress"><div class="ref-progress__bar" style="width:${prog}%;"></div></div>
           <div class="ref-progress-meta">
@@ -586,7 +577,7 @@ async function loadRefs() {
           </div>
         </div>
 
-        <!-- СТАТИСТИКА -->
+        <!-- СТАТИСТИКА: слева -->
         <div class="ref-h3">Статистика</div>
         <div class="ref-stats">
           <div class="ref-stat">
@@ -606,45 +597,36 @@ async function loadRefs() {
       </div>
     `;
 
-    // заполняем ссылку отдельно (чтобы не экранировать)
+    // выставляем ссылку и навешиваем копирование на ВЕСЬ блок
     const input = document.getElementById("refLinkInput");
     if (input) input.value = inviteLink;
 
-    // копирование (клик по ВЕСЬ блоку и по кнопке)
-    const bar  = document.getElementById("refLinkBar");
-    const btn  = document.getElementById("refCopyBtn");
+    const bar = document.getElementById("refLinkBar");
+    const btn = document.getElementById("refCopyBtn");
 
     async function copyLink() {
-      const text = (input && input.value) ? input.value : inviteLink;
+      const text = input?.value || inviteLink;
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
+        if (navigator.clipboard?.writeText) {
           await navigator.clipboard.writeText(text);
         } else {
           const ta = document.createElement("textarea");
-          ta.value = text;
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
+          ta.value = text; document.body.appendChild(ta);
+          ta.select(); document.execCommand("copy"); ta.remove();
         }
-        if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
-          tg.HapticFeedback.notificationOccurred("success");
-        }
-        bar && bar.classList.add("copied");
-        setTimeout(() => { bar && bar.classList.remove("copied"); }, 600);
-      } catch (err) {
-        if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
-          tg.HapticFeedback.notificationOccurred("error");
-        }
-        console.error("copy failed", err);
+        tg?.HapticFeedback?.notificationOccurred?.("success");
+        bar?.classList.add("copied"); setTimeout(()=>bar?.classList.remove("copied"), 600);
+      } catch (e) {
+        tg?.HapticFeedback?.notificationOccurred?.("error");
+        console.error("copy failed", e);
       }
     }
 
-    bar && bar.addEventListener("click", copyLink);
-    btn && btn.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
+    bar?.addEventListener("click", copyLink);
+    btn?.addEventListener("click", (e)=>{ e.stopPropagation(); copyLink(); });
 
-  } catch (err) {
-    console.error("loadRefs error:", err);
+  } catch (e) {
+    console.error("loadRefs error:", e);
     page.innerHTML = `
       <div class="card" style="padding:16px">
         <div class="error-text">Не удалось загрузить данные рефералки. Попробуйте позже.</div>
