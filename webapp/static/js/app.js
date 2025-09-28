@@ -495,77 +495,85 @@
   loadCategories();
 
   // ====== Referrals ======
-  async function loadRefs(){
-    const box = pages.refs;
-    if (!box) return;
-    box.innerHTML = '<div class="empty">Загрузка…</div>';
-    try{
-      const r = await fetch(bust(`${API_BASE}/referrals/stats?user_id=${encodeURIComponent(userId||seq)}`));
-      if (!r.ok) throw 0;
-      const s = await r.json();
+ async function loadRefs(){
+  const box = pages.refs;
+  if (!box) return;
+  box.innerHTML = '<div class="empty">Загрузка…</div>';
+  try{
+    const uid = encodeURIComponent(userId || seq);
+    const r = await fetch(`${API_BASE}/referrals/stats?user_id=${uid}`, {cache:'no-store'});
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const s = await r.json();
 
-      const threshold = s.threshold || 50;
-      const done = Number(s.invited_with_deposit || 0);
-      const prog = Math.min(100, Math.round(100 * done / threshold));
-      const link = s.invite_link || s.link || '';
+    const progMax = Number(s.threshold ?? 50) || 50;
+    const withDep = Number(s.invited_with_deposit ?? 0) || 0;
+    const prog = Math.min(100, Math.round(100 * withDep / progMax));
+    const link = s.invite_link || s.link || '';   // ← ключевое
+    const rate = Number(s.rate_percent ?? 10) || 10;
 
-      box.innerHTML = `
-        <div class="ref">
-          <div class="card">
-            <div class="label">Ваша реферальная ссылка</div>
-            <div class="ref__copy">
-              <input id="refLink" type="text" value="${link}" readonly>
-              <button class="btn" id="btnCopyLink">Копировать</button>
-              <button class="btn" id="btnShareLink">Поделиться</button>
-            </div>
-            <div class="hint">За каждое пополнение рефера вы получаете <b>${s.rate_percent||10}%</b> на баланс.<br>
-              При ${threshold} рефералах с депозитом ставка станет <b>20%</b>.
-            </div>
-          </div>
+    box.innerHTML = `
+      <div class="card">
+        <div class="label">Ваша реферальная ссылка</div>
+        <div class="copy-row">
+          <input id="refLink" type="text" value="${link}" readonly>
+          <button class="btn" id="btnCopyLink">Копировать</button>
+          <button class="btn" id="btnShareLink">Поделиться</button>
+        </div>
+        <div class="hint">За каждое пополнение вашего рефера вы получаете <b>${rate}%</b> на баланс.<br>
+        При ${progMax} рефералах с депозитом ставка повышается до <b>20%</b>.</div>
+      </div>
 
-          <div class="card">
-            <div class="label">Прогресс до 20%</div>
-            <div class="ref__progress"><div class="ref__bar" style="width:${prog}%"></div></div>
-            <div class="muted">С депозитом: <b>${done}</b> из <b>${threshold}</b></div>
-          </div>
+      <div class="card">
+        <div class="label">Прогресс до 20%</div>
+        <div class="progress"><div class="bar" style="width:${prog}%"></div></div>
+        <div class="muted">Рефералов с депозитом: <b>${withDep}</b> из <b>${progMax}</b></div>
+      </div>
 
-          <div class="card">
-            <div class="ref__grid">
-              <div><div class="sm">Всего приглашено</div><div class="lg">${s.invited_total||0}</div></div>
-              <div><div class="sm">С депозитом</div><div class="lg">${done}</div></div>
-              <div><div class="sm">Начислено</div><div class="lg">${fmt(s.earned_total||0)}${curSign(s.earned_currency||currentCurrency)}</div></div>
-            </div>
-          </div>
+      <div class="card">
+        <div class="stat-grid">
+          <div><div class="sm">Всего приглашено</div><div class="lg">${Number(s.invited_total||0)}</div></div>
+          <div><div class="sm">С депозитом</div><div class="lg">${withDep}</div></div>
+          <div><div class="sm">Начислено</div><div class="lg">${fmt(s.earned_total)}${curSign(s.earned_currency||currentCurrency)}</div></div>
+        </div>
+      </div>
 
-          <div class="card">
-            <div class="label">Последние начисления</div>
-            <div class="ref__bonuses" id="bonusList"></div>
-          </div>
-        </div>`;
+      <div class="card">
+        <div class="label">Последние начисления</div>
+        <div class="bonus-list" id="bonusList"></div>
+      </div>
+    `;
 
-      const list = document.getElementById('bonusList');
-      const rows = Array.isArray(s.last_bonuses) ? s.last_bonuses : [];
-      if (!rows.length){
-        list.innerHTML = '<div class="empty">Пока нет начислений.</div>';
-      } else {
-        list.innerHTML = '';
-        rows.forEach(b=>{
-          const dt = new Date((b.ts||0)*1000).toLocaleString('ru-RU');
-          const el = document.createElement('div');
-          el.className = 'ref-bonus';
-          el.innerHTML = `<div class="ref-bonus__left">#${b.from_seq} • ${dt} • ${b.rate}%</div>
-                          <div class="ref-bonus__right">+${fmt(b.amount_credit)}${curSign(b.currency||currentCurrency)}</div>`;
-          list.appendChild(el);
-        });
-      }
-
-      document.getElementById('btnCopyLink')?.addEventListener('click', ()=>{ copy(link); try{ tg?.HapticFeedback?.impactOccurred?.('light'); }catch(_){ } });
-      document.getElementById('btnShareLink')?.addEventListener('click', ()=>{ if (tg?.openLink) tg.openLink(link); else window.open(link,'_blank'); });
-
-    }catch(_){
-      box.innerHTML = '<div class="empty">Не удалось загрузить рефералку.</div>';
+    // bonuses
+    const list = document.getElementById('bonusList');
+    list.innerHTML = '';
+    const bonuses = Array.isArray(s.last_bonuses) ? s.last_bonuses : [];
+    if (!bonuses.length){
+      list.innerHTML = '<div class="empty">Пока нет начислений.</div>';
+    } else {
+      bonuses.forEach(b=>{
+        const el = document.createElement('div');
+        el.className = 'bonus-row';
+        const dt = new Date((b.ts||0)*1000).toLocaleString('ru-RU');
+        el.innerHTML = `<div class="left">#${b.from_seq} • ${dt} • ${b.rate}%</div>
+                        <div class="right">+${fmt(b.amount_credit)}${curSign(b.currency||currentCurrency)}</div>`;
+        list.appendChild(el);
+      });
     }
+
+    // copy/share
+    document.getElementById('btnCopyLink')?.addEventListener('click', ()=>{
+      copy(link); try{ tg?.HapticFeedback?.impactOccurred?.('light'); }catch(_){}
+    });
+    document.getElementById('btnShareLink')?.addEventListener('click', ()=>{
+      if (tg?.openLink && link) tg.openLink(link); else if (link) window.open(link,'_blank');
+    });
+
+  }catch(e){
+    console.error('refs load failed:', e);
+    box.innerHTML = `<div class="empty">Не удалось загрузить рефералку${e?.message ? ` (${e.message})` : ''}.</div>`;
   }
+}
+
 
   // ====== Keyboard inset -> CSS var --kb ======
   (function keyboardLift(){
