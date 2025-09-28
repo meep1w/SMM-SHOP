@@ -225,7 +225,11 @@ async def sync_services_into_db():
             max_ = int(it.get("max") or 0)
             base_rate_usd = float(it.get("rate") or 0.0)
             rate_view = client_rate_view_per_1k(base_rate_usd, fx)
-            net = _detect_network(name, cat) or "telegram"
+            net = _detect_network(name, cat)
+            is_active = True
+            if not net:
+                net = "other"  # всё, что не распознали — в "other"
+                is_active = False  # и выключаем из каталога
 
             obj = s.get(Service, sid)
             if not obj:
@@ -239,7 +243,7 @@ async def sync_services_into_db():
                     rate_client_1000=rate_view,
                     currency=CURRENCY,
                     description=cat,
-                    active=True,
+                    active=is_active,
                 )
                 s.add(obj)
             else:
@@ -251,7 +255,7 @@ async def sync_services_into_db():
                 obj.rate_client_1000 = rate_view
                 obj.currency = CURRENCY
                 obj.description = cat
-                obj.active = True
+                obj.active = is_active
         s.commit()
 
 
