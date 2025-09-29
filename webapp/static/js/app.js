@@ -5,6 +5,8 @@
  * - Избранное (локально) + синк с сервером
  * - Рефералка (линк, прогресс, статы)
  * - Детализация (Заказы / Платежи) + модалки
+ * - Платежи включают начисления по рефералке (method: "referral")
+ * - При открытии клавиатуры таббар скрывается
  */
 
 (function () {
@@ -299,7 +301,12 @@
           <div class="cat-name">${c.name}</div>
           <div class="cat-desc">${c.desc || ''}${c.count ? ' • '+c.count : ''}</div>
         </div>`;
-      a.addEventListener('click', e => { e.preventDefault(); openServices(c.id, c.name); });
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        // подсветим выбранную категорию
+        catsListEl.querySelectorAll('.cat').forEach(x=> x.classList.toggle('active', x===a));
+        openServices(c.id, c.name);
+      });
       catsListEl.appendChild(a);
     });
   }
@@ -784,6 +791,43 @@
   };
   const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
 
+  // Вспомогательное: нормализация времени
+  function tsMs(val){
+    try{
+      if (val == null || val === '') return 0;
+      if (typeof val === 'number') return val < 1e12 ? val*1000 : val;
+      const s = String(val).trim();
+      if (/^\d+(\.\d+)?$/.test(s)) {
+        const n = Number(s);
+        return n < 1e12 ? n*1000 : n;
+      }
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? 0 : d.getTime();
+    }catch(_){ return 0; }
+  }
+
+  // Получение начислений рефералки (опционально) и приведение к структуре "payment"
+  async function fetchReferralAccruals(uid){
+    try{
+      const url = bust(`${API_BASE}/referrals/earnings?user_id=${encodeURIComponent(uid)}`);
+      const r = await fetch(url, { credentials:"include" });
+      if (!r.ok) return [];
+      const arr = await r.json();
+      if (!Array.isArray(arr)) return [];
+      return arr.map((x, i)=>({
+        id: x.id || x.accrual_id || `ref-${tsMs(x.created_at)||Date.now()}-${i}`,
+        amount: Number(x.amount ?? x.earned ?? x.value ?? 0),
+        currency: x.currency || "₽",
+        method: "referral",
+        status: "completed",
+        created_at: x.created_at || x.time || Date.now(),
+        note: x.note || x.description || "Реферальное начисление",
+        from_user: x.from_user || x.user || x.source_user || null,
+        _raw: x
+      }));
+    }catch(_){ return []; }
+  }
+
   /* Детализация (Orders/Payments) — кэш и мгновенная фильтрация + модалки */
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
@@ -791,7 +835,7 @@
     const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
 
     let ORDERS_CACHE = null;   // массив заказов
-    let PAYMENTS_CACHE = null; // массив платежей
+    let PAYMENTS_CACHE = null; // массив платежей (+рефералка)
 
     page.innerHTML = `
       <div class="details-head details-head--center">
@@ -906,7 +950,8 @@
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
         const prov = String(p.method || "cryptobot").toLowerCase();
         const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        const ico = `static/img/${prov}.svg`;
+        // для рефералки используем иконку referral.svg (ты её добавишь)
+        const ico = prov === "referral" ? `static/img/referral.svg` : `static/img/${prov}.svg`;
         return `
           <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
@@ -922,8 +967,8 @@
       }).join("");
 
       list.querySelectorAll('.pay').forEach(card=>{
-        const id = Number(card.dataset.id);
-        const p = PAYMENTS_CACHE.find(x => Number(x.id) === id);
+        const id = String(card.dataset.id);
+        const p = PAYMENTS_CACHE.find(x => String(x.id) === id);
         if (p) card.addEventListener('click', ()=> showPaymentModal(p));
       });
     }
@@ -938,7 +983,23 @@
       try {
         const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
         const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-        PAYMENTS_CACHE = r.ok ? await r.json() : [];
+        const base = r.ok ? await r.json() : [];
+        const refs = await fetchReferralAccruals(uid);
+        // Нормализуем и склеиваем
+        const normalizedBase = Array.isArray(base) ? base.map(p=>({
+          id: p.id,
+          amount: Number(p.amount ?? 0),
+          currency: p.currency || "₽",
+          method: (p.method || "cryptobot").toLowerCase(),
+          status: (p.status || "completed"),
+          created_at: p.created_at || p.time || Date.now(),
+          invoice_id: p.invoice_id || null,
+          amount_usd: p.amount_usd != null ? p.amount_usd : null,
+          pay_url: p.pay_url || null,
+          _raw: p
+        })) : [];
+        PAYMENTS_CACHE = [...normalizedBase, ...refs]
+          .sort((a,b)=> tsMs(b.created_at) - tsMs(a.created_at));
       } catch { PAYMENTS_CACHE = []; }
       renderPaymentsFromCache();
     }
@@ -976,9 +1037,9 @@
 
       document.getElementById('orderClose')?.addEventListener('click', closeModal);
       document.getElementById('orderRepeat')?.addEventListener('click', async ()=>{
-        // 1) если бэк когда-нибудь отдаст service_id — используем его
+        // 1) если бэк отдаёт service_id — используем
         let svc = o.service_id ? await fetchServiceById(o.service_id, net) : null;
-        // 2) иначе — пытаемся найти по имени в текущем/нужном каталоге
+        // 2) иначе — пытаемся найти по имени
         if (!svc) svc = await findServiceByName(net, o.service);
         if (!svc){ alert('Не удалось найти услугу для повтора'); return; }
         closeModal();
@@ -989,11 +1050,19 @@
     function showPaymentModal(p){
       const st = stInfo(p.status);
       const prov = String(p.method || "cryptobot").toLowerCase();
-      const ico = `static/img/${prov}.svg`;
       const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+      const ico = prov === "referral" ? `static/img/referral.svg` : `static/img/${prov}.svg`;
+
+      // Доп. поля для рефералки
+      const refExtra = prov === "referral"
+        ? `
+          <div class="modal-row"><div class="muted">Тип</div><div>Реферальное начисление</div></div>
+          ${p.from_user ? `<div class="modal-row"><div class="muted">От пользователя</div><div>${p.from_user}</div></div>` : ``}
+        `
+        : "";
 
       openModal(`
-        <h3>Платёж #${p.id}</h3>
+        <h3>${prov === "referral" ? "Начисление" : "Платёж"} #${p.id}</h3>
         <div class="modal-row">
           <div style="display:flex; gap:10px; align-items:center">
             <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
@@ -1005,6 +1074,7 @@
           </div>
         </div>
         <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>
+        ${refExtra}
         ${p.invoice_id ? `<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`:''}
         ${p.amount_usd != null ? `<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`:''}
         ${p.pay_url ? `<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`:''}
@@ -1024,10 +1094,18 @@
     seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
   }
 
-  // ====== Keyboard inset -> CSS var --kb ======
+  // ====== Keyboard inset -> CSS var --kb & hide tabbar on keyboard ======
   (function keyboardLift(){
     const root=document.documentElement;
-    function applyKbInset(px){ const v = px>40 ? px : 0; root.style.setProperty('--kb', v+'px'); }
+    function applyKbInset(px){
+      const v = px>40 ? px : 0;
+      root.style.setProperty('--kb', v+'px');
+      const tb = document.querySelector('.tabbar');
+      if (tb) {
+        // Прячем таббар, если клавиатура заметна
+        tb.style.display = v>40 ? 'none' : '';
+      }
+    }
     if (window.visualViewport){
       const vv=window.visualViewport;
       const handler=()=>{ const inset=Math.max(0, window.innerHeight - vv.height - vv.offsetTop); applyKbInset(inset); };
@@ -1038,7 +1116,9 @@
     try{
       tg?.onEvent?.('viewportChanged', (e)=>{
         const vh=(e&&(e.height||e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
-        if (!vh) return; const inset=Math.max(0, window.innerHeight - vh); applyKbInset(inset);
+        if (!vh) return;
+        const inset=Math.max(0, window.innerHeight - vh);
+        applyKbInset(inset);
       });
     }catch(_){}
   })();
