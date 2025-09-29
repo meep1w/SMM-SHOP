@@ -821,62 +821,9 @@
 
   function paymentIcon(p){
     const m = String(p.method || p.type || '').toLowerCase();
-    if (m.includes('ref')) return 'static/img/referral.svg'; // ты добавишь иконку
+    if (m.includes('ref')) return 'static/img/ref_bonus.svg'; // ты добавишь иконку
     return `static/img/${m || 'cryptobot'}.svg`;
   }
-
-  async function fetchRefBonusesAll(uid){
-  const out = [];
-  // 1) Попытка: те же /payments, но с флагом include_ref=1
-  try{
-    const q = new URLSearchParams({ user_id:String(uid), include_ref:"1", refresh:"1" });
-    const r = await fetch(`${API_BASE}/payments?${q.toString()}`, { credentials:"include" });
-    if (r.ok){
-      const arr = await r.json();
-      if (Array.isArray(arr)){
-        arr.forEach(p=>{
-          const m = String(p.method || p.type || '').toLowerCase();
-          if (m.includes('ref')) out.push(p);
-        });
-      }
-    }
-  }catch(_){}
-
-  // 2) Попытка: отдельные эндпоинты реф-истории (поддерживаем разные названия)
-  const candidates = [
-    `${API_BASE}/referrals/bonuses?user_id=${encodeURIComponent(uid)}`,
-    `${API_BASE}/referrals/history?user_id=${encodeURIComponent(uid)}`,
-    `${API_BASE}/referrals/payments?user_id=${encodeURIComponent(uid)}`
-  ];
-  for (const url of candidates){
-    try{
-      const r = await fetch(url, { credentials:"include" });
-      if (!r.ok) continue;
-      const arr = await r.json();
-      if (!Array.isArray(arr)) continue;
-      arr.forEach(raw=>{
-        // максимально гибкое сопоставление полей
-        const id  = raw.id ?? raw.bonus_id ?? raw.payment_id ?? raw.tx_id ?? raw.ts ?? Math.random();
-        const sum = Number(raw.amount ?? raw.sum ?? raw.value ?? raw.bonus ?? 0);
-        const cur = String(raw.currency || raw.curr || 'RUB');
-        const at  = raw.created_at ?? raw.time ?? raw.date ?? raw.ts ?? Date.now();
-        out.push({
-          id: 'ref_'+id,
-          method: 'ref_bonus',
-          status: 'completed',
-          amount: sum,
-          currency: cur,
-          created_at: at
-        });
-      });
-      break; // нашли — хватит
-    }catch(_){}
-  }
-
-  // убрать возможные дубли
-  const seen = new Set();
-  return out.filter(p=>{ const k = (p.id ?? p.invoice_id) + '|' + p.created_at; if (seen.has(k)) return false; seen.add(k); return true; });
-}
 
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
