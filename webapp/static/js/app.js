@@ -1,10 +1,12 @@
 /* Slovekiza Mini-App
- * - Профиль, баланс, оверлей успешного пополнения (надёжный поллинг после оплаты)
- * - Категории / Услуги / Полная страница услуги (Повторить)
- * - Избранное + синк
+ * - Стабильная идентификация пользователя (не уходит в "Гость")
+ * - Профиль, баланс, оверлей успешного пополнения (consume_topup)
+ * - Категории / Услуги / Страница услуги (поддержка "Повторить")
+ * - Избранное (локально) + синк с сервером
  * - Рефералка (линк, прогресс, статы)
- * - Детализация (Заказы / Платежи), начисления по рефам, модалки
- * - Скрытие таббара при открытой клавиатуре
+ * - Детализация (Заказы / Платежи) + модалки
+ * - Реф-начисления как платежи (иконка method=ref_bonus/type=referral)
+ * - Скрытие таббара при открытой клавиатуре (body.kb-open)
  */
 
 (function () {
@@ -26,7 +28,6 @@
   const userSeqEl  = document.getElementById("userSeq");
   const balanceEl  = document.getElementById("balanceValue");
   const btnTopup   = document.getElementById("btnTopup");
-  const tabbarEl   = document.querySelector(".tabbar");
 
   const pages = {
     catalog:  document.getElementById("page-categories"),
@@ -48,6 +49,7 @@
   const btnBackToServices = document.getElementById("btnBackToServices");
 
   // ====== helpers ======
+  const sleep = (ms)=> new Promise(r=>setTimeout(r, ms));
   function curSign(c){ return c==='RUB' ? ' ₽' : (c==='USD' ? ' $' : ` ${c}`); }
   function fmt(n, d=2){ return Number(n||0).toFixed(d); }
   function bust(url){
@@ -90,7 +92,52 @@
     } catch(_) { return String(val); }
   }
 
-  // сеть из текста + путь к иконке
+  function stableHashId(x){ let h=0,s=String(x||''); for(let i=0;i<s.length;i++){ h=((h<<5)-h+s.charCodeAt(i))|0; } h=Math.abs(h); return (h%100000)+1; }
+
+  // --- user identity (избегаем "Гость" при оплате) ---
+  const UID = {
+    tgId: null,          // Telegram user id, если есть
+    localSeq: null,      // локальный фоллбек (анон)
+    serverSeq: null,     // seq от бэка (красивый #)
+    async init() {
+      // локальный фоллбек сразу
+      const saved = parseInt(localStorage.getItem('smm_user_seq')||'0',10);
+      this.localSeq = Number.isFinite(saved) && saved>0 ? saved : stableHashId('anon:'+Math.random());
+      // на всякий ждем initDataUnsafe (до ~800мс)
+      for (let i=0;i<10;i++){
+        try { this.tgId = tg?.initDataUnsafe?.user?.id || null; } catch(_) {}
+        if (this.tgId) break;
+        await sleep(80);
+      }
+      return this.id();
+    },
+    id() {
+      // ВАЖНО: если есть Telegram ID, ВСЕГДА шлем его.
+      // Фоллбек в localSeq только когда tgId нет вообще (открыли в браузере).
+      return this.tgId || this.serverSeq || this.localSeq;
+    },
+    setServerSeq(n){
+      if (!n) return;
+      this.serverSeq = Number(n) || null;
+      if (this.serverSeq) {
+        localStorage.setItem('smm_user_seq', String(this.serverSeq));
+      }
+    }
+  };
+
+  // ===== Avatar & nickname (ранний пререндер) =====
+  function urlNick(){ try{ const p=new URLSearchParams(location.search); const v=p.get('n'); return v?decodeURIComponent(v):null; }catch(_){ return null; } }
+  const nickFromUrl = urlNick();
+  if (nicknameEl) nicknameEl.textContent = nickFromUrl || "Гость";
+  try {
+    const photo = tg?.initDataUnsafe?.user?.photo_url;
+    if (photo && avatarEl) avatarEl.src = photo;
+  } catch (_) {}
+  if (avatarEl && !avatarEl.getAttribute("src")){
+    avatarEl.src='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect fill="#1b1e24" width="80" height="80" rx="40"/><circle cx="40" cy="33" r="15" fill="#2a2f36"/><path d="M15 66c5-12 18-18 25-18s20 6 25 18" fill="#2a2f36"/></svg>');
+  }
+
+  // — сеть из текста + путь к иконке
   function netFromText(name, category){
     const t = `${name || ""} ${category || ""}`.toLowerCase();
     if (t.includes('telegram') || t.includes(' tg ')) return 'telegram';
@@ -156,45 +203,33 @@
   }
   function hideOverlay(){ document.getElementById("topupOverlay")?.classList.remove("overlay--show"); }
 
-  // ====== profile / unified API user id ======
-  let userId = null; try { userId = tg?.initDataUnsafe?.user?.id || null; } catch(_){}
-  function urlNick(){ try{ const p=new URLSearchParams(location.search); const v=p.get('n'); return v?decodeURIComponent(v):null; }catch(_){ return null; } }
-  const nickFromUrl = urlNick();
-
-  if (nicknameEl) nicknameEl.textContent = nickFromUrl || "Гость";
-  try {
-    const photo = tg?.initDataUnsafe?.user?.photo_url;
-    if (photo && avatarEl) avatarEl.src = photo;
-  } catch (_) {}
-  if (avatarEl && !avatarEl.getAttribute("src")){
-    avatarEl.src='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect fill="#1b1e24" width="80" height="80" rx="40"/><circle cx="40" cy="33" r="15" fill="#2a2f36"/><path d="M15 66c5-12 18-18 25-18s20 6 25 18" fill="#2a2f36"/></svg>');
-  }
-
-  function stableHashId(x){ let h=0,s=String(x||''); for(let i=0;i<s.length;i++){ h=((h<<5)-h+s.charCodeAt(i))|0; } h=Math.abs(h); return (h%100000)+1; }
-  let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||nickFromUrl||'guest');
-  if (userSeqEl) userSeqEl.textContent = `#${seq}`;
-
+  // ====== profile / identity ======
   let currentCurrency = "RUB";
   let lastBalance = 0;
 
-  // ЕДИНЫЙ ID для всех запросов к API:
-  let API_UID = null;
-  const getUID = () => API_UID || userId || seq;
+  // единый способ получить корректный uid перед любым API-вызовом
+  async function uidForApi(){
+    // дождемся первичной инициализации
+    await UID.init();
+    // если tgId все еще нет — дадим маленькую паузу (часто initData появляется через 1-2 тика)
+    if (!UID.tgId) { for (let i=0;i<6;i++){ try{ UID.tgId = tg?.initDataUnsafe?.user?.id || null; }catch(_){} if (UID.tgId) break; await sleep(60); } }
+    return UID.id();
+  }
 
-  // --- быстрый периодический опрос профиля (чтобы не ждать фокуса)
-  let profileInterval = setInterval(fetchProfile, 15000);
+  // хранить последний профиль
+  let lastProfile = null;
 
   async function fetchProfile(){
     try {
-      const qp = new URLSearchParams({ user_id: String(userId||seq), consume_topup: '1' });
-      if (nickFromUrl) qp.set('nick', nickFromUrl);
-      const r = await fetch(bust(`${API_BASE}/user?${qp.toString()}`), { credentials:'include' });
+      const uid = await uidForApi();
+      const qp = new URLSearchParams({ user_id: String(UID.tgId || uid), consume_topup: '1' });
+      const r = await fetch(bust(`${API_BASE}/user?${qp.toString()}`));
       if (!r.ok) throw 0;
       const p = await r.json();
+      lastProfile = p;
 
       if (p.seq){
-        seq = p.seq;
-        localStorage.setItem('smm_user_seq', String(p.seq));
+        UID.setServerSeq(p.seq);
         if (userSeqEl) userSeqEl.textContent = `#${p.seq}`;
       }
       if (p.nick && nicknameEl) nicknameEl.textContent = p.nick;
@@ -203,59 +238,18 @@
       lastBalance = Number(p.balance || 0);
       if (balanceEl) balanceEl.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
 
-      // Зафиксировали единый ID
-      API_UID = p.seq || p.user_id || userId || seq;
-
       if (p.topup_delta && Number(p.topup_delta) > 0){
         showOverlay(Number(p.topup_delta), p.topup_currency || currentCurrency);
       }
     } catch (_){
-      // не шумим, просто оставим прошлые значения
+      currentCurrency = 'RUB';
+      lastBalance = 0;
+      if (balanceEl) balanceEl.textContent = '0.00' + curSign('RUB');
     }
   }
   fetchProfile();
   window.addEventListener('focus', fetchProfile);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchProfile(); });
-
-  // ====== «сторож» оплаты: опрашиваем платежи после открытия счёта ======
-  let seenPayments = new Set();
-  function primeSeenPayments(list){ (list||[]).forEach(p => seenPayments.add(String(p.id))); }
-
-  async function scanNewPayments(sinceTs){
-    try{
-      const q = new URLSearchParams({ user_id:String(getUID()), refresh:"1" });
-      const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:'include' });
-      const arr = r.ok ? await r.json() : [];
-      let found = null;
-      for (const p of arr){
-        const id = String(p.id);
-        const created = new Date(p.created_at).getTime() || 0;
-        const done = String(p.status||'').toLowerCase()==='completed';
-        if (!seenPayments.has(id) && done && created >= (sinceTs - 1000)){
-          found = p;
-        }
-        seenPayments.add(id);
-      }
-      if (found){
-        showOverlay(found.amount, found.currency || currentCurrency);
-        await fetchProfile();
-      }
-    }catch(_){}
-  }
-
-  function startPaymentWatch(){
-    const since = Date.now();
-    // быстрые «пинги» профиля на всякий случай
-    setTimeout(fetchProfile, 3000);
-    setTimeout(fetchProfile, 8000);
-    setTimeout(fetchProfile, 15000);
-    // 2 минуты опроса платежей каждые 4 секунды
-    let left = 30;
-    const iv = setInterval(async ()=>{
-      await scanNewPayments(since);
-      if (--left <= 0) clearInterval(iv);
-    }, 4000);
-  }
 
   // ====== Topup ======
   btnTopup?.addEventListener('click', async ()=>{
@@ -264,15 +258,15 @@
       if (!s) return;
       const amount = parseFloat(s);
       if (isNaN(amount) || amount < 0.10){ alert('Минимальная сумма — 0.10 USDT'); return; }
+
+      const uid = await uidForApi(); // КЛЮЧЕВОЕ: не уходим в localSeq, если есть tgId
       const r = await fetch(`${API_BASE}/pay/invoice`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: getUID(), amount_usd: amount }),
+        body: JSON.stringify({ user_id: UID.tgId || uid, amount_usd: amount }),
       });
       if (r.status === 501){ alert('Оплата через CryptoBot ещё не настроена.'); return; }
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
-      // запускаем сторож до перехода на оплату
-      startPaymentWatch();
       (tg?.openLink ? tg.openLink(j.pay_url) : window.open(j.pay_url, '_blank'));
     }catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
@@ -444,7 +438,8 @@
   }
   async function syncFavsFromServer(){
     try{
-      const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(getUID())}`);
+      const uid = await uidForApi();
+      const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(UID.tgId || uid)}`);
       if(!r.ok) return;
       const arr = await r.json();
       if(!Array.isArray(arr)) return;
@@ -622,16 +617,20 @@
     favToggle.addEventListener('change', ()=>{
       if (favToggle.checked){
         favAdd({ id:s.service, name:s.name, network:currentNetwork, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency, _raw:s });
-        fetch(`${API_BASE}/favorites`, { method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ user_id:getUID(), service_id:s.service })
-        }).catch(()=>{});
+        uidForApi().then(uid=>{
+          fetch(`${API_BASE}/favorites`, { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ user_id: UID.tgId || uid, service_id:s.service })
+          }).catch(()=>{});
+        });
       } else {
         favRemove(s.service);
-        fetch(`${API_BASE}/favorites/${s.service}?user_id=${encodeURIComponent(getUID())}`, { method:'DELETE' }).catch(()=>{});
+        uidForApi().then(uid=>{
+          fetch(`${API_BASE}/favorites/${s.service}?user_id=${encodeURIComponent(UID.tgId || uid)}`, { method:'DELETE' }).catch(()=>{});
+        });
       }
     });
 
-    // Prefill
+    // Prefill из opts (для "Повторить заказ")
     const presetQty  = Number(opts.qty || 0);
     const presetLink = String(opts.link || '');
     if (presetLink && linkEl) linkEl.value = presetLink;
@@ -655,7 +654,8 @@
 
       btnCreate.disabled = true; btnCreate.textContent = 'Оформляем...';
       try{
-        const body = { user_id:getUID(), service:s.service, link, quantity:q };
+        const uid = await uidForApi();
+        const body = { user_id: UID.tgId || uid, service:s.service, link, quantity:q };
         const promo=(promoInput?.value||'').trim(); if (promo) body.promo_code=promo;
         const r = await fetch(`${API_BASE}/order/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
         if (!r.ok) throw new Error(await r.text());
@@ -682,7 +682,6 @@
 
   // === Рефералка ===
   async function loadRefs() {
-    const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
     const page = document.getElementById("page-refs");
     if (!page) return;
 
@@ -694,13 +693,13 @@
     `;
 
     try {
-      const url = API_BASE + "/referrals/stats?user_id=" + encodeURIComponent(getUID());
+      const uid = await uidForApi();
+      const url = `${API_BASE}/referrals/stats?user_id=${encodeURIComponent(UID.tgId || uid)}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
 
       const inviteLink = String(data.invite_link || data.link || "");
-      const rate = Number(data.rate_percent != null ? data.rate_percent : 10);
       const threshold = Number(data.threshold != null ? data.threshold : 50);
       const invited = Number(data.invited_total != null ? data.invited_total : 0);
       const withDep = Number(data.invited_with_deposit != null ? data.invited_with_deposit : 0);
@@ -776,7 +775,7 @@
       async function copyLink() {
         const text = (input && input.value) ? input.value : inviteLink;
         try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
+          if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(text);
           } else {
             const ta = document.createElement("textarea");
@@ -786,20 +785,16 @@
             document.execCommand("copy");
             document.body.removeChild(ta);
           }
-          if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
-            tg.HapticFeedback.notificationOccurred("success");
-          }
-          bar && bar.classList.add("copied");
-          setTimeout(() => { bar && bar.classList.remove("copied"); }, 600);
+          tg?.HapticFeedback?.notificationOccurred?.("success");
+          bar?.classList.add("copied");
+          setTimeout(() => bar?.classList.remove("copied"), 600);
         } catch (err) {
-          if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
-            tg.HapticFeedback.notificationOccurred("error");
-          }
+          tg?.HapticFeedback?.notificationOccurred?.("error");
           console.error("copy failed", err);
         }
       }
-      bar && bar.addEventListener("click", copyLink);
-      btn && btn.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
+      bar?.addEventListener("click", copyLink);
+      btn?.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
 
     } catch (err) {
       console.error("loadRefs error:", err);
@@ -824,29 +819,16 @@
   };
   const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
 
-  async function fetchReferralAccruals(uid){
-    try{
-      const q = new URLSearchParams({ user_id:String(uid) });
-      const r = await fetch(bust(`${API_BASE}/referrals/accruals?${q.toString()}`), { credentials:"include" });
-      if (!r.ok) return [];
-      const arr = await r.json();
-      if (!Array.isArray(arr)) return [];
-      return arr.map(a => ({
-        id: `ref-${a.id ?? a.accrual_id ?? a.payment_id ?? Math.random().toString(36).slice(2)}`,
-        method: 'referral',
-        amount: Number(a.amount ?? a.sum ?? 0),
-        currency: a.currency || a.cur || '₽',
-        status: 'completed',
-        created_at: a.created_at || a.date || Date.now(),
-        note: a.note || a.title || (a.ref_user ? `Реферал: ${a.ref_user}` : 'Начисление по рефералке'),
-        _raw: a
-      }));
-    }catch(_){ return []; }
+  function paymentIcon(p){
+    const m = String(p.method || p.type || '').toLowerCase();
+    if (m.includes('ref')) return 'static/img/ref_bonus.svg'; // ты добавишь иконку
+    return `static/img/${m || 'cryptobot'}.svg`;
   }
 
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
     if (!page) return;
+    const uid = await uidForApi();
 
     let ORDERS_CACHE = null;
     let PAYMENTS_CACHE = null;
@@ -945,7 +927,7 @@
 
       list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
       try {
-        const q = new URLSearchParams({ user_id:String(getUID()) });
+        const q = new URLSearchParams({ user_id:String(UID.tgId || uid) });
         const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
         ORDERS_CACHE = r.ok ? await r.json() : [];
       } catch { ORDERS_CACHE = []; }
@@ -959,14 +941,13 @@
         return;
       }
       list.innerHTML = PAYMENTS_CACHE.map(p=>{
-        const isRef = String(p.method||'').toLowerCase()==='referral';
-        const st  = isRef ? stInfo('completed') : stInfo(p.status);
+        // Реф-начисления считаем завершёнными и помечаем иконкой
+        const meth = String(p.method || p.type || '').toLowerCase();
+        const st  = meth.includes('ref') ? {label:'Завершён', cls:'badge--completed'} : stInfo(p.status);
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-        const prov = isRef ? 'referral' : String(p.method || "cryptobot").toLowerCase();
-        const sub = isRef
-          ? `${p.note || 'начисление по рефералке'} • ${fmtDate(p.created_at)} • #${p.id}`
-          : `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        const ico = `static/img/${prov}.svg`;
+        const prov = meth || "cryptobot";
+        const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
+        const ico = paymentIcon(p);
         return `
           <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
@@ -982,8 +963,8 @@
       }).join("");
 
       list.querySelectorAll('.pay').forEach(card=>{
-        const id = card.dataset.id;
-        const p = PAYMENTS_CACHE.find(x => String(x.id) === String(id));
+        const id = Number(card.dataset.id);
+        const p = PAYMENTS_CACHE.find(x => Number(x.id) === id);
         if (p) card.addEventListener('click', ()=> showPaymentModal(p));
       });
     }
@@ -996,16 +977,10 @@
       }
       list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
       try {
-        const q = new URLSearchParams({ user_id:String(getUID()), refresh:"1" });
+        const q = new URLSearchParams({ user_id:String(UID.tgId || uid), refresh:"1" });
         const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-        const basePays = r.ok ? await r.json() : [];
-        primeSeenPayments(basePays);
-        const refPays  = await fetchReferralAccruals(getUID());
-        PAYMENTS_CACHE = [...(Array.isArray(basePays)?basePays:[]), ...refPays]
-          .sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
-      } catch {
-        PAYMENTS_CACHE = [];
-      }
+        PAYMENTS_CACHE = r.ok ? await r.json() : [];
+      } catch { PAYMENTS_CACHE = []; }
       renderPaymentsFromCache();
     }
 
@@ -1051,38 +1026,11 @@
     }
 
     function showPaymentModal(p){
-      const isRef = String(p.method||'').toLowerCase()==='referral';
-      const st = stInfo(isRef ? 'completed' : p.status);
-      const prov = isRef ? 'referral' : String(p.method || "cryptobot").toLowerCase();
-      const ico = `static/img/${prov}.svg`;
+      const meth = String(p.method || p.type || '').toLowerCase();
+      const st = meth.includes('ref') ? {label:'Завершён', cls:'badge--completed'} : stInfo(p.status);
+      const prov = meth || "cryptobot";
+      const ico = paymentIcon(p);
       const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-
-      if (isRef){
-        const a = p._raw || {};
-        openModal(`
-          <h3>Начисление по рефералке</h3>
-          <div class="modal-row">
-            <div style="display:flex; gap:10px; align-items:center">
-              <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
-              <div>
-                <div style="font-weight:700">${sum}</div>
-                <div class="muted">referral</div>
-              </div>
-              <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
-            </div>
-          </div>
-          <div class="modal-row"><div class="muted">Создано</div><div>${fmtDate(p.created_at)}</div></div>
-          ${a.rate_percent!=null ? `<div class="modal-row"><div class="muted">Процент</div><div>${a.rate_percent}%</div></div>` : ''}
-          ${a.ref_user ? `<div class="modal-row"><div class="muted">Реферал</div><div>${a.ref_user}</div></div>` : ''}
-          ${a.source_amount ? `<div class="modal-row"><div class="muted">Сумма депозита рефа</div><div>${a.source_amount} ${(a.source_currency||p.currency||'₽')}</div></div>` : ''}
-          ${(a.ref_payment_id||a.invoice_id) ? `<div class="modal-row"><div class="muted">Исходный платёж</div><div>#${a.ref_payment_id||a.invoice_id}</div></div>` : ''}
-          <div class="modal-actions">
-            <button class="btn btn-secondary" id="payClose">Закрыть</button>
-          </div>
-        `);
-        document.getElementById('payClose')?.addEventListener('click', closeModal);
-        return;
-      }
 
       openModal(`
         <h3>Платёж #${p.id}</h3>
@@ -1116,15 +1064,13 @@
     seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
   }
 
-  // ====== Keyboard inset -> CSS var --kb + скрытие таббара ======
+  // ====== Keyboard inset -> CSS var --kb + hide tabbar ======
   (function keyboardLift(){
     const root=document.documentElement;
     function applyKbInset(px){
       const v = px>40 ? px : 0;
       root.style.setProperty('--kb', v+'px');
-      if (tabbarEl){
-        tabbarEl.style.display = v>40 ? 'none' : '';
-      }
+      document.body.classList.toggle('kb-open', v>40); // <- добавь в CSS: .kb-open .tabbar{display:none}
     }
     if (window.visualViewport){
       const vv=window.visualViewport;
