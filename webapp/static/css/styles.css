@@ -350,26 +350,6 @@ body{
 
 /* ====================================================================== */
 
-/* ===== Profile page (профиль) ===== */
-#page-profile .card + .card{ margin-top:12px; }
-#page-profile .avatar{ width:48px; height:48px; }
-#page-profile .profile-row{ display:flex; gap:12px; align-items:center; }
-#page-profile .profile-row .right{ margin-left:auto; text-align:right; }
-#page-profile #profBalance{ font-weight:700; }
-#page-profile #profMarkup{ font-weight:600; }
-
-/* Универсальные инпуты/промо-строка вне .svc */
-.promo-wrap{ display:flex; gap:8px; align-items:center; }
-.promo-wrap input{
-  flex:1; min-width:0;
-  background:var(--elev); border:1px solid var(--stroke); color:var(--text);
-  border-radius:12px; padding:12px;
-}
-.promo-wrap .chip{
-  appearance:none; border:1px solid var(--stroke); background:var(--surface-2);
-  color:#ff6e6e; border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:600;
-}
-
 /* ===== Tabbar ===== */
 .tabbar{
   position:fixed; left:0; right:0; bottom:env(safe-area-inset-bottom); z-index:20;
