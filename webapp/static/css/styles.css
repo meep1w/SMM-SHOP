@@ -621,3 +621,13 @@ body{
 /* Скрыть скроллбары */
 body, .page, .app-main, .cats-list, .services-list{ -ms-overflow-style:none; scrollbar-width:none; }
 body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar, .cats-list::-webkit-scrollbar, .services-list::-webkit-scrollbar{ width:0; height:0 }
+
+/* === Прячем таббар при открытой клавиатуре и убираем лишний паддинг снизу === */
+.kb-open .tabbar{
+  display:none !important;
+}
+
+.kb-open .app-main{
+  /* без места под таббар, только безопасная зона и небольшой зазор */
+  padding-bottom: calc(env(safe-area-inset-bottom) + 16px) !important;
+}

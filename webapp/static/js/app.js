@@ -1,10 +1,12 @@
+<!-- app.js -->
+<script>
 /* Slovekiza Mini-App
  * Совместимо с данным index.html и app.css
  * - Профиль, баланс, оверлей успешного пополнения
  * - Категории / Услуги / Полная страница услуги (поддержка "Повторить")
  * - Избранное (локально) + синк с сервером
  * - Рефералка (линк, прогресс, статы)
- * - Детализация (Заказы / Платежи) + модалки
+ * - Детализация (Заказы / Платежи) + модалки + реф.начисления
  */
 
 (function () {
@@ -91,17 +93,23 @@
     } catch(_) { return String(val); }
   }
 
-  // — сеть из текста + путь к иконке
-  function netFromText(name, category){
-    const t = `${name || ""} ${category || ""}`.toLowerCase();
-    if (t.includes('telegram') || t.includes(' tg ')) return 'telegram';
-    if (t.includes('tiktok')   || t.includes('tik tok')) return 'tiktok';
-    if (t.includes('instagram')|| t.includes(' insta') || t.includes(' ig ')) return 'instagram';
-    if (t.includes('youtube')  || t.includes(' yt '))   return 'youtube';
-    if (t.includes('facebook') || t.includes(' fb '))   return 'facebook';
-    return 'generic';
+  // --- icons / networks ---
+  function detectNetworkText(...parts){
+    const t = (parts.filter(Boolean).join(' ') || '').toLowerCase();
+    if (t.includes('tele') || t.includes(' tg')) return 'telegram';
+    if (t.includes('tik' )) return 'tiktok';
+    if (t.includes('insta')|| t.includes(' ig')) return 'instagram';
+    if (t.includes('you')  || t.includes(' yt')) return 'youtube';
+    if (t.includes('face') || t.includes(' fb') || t.includes('meta')) return 'facebook';
+    return 'telegram';
   }
-  function netIcon(net){ return `static/img/${net}.svg`; }
+  function orderNetwork(o){
+    return (o.network) || detectNetworkText(o.service, o.category);
+  }
+  function orderIconPath(o){
+    const net = orderNetwork(o);
+    return `static/img/networks/${net}.svg`;
+  }
 
   // --- modal helpers ---
   function ensureModal(){
@@ -252,7 +260,6 @@
     showPage(id);
 
     if (tab === 'favs') {
-      // сначала тянем с бэка, потом рисуем локально
       syncFavsFromServer().then(renderFavs);
     } else if (tab === 'refs') {
       loadRefs();
@@ -439,18 +446,6 @@
       const r = await fetch(bust(`${API_BASE}/services/${net}`));
       const arr = r.ok ? await r.json() : [];
       return arr.find(s => Number(s.service) === Number(serviceId)) || null;
-    }catch(_){ return null; }
-  }
-  async function findServiceByName(net, name){
-    const lower = String(name||'').toLowerCase();
-    if (Array.isArray(servicesAll) && servicesAll.length && net===currentNetwork){
-      const f = servicesAll.find(s => String(s.name||'').toLowerCase() === lower);
-      if (f) return f;
-    }
-    try{
-      const r = await fetch(bust(`${API_BASE}/services/${net}`));
-      const arr = r.ok ? await r.json() : [];
-      return arr.find(s => String(s.name||'').toLowerCase() === lower) || null;
     }catch(_){ return null; }
   }
 
@@ -658,7 +653,6 @@
       const data = await res.json();
 
       const inviteLink = String(data.invite_link || data.link || "");
-      const rate = Number(data.rate_percent != null ? data.rate_percent : 10);
       const threshold = Number(data.threshold != null ? data.threshold : 50);
       const invited = Number(data.invited_total != null ? data.invited_total : 0);
       const withDep = Number(data.invited_with_deposit != null ? data.invited_with_deposit : 0);
@@ -690,7 +684,7 @@
             <button class="ref-copy" id="refCopyBtn" aria-label="Копировать">
               <svg viewBox="0 0 24 24" fill="none">
                 <path d="M9 9.5A2.5 2.5 0 0 1 11.5 7H17a2 2 0 0 1 2 2v5.5A2.5 2.5 0 0 1 16.5 17H11a2 2 0 0 1-2-2V9.5Z" stroke="currentColor" stroke-width="1.6"/>
-                <path d="M7 14.5A2.5 2.5 0 0 1 4.5 12V6a2 2 0 0 1 2-2H12.5A2.5 2.5 0 0 1 15 6.5" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M7 14.5A2.5 2.5 0 0 1 4.5 12V6a 2 2 0 0 1 2-2H12.5A2.5 2.5 0 0 1 15 6.5" stroke="currentColor" stroke-width="1.6"/>
               </svg>
             </button>
           </div>
@@ -784,14 +778,33 @@
   };
   const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
 
-  /* Детализация (Orders/Payments) — кэш и мгновенная фильтрация + модалки */
+  async function apiFetchRefRewards(uid){
+    const q = new URLSearchParams({ user_id:String(uid) });
+    const r = await fetch(bust(`${API_BASE}/referrals/stats?${q.toString()}`), { credentials:"include" });
+    if(!r.ok) throw new Error("refstats HTTP " + r.status);
+    const data = await r.json();
+    const arr = Array.isArray(data.last_bonuses) ? data.last_bonuses : [];
+    return arr.map(b => ({
+      id: b.id,
+      created_at: b.ts,
+      amount: b.amount_credit,
+      amount_usd: null,
+      currency: b.currency || "₽",
+      method: "referral",
+      status: "completed",
+      invoice_id: null,
+      _meta: { from_seq: b.from_seq, rate_percent: b.rate }
+    }));
+  }
+
+  /* Детализация (Orders/Payments) — кэш и фильтрация + модалки + реф.начисления */
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
     if (!page) return;
     const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
 
     let ORDERS_CACHE = null;   // массив заказов
-    let PAYMENTS_CACHE = null; // массив платежей
+    let PAYMENTS_CACHE = null; // массив платежей (включая реф.начисления)
 
     page.innerHTML = `
       <div class="details-head details-head--center">
@@ -836,8 +849,7 @@
         const title = o.service || "Услуга";
         const cat = o.category ? `${o.category} • ` : "";
         const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
-        const net = netFromText(o.service, o.category);
-        const ico = netIcon(net);
+        const ico = orderIconPath(o);
         return `
           <div class="order" data-id="${o.id}">
             <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
@@ -905,8 +917,9 @@
         const st  = stInfo(p.status);
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
         const prov = String(p.method || "cryptobot").toLowerCase();
-        const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        const ico = `static/img/${prov}.svg`;
+        const provLabel = prov === "referral" ? "реферальный бонус" : prov;
+        const sub = `${provLabel} • ${fmtDate(p.created_at)} • #${p.id}`;
+        const ico = `static/img/${prov}.svg`; // cryptobot.svg / referral.svg
         return `
           <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
@@ -938,15 +951,19 @@
       try {
         const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
         const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-        PAYMENTS_CACHE = r.ok ? await r.json() : [];
-      } catch { PAYMENTS_CACHE = []; }
+        const pays = r.ok ? await r.json() : [];
+        const refs = await apiFetchRefRewards(uid).catch(()=>[]);
+        PAYMENTS_CACHE = [...pays, ...refs].sort((a,b) => (b.created_at||0) - (a.created_at||0));
+      } catch {
+        PAYMENTS_CACHE = [];
+      }
       renderPaymentsFromCache();
     }
 
     function showOrderModal(o){
       const st = stInfo(o.status);
-      const net = netFromText(o.service, o.category);
-      const ico = netIcon(net);
+      const net = orderNetwork(o);
+      const ico = `static/img/networks/${net}.svg`;
       const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
       const linkHtml = o.link ? `<a href="${o.link}" target="_blank" rel="noopener">${o.link}</a>` : '—';
 
@@ -976,10 +993,15 @@
 
       document.getElementById('orderClose')?.addEventListener('click', closeModal);
       document.getElementById('orderRepeat')?.addEventListener('click', async ()=>{
-        // 1) если бэк когда-нибудь отдаст service_id — используем его
-        let svc = o.service_id ? await fetchServiceById(o.service_id, net) : null;
-        // 2) иначе — пытаемся найти по имени в текущем/нужном каталоге
-        if (!svc) svc = await findServiceByName(net, o.service);
+        // Пытаемся найти услугу по сети и названию
+        let list = [];
+        try{
+          const r = await fetch(bust(`${API_BASE}/services/${net}`));
+          list = r.ok ? await r.json() : [];
+        }catch(_){}
+        const svc = list.find(x => String(x.name).toLowerCase() === String(o.service||'').toLowerCase())
+                 || list.find(x => String(x.name).toLowerCase().includes(String(o.service||'').toLowerCase()))
+                 || list[0];
         if (!svc){ alert('Не удалось найти услугу для повтора'); return; }
         closeModal();
         openServicePage(svc, { link: o.link, qty: o.quantity });
@@ -989,9 +1011,38 @@
     function showPaymentModal(p){
       const st = stInfo(p.status);
       const prov = String(p.method || "cryptobot").toLowerCase();
-      const ico = `static/img/${prov}.svg`;
       const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
 
+      if (prov === "referral") {
+        const ico = `static/img/referral.svg`;
+        const fromSeq = p._meta?.from_seq ? `#${p._meta.from_seq}` : "—";
+        const rate    = (p._meta?.rate_percent != null) ? `${p._meta.rate_percent}%` : "—";
+
+        openModal(`
+          <h3>Реферальное начисление</h3>
+          <div class="modal-row">
+            <div style="display:flex; gap:10px; align-items:center">
+              <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
+              <div>
+                <div style="font-weight:700">${sum}</div>
+                <div class="muted">реферальный бонус</div>
+              </div>
+              <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+            </div>
+          </div>
+          <div class="modal-row"><div class="muted">Зачислено</div><div>${fmtDate(p.created_at)}</div></div>
+          <div class="modal-row"><div class="muted">От реферала</div><div>${fromSeq}</div></div>
+          <div class="modal-row"><div class="muted">Ставка</div><div>${rate}</div></div>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" id="payClose">Закрыть</button>
+          </div>
+        `);
+        document.getElementById('payClose')?.addEventListener('click', closeModal);
+        return;
+      }
+
+      // обычный платёж (например cryptobot)
+      const ico = `static/img/${prov}.svg`;
       openModal(`
         <h3>Платёж #${p.id}</h3>
         <div class="modal-row">
@@ -1024,10 +1075,19 @@
     seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
   }
 
-  // ====== Keyboard inset -> CSS var --kb ======
+  // ====== Keyboard inset -> hide tabbar on keyboard open ======
   (function keyboardLift(){
     const root=document.documentElement;
-    function applyKbInset(px){ const v = px>40 ? px : 0; root.style.setProperty('--kb', v+'px'); }
+    function setKbOpen(open){
+      root.classList.toggle('kb-open', !!open);
+      document.body?.classList?.toggle('kb-open', !!open);
+    }
+    function applyKbInset(px){
+      const open = px>40;
+      setKbOpen(open);
+      // если где-то используешь var(--kb) — оставим 0, чтобы не поднимать таббар
+      root.style.setProperty('--kb', open ? '0px' : '0px');
+    }
     if (window.visualViewport){
       const vv=window.visualViewport;
       const handler=()=>{ const inset=Math.max(0, window.innerHeight - vv.height - vv.offsetTop); applyKbInset(inset); };
@@ -1038,8 +1098,11 @@
     try{
       tg?.onEvent?.('viewportChanged', (e)=>{
         const vh=(e&&(e.height||e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
-        if (!vh) return; const inset=Math.max(0, window.innerHeight - vh); applyKbInset(inset);
+        if (!vh) return;
+        const inset=Math.max(0, window.innerHeight - vh);
+        applyKbInset(inset);
       });
     }catch(_){}
   })();
 })();
+</script>
