@@ -1023,38 +1023,19 @@
     }
 
     async function renderPayments() {
-  filtersWrap.innerHTML = "";
-  // если уже есть кэш — просто отрисуем
-  if (Array.isArray(PAYMENTS_CACHE)) {
-    renderPaymentsFromCache();
-    return;
-  }
-  list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
-
-  try {
-    const uidApi = UID.tgId || (await uidForApi());
-    // базовые платежи
-    const q = new URLSearchParams({ user_id:String(uidApi), refresh:"1" });
-    const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-    let base = r.ok ? await r.json() : [];
-    if (!Array.isArray(base)) base = [];
-
-    // реф-бонусы
-    let ref = await fetchRefBonusesAll(uidApi);
-    if (!Array.isArray(ref)) ref = [];
-
-    // объединяем и сортируем по дате убыв.
-    PAYMENTS_CACHE = [...base, ...ref].sort((a,b)=>{
-      const A = new Date(a.created_at || 0).getTime();
-      const B = new Date(b.created_at || 0).getTime();
-      return B - A;
-    });
-  } catch {
-    PAYMENTS_CACHE = [];
-  }
-  renderPaymentsFromCache();
-}
-
+      filtersWrap.innerHTML = "";
+      if (Array.isArray(PAYMENTS_CACHE)) {
+        renderPaymentsFromCache();
+        return;
+      }
+      list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
+      try {
+        const q = new URLSearchParams({ user_id:String(UID.tgId || uid), refresh:"1" });
+        const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
+        PAYMENTS_CACHE = r.ok ? await r.json() : [];
+      } catch { PAYMENTS_CACHE = []; }
+      renderPaymentsFromCache();
+    }
 
     function showOrderModal(o){
       const st = stInfo(o.status);
