@@ -1,12 +1,10 @@
 /* Slovekiza Mini-App
- * Совместимо с данным index.html и app.css
- * - Профиль, баланс, оверлей успешного пополнения
- * - Категории / Услуги / Полная страница услуги (поддержка "Повторить")
- * - Избранное (локально) + синк с сервером
+ * - Профиль, баланс, оверлей успешного пополнения (надёжный поллинг после оплаты)
+ * - Категории / Услуги / Полная страница услуги (Повторить)
+ * - Избранное + синк
  * - Рефералка (линк, прогресс, статы)
- * - Детализация (Заказы / Платежи) + модалки
- * - Платежи включают начисления по рефералке (method: "referral")
- * - При открытии клавиатуры таббар скрывается
+ * - Детализация (Заказы / Платежи), начисления по рефам, модалки
+ * - Скрытие таббара при открытой клавиатуре
  */
 
 (function () {
@@ -28,6 +26,7 @@
   const userSeqEl  = document.getElementById("userSeq");
   const balanceEl  = document.getElementById("balanceValue");
   const btnTopup   = document.getElementById("btnTopup");
+  const tabbarEl   = document.querySelector(".tabbar");
 
   const pages = {
     catalog:  document.getElementById("page-categories"),
@@ -66,7 +65,6 @@
   function fmtDate(val){
     try{
       if (val == null || val === '') return '';
-      // ISO
       if (typeof val === 'string' && !/^\d+(\.\d+)?$/.test(val.trim())) {
         const d = new Date(val);
         if (!isNaN(d.getTime())) {
@@ -79,7 +77,6 @@
         }
         return val;
       }
-      // sec/ms
       let ts = typeof val === 'number' ? val : Number(val);
       if (!Number.isFinite(ts)) return String(val);
       if (ts < 1e12) ts *= 1000;
@@ -93,7 +90,7 @@
     } catch(_) { return String(val); }
   }
 
-  // — сеть из текста + путь к иконке
+  // сеть из текста + путь к иконке
   function netFromText(name, category){
     const t = `${name || ""} ${category || ""}`.toLowerCase();
     if (t.includes('telegram') || t.includes(' tg ')) return 'telegram';
@@ -159,7 +156,7 @@
   }
   function hideOverlay(){ document.getElementById("topupOverlay")?.classList.remove("overlay--show"); }
 
-  // ====== profile ======
+  // ====== profile / unified API user id ======
   let userId = null; try { userId = tg?.initDataUnsafe?.user?.id || null; } catch(_){}
   function urlNick(){ try{ const p=new URLSearchParams(location.search); const v=p.get('n'); return v?decodeURIComponent(v):null; }catch(_){ return null; } }
   const nickFromUrl = urlNick();
@@ -180,11 +177,18 @@
   let currentCurrency = "RUB";
   let lastBalance = 0;
 
+  // ЕДИНЫЙ ID для всех запросов к API:
+  let API_UID = null;
+  const getUID = () => API_UID || userId || seq;
+
+  // --- быстрый периодический опрос профиля (чтобы не ждать фокуса)
+  let profileInterval = setInterval(fetchProfile, 15000);
+
   async function fetchProfile(){
     try {
       const qp = new URLSearchParams({ user_id: String(userId||seq), consume_topup: '1' });
       if (nickFromUrl) qp.set('nick', nickFromUrl);
-      const r = await fetch(bust(`${API_BASE}/user?${qp.toString()}`));
+      const r = await fetch(bust(`${API_BASE}/user?${qp.toString()}`), { credentials:'include' });
       if (!r.ok) throw 0;
       const p = await r.json();
 
@@ -199,18 +203,59 @@
       lastBalance = Number(p.balance || 0);
       if (balanceEl) balanceEl.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
 
+      // Зафиксировали единый ID
+      API_UID = p.seq || p.user_id || userId || seq;
+
       if (p.topup_delta && Number(p.topup_delta) > 0){
         showOverlay(Number(p.topup_delta), p.topup_currency || currentCurrency);
       }
     } catch (_){
-      currentCurrency = 'RUB';
-      lastBalance = 0;
-      if (balanceEl) balanceEl.textContent = '0.00' + curSign('RUB');
+      // не шумим, просто оставим прошлые значения
     }
   }
   fetchProfile();
   window.addEventListener('focus', fetchProfile);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchProfile(); });
+
+  // ====== «сторож» оплаты: опрашиваем платежи после открытия счёта ======
+  let seenPayments = new Set();
+  function primeSeenPayments(list){ (list||[]).forEach(p => seenPayments.add(String(p.id))); }
+
+  async function scanNewPayments(sinceTs){
+    try{
+      const q = new URLSearchParams({ user_id:String(getUID()), refresh:"1" });
+      const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:'include' });
+      const arr = r.ok ? await r.json() : [];
+      let found = null;
+      for (const p of arr){
+        const id = String(p.id);
+        const created = new Date(p.created_at).getTime() || 0;
+        const done = String(p.status||'').toLowerCase()==='completed';
+        if (!seenPayments.has(id) && done && created >= (sinceTs - 1000)){
+          found = p;
+        }
+        seenPayments.add(id);
+      }
+      if (found){
+        showOverlay(found.amount, found.currency || currentCurrency);
+        await fetchProfile();
+      }
+    }catch(_){}
+  }
+
+  function startPaymentWatch(){
+    const since = Date.now();
+    // быстрые «пинги» профиля на всякий случай
+    setTimeout(fetchProfile, 3000);
+    setTimeout(fetchProfile, 8000);
+    setTimeout(fetchProfile, 15000);
+    // 2 минуты опроса платежей каждые 4 секунды
+    let left = 30;
+    const iv = setInterval(async ()=>{
+      await scanNewPayments(since);
+      if (--left <= 0) clearInterval(iv);
+    }, 4000);
+  }
 
   // ====== Topup ======
   btnTopup?.addEventListener('click', async ()=>{
@@ -221,11 +266,13 @@
       if (isNaN(amount) || amount < 0.10){ alert('Минимальная сумма — 0.10 USDT'); return; }
       const r = await fetch(`${API_BASE}/pay/invoice`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: userId||seq, amount_usd: amount }),
+        body: JSON.stringify({ user_id: getUID(), amount_usd: amount }),
       });
       if (r.status === 501){ alert('Оплата через CryptoBot ещё не настроена.'); return; }
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
+      // запускаем сторож до перехода на оплату
+      startPaymentWatch();
       (tg?.openLink ? tg.openLink(j.pay_url) : window.open(j.pay_url, '_blank'));
     }catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
   });
@@ -254,7 +301,6 @@
     showPage(id);
 
     if (tab === 'favs') {
-      // сначала тянем с бэка, потом рисуем локально
       syncFavsFromServer().then(renderFavs);
     } else if (tab === 'refs') {
       loadRefs();
@@ -301,12 +347,7 @@
           <div class="cat-name">${c.name}</div>
           <div class="cat-desc">${c.desc || ''}${c.count ? ' • '+c.count : ''}</div>
         </div>`;
-      a.addEventListener('click', e => {
-        e.preventDefault();
-        // подсветим выбранную категорию
-        catsListEl.querySelectorAll('.cat').forEach(x=> x.classList.toggle('active', x===a));
-        openServices(c.id, c.name);
-      });
+      a.addEventListener('click', e => { e.preventDefault(); openServices(c.id, c.name); });
       catsListEl.appendChild(a);
     });
   }
@@ -377,7 +418,7 @@
     });
   }
 
-  // ====== Favorites (local mirror + server sync) ======
+  // ====== Favorites ======
   function favLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]'); } catch(_){ return []; } }
   function favSave(a){ localStorage.setItem('smm_favs', JSON.stringify(a||[])); }
   function favHas(id){ return favLoad().some(x=>x.id===id); }
@@ -403,8 +444,7 @@
   }
   async function syncFavsFromServer(){
     try{
-      const uid = userId || seq;
-      const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
+      const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(getUID())}`);
       if(!r.ok) return;
       const arr = await r.json();
       if(!Array.isArray(arr)) return;
@@ -583,15 +623,15 @@
       if (favToggle.checked){
         favAdd({ id:s.service, name:s.name, network:currentNetwork, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency, _raw:s });
         fetch(`${API_BASE}/favorites`, { method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ user_id:userId||seq, service_id:s.service })
+          body: JSON.stringify({ user_id:getUID(), service_id:s.service })
         }).catch(()=>{});
       } else {
         favRemove(s.service);
-        fetch(`${API_BASE}/favorites/${s.service}?user_id=${encodeURIComponent(userId||seq)}`, { method:'DELETE' }).catch(()=>{});
+        fetch(`${API_BASE}/favorites/${s.service}?user_id=${encodeURIComponent(getUID())}`, { method:'DELETE' }).catch(()=>{});
       }
     });
 
-    // Prefill из opts (для "Повторить заказ")
+    // Prefill
     const presetQty  = Number(opts.qty || 0);
     const presetLink = String(opts.link || '');
     if (presetLink && linkEl) linkEl.value = presetLink;
@@ -615,7 +655,7 @@
 
       btnCreate.disabled = true; btnCreate.textContent = 'Оформляем...';
       try{
-        const body = { user_id:userId||seq, service:s.service, link, quantity:q };
+        const body = { user_id:getUID(), service:s.service, link, quantity:q };
         const promo=(promoInput?.value||'').trim(); if (promo) body.promo_code=promo;
         const r = await fetch(`${API_BASE}/order/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
         if (!r.ok) throw new Error(await r.text());
@@ -654,12 +694,7 @@
     `;
 
     try {
-      const API_BASE = (typeof window.API_BASE === "string" && window.API_BASE) ? window.API_BASE : "/api/v1";
-      let uid = null;
-      try { uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id; } catch (_) {}
-      if (!uid && window.USER_ID) uid = window.USER_ID;
-
-      const url = API_BASE + "/referrals/stats" + (uid ? ("?user_id=" + encodeURIComponent(uid)) : "");
+      const url = API_BASE + "/referrals/stats?user_id=" + encodeURIComponent(getUID());
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
@@ -777,8 +812,6 @@
   }
 
   // ====== Детализация ======
-
-  /* statuses view map */
   const STATUS_MAP = {
     processing:   { label: "В обработке", cls: "badge--processing" },
     "in progress":{ label: "В обработке", cls: "badge--processing" },
@@ -791,51 +824,32 @@
   };
   const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
 
-  // Вспомогательное: нормализация времени
-  function tsMs(val){
-    try{
-      if (val == null || val === '') return 0;
-      if (typeof val === 'number') return val < 1e12 ? val*1000 : val;
-      const s = String(val).trim();
-      if (/^\d+(\.\d+)?$/.test(s)) {
-        const n = Number(s);
-        return n < 1e12 ? n*1000 : n;
-      }
-      const d = new Date(s);
-      return isNaN(d.getTime()) ? 0 : d.getTime();
-    }catch(_){ return 0; }
-  }
-
-  // Получение начислений рефералки (опционально) и приведение к структуре "payment"
   async function fetchReferralAccruals(uid){
     try{
-      const url = bust(`${API_BASE}/referrals/earnings?user_id=${encodeURIComponent(uid)}`);
-      const r = await fetch(url, { credentials:"include" });
+      const q = new URLSearchParams({ user_id:String(uid) });
+      const r = await fetch(bust(`${API_BASE}/referrals/accruals?${q.toString()}`), { credentials:"include" });
       if (!r.ok) return [];
       const arr = await r.json();
       if (!Array.isArray(arr)) return [];
-      return arr.map((x, i)=>({
-        id: x.id || x.accrual_id || `ref-${tsMs(x.created_at)||Date.now()}-${i}`,
-        amount: Number(x.amount ?? x.earned ?? x.value ?? 0),
-        currency: x.currency || "₽",
-        method: "referral",
-        status: "completed",
-        created_at: x.created_at || x.time || Date.now(),
-        note: x.note || x.description || "Реферальное начисление",
-        from_user: x.from_user || x.user || x.source_user || null,
-        _raw: x
+      return arr.map(a => ({
+        id: `ref-${a.id ?? a.accrual_id ?? a.payment_id ?? Math.random().toString(36).slice(2)}`,
+        method: 'referral',
+        amount: Number(a.amount ?? a.sum ?? 0),
+        currency: a.currency || a.cur || '₽',
+        status: 'completed',
+        created_at: a.created_at || a.date || Date.now(),
+        note: a.note || a.title || (a.ref_user ? `Реферал: ${a.ref_user}` : 'Начисление по рефералке'),
+        _raw: a
       }));
     }catch(_){ return []; }
   }
 
-  /* Детализация (Orders/Payments) — кэш и мгновенная фильтрация + модалки */
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
     if (!page) return;
-    const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
 
-    let ORDERS_CACHE = null;   // массив заказов
-    let PAYMENTS_CACHE = null; // массив платежей (+рефералка)
+    let ORDERS_CACHE = null;
+    let PAYMENTS_CACHE = null;
 
     page.innerHTML = `
       <div class="details-head details-head--center">
@@ -900,7 +914,6 @@
         `;
       }).join("");
 
-      // клики -> модалка
       list.querySelectorAll('.order').forEach(card=>{
         const id = Number(card.dataset.id);
         const o = ORDERS_CACHE.find(x => Number(x.id) === id);
@@ -932,7 +945,7 @@
 
       list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
       try {
-        const q = new URLSearchParams({ user_id:String(uid) });
+        const q = new URLSearchParams({ user_id:String(getUID()) });
         const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
         ORDERS_CACHE = r.ok ? await r.json() : [];
       } catch { ORDERS_CACHE = []; }
@@ -946,12 +959,14 @@
         return;
       }
       list.innerHTML = PAYMENTS_CACHE.map(p=>{
-        const st  = stInfo(p.status);
+        const isRef = String(p.method||'').toLowerCase()==='referral';
+        const st  = isRef ? stInfo('completed') : stInfo(p.status);
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-        const prov = String(p.method || "cryptobot").toLowerCase();
-        const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        // для рефералки используем иконку referral.svg (ты её добавишь)
-        const ico = prov === "referral" ? `static/img/referral.svg` : `static/img/${prov}.svg`;
+        const prov = isRef ? 'referral' : String(p.method || "cryptobot").toLowerCase();
+        const sub = isRef
+          ? `${p.note || 'начисление по рефералке'} • ${fmtDate(p.created_at)} • #${p.id}`
+          : `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
+        const ico = `static/img/${prov}.svg`;
         return `
           <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
@@ -967,8 +982,8 @@
       }).join("");
 
       list.querySelectorAll('.pay').forEach(card=>{
-        const id = String(card.dataset.id);
-        const p = PAYMENTS_CACHE.find(x => String(x.id) === id);
+        const id = card.dataset.id;
+        const p = PAYMENTS_CACHE.find(x => String(x.id) === String(id));
         if (p) card.addEventListener('click', ()=> showPaymentModal(p));
       });
     }
@@ -981,26 +996,16 @@
       }
       list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
       try {
-        const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
+        const q = new URLSearchParams({ user_id:String(getUID()), refresh:"1" });
         const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-        const base = r.ok ? await r.json() : [];
-        const refs = await fetchReferralAccruals(uid);
-        // Нормализуем и склеиваем
-        const normalizedBase = Array.isArray(base) ? base.map(p=>({
-          id: p.id,
-          amount: Number(p.amount ?? 0),
-          currency: p.currency || "₽",
-          method: (p.method || "cryptobot").toLowerCase(),
-          status: (p.status || "completed"),
-          created_at: p.created_at || p.time || Date.now(),
-          invoice_id: p.invoice_id || null,
-          amount_usd: p.amount_usd != null ? p.amount_usd : null,
-          pay_url: p.pay_url || null,
-          _raw: p
-        })) : [];
-        PAYMENTS_CACHE = [...normalizedBase, ...refs]
-          .sort((a,b)=> tsMs(b.created_at) - tsMs(a.created_at));
-      } catch { PAYMENTS_CACHE = []; }
+        const basePays = r.ok ? await r.json() : [];
+        primeSeenPayments(basePays);
+        const refPays  = await fetchReferralAccruals(getUID());
+        PAYMENTS_CACHE = [...(Array.isArray(basePays)?basePays:[]), ...refPays]
+          .sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
+      } catch {
+        PAYMENTS_CACHE = [];
+      }
       renderPaymentsFromCache();
     }
 
@@ -1037,9 +1042,7 @@
 
       document.getElementById('orderClose')?.addEventListener('click', closeModal);
       document.getElementById('orderRepeat')?.addEventListener('click', async ()=>{
-        // 1) если бэк отдаёт service_id — используем
         let svc = o.service_id ? await fetchServiceById(o.service_id, net) : null;
-        // 2) иначе — пытаемся найти по имени
         if (!svc) svc = await findServiceByName(net, o.service);
         if (!svc){ alert('Не удалось найти услугу для повтора'); return; }
         closeModal();
@@ -1048,21 +1051,41 @@
     }
 
     function showPaymentModal(p){
-      const st = stInfo(p.status);
-      const prov = String(p.method || "cryptobot").toLowerCase();
+      const isRef = String(p.method||'').toLowerCase()==='referral';
+      const st = stInfo(isRef ? 'completed' : p.status);
+      const prov = isRef ? 'referral' : String(p.method || "cryptobot").toLowerCase();
+      const ico = `static/img/${prov}.svg`;
       const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-      const ico = prov === "referral" ? `static/img/referral.svg` : `static/img/${prov}.svg`;
 
-      // Доп. поля для рефералки
-      const refExtra = prov === "referral"
-        ? `
-          <div class="modal-row"><div class="muted">Тип</div><div>Реферальное начисление</div></div>
-          ${p.from_user ? `<div class="modal-row"><div class="muted">От пользователя</div><div>${p.from_user}</div></div>` : ``}
-        `
-        : "";
+      if (isRef){
+        const a = p._raw || {};
+        openModal(`
+          <h3>Начисление по рефералке</h3>
+          <div class="modal-row">
+            <div style="display:flex; gap:10px; align-items:center">
+              <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
+              <div>
+                <div style="font-weight:700">${sum}</div>
+                <div class="muted">referral</div>
+              </div>
+              <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+            </div>
+          </div>
+          <div class="modal-row"><div class="muted">Создано</div><div>${fmtDate(p.created_at)}</div></div>
+          ${a.rate_percent!=null ? `<div class="modal-row"><div class="muted">Процент</div><div>${a.rate_percent}%</div></div>` : ''}
+          ${a.ref_user ? `<div class="modal-row"><div class="muted">Реферал</div><div>${a.ref_user}</div></div>` : ''}
+          ${a.source_amount ? `<div class="modal-row"><div class="muted">Сумма депозита рефа</div><div>${a.source_amount} ${(a.source_currency||p.currency||'₽')}</div></div>` : ''}
+          ${(a.ref_payment_id||a.invoice_id) ? `<div class="modal-row"><div class="muted">Исходный платёж</div><div>#${a.ref_payment_id||a.invoice_id}</div></div>` : ''}
+          <div class="modal-actions">
+            <button class="btn btn-secondary" id="payClose">Закрыть</button>
+          </div>
+        `);
+        document.getElementById('payClose')?.addEventListener('click', closeModal);
+        return;
+      }
 
       openModal(`
-        <h3>${prov === "referral" ? "Начисление" : "Платёж"} #${p.id}</h3>
+        <h3>Платёж #${p.id}</h3>
         <div class="modal-row">
           <div style="display:flex; gap:10px; align-items:center">
             <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
@@ -1074,7 +1097,6 @@
           </div>
         </div>
         <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>
-        ${refExtra}
         ${p.invoice_id ? `<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`:''}
         ${p.amount_usd != null ? `<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`:''}
         ${p.pay_url ? `<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`:''}
@@ -1094,16 +1116,14 @@
     seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
   }
 
-  // ====== Keyboard inset -> CSS var --kb & hide tabbar on keyboard ======
+  // ====== Keyboard inset -> CSS var --kb + скрытие таббара ======
   (function keyboardLift(){
     const root=document.documentElement;
     function applyKbInset(px){
       const v = px>40 ? px : 0;
       root.style.setProperty('--kb', v+'px');
-      const tb = document.querySelector('.tabbar');
-      if (tb) {
-        // Прячем таббар, если клавиатура заметна
-        tb.style.display = v>40 ? 'none' : '';
+      if (tabbarEl){
+        tabbarEl.style.display = v>40 ? 'none' : '';
       }
     }
     if (window.visualViewport){
@@ -1116,9 +1136,7 @@
     try{
       tg?.onEvent?.('viewportChanged', (e)=>{
         const vh=(e&&(e.height||e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
-        if (!vh) return;
-        const inset=Math.max(0, window.innerHeight - vh);
-        applyKbInset(inset);
+        if (!vh) return; const inset=Math.max(0, window.innerHeight - vh); applyKbInset(inset);
       });
     }catch(_){}
   })();
