@@ -878,263 +878,331 @@
   return out.filter(p=>{ const k = (p.id ?? p.invoice_id) + '|' + p.created_at; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
-  async function loadDetails(defaultTab = "orders") {
-    const page = document.getElementById("page-details");
-    if (!page) return;
-    const uid = await uidForApi();
+  // ====== Детализация (Заказы / Платежи) ======
+async function loadDetails(defaultTab = "orders") {
+  const page = document.getElementById("page-details");
+  if (!page) return;
+  const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
 
-    let ORDERS_CACHE = null;
-    let PAYMENTS_CACHE = null;
+  let ORDERS_CACHE = null;   // массив заказов
+  let PAYMENTS_CACHE = null; // объединённый массив: topups + ref_rewards
 
-    page.innerHTML = `
-      <div class="details-head details-head--center">
-        <div class="seg seg--accent" id="detailsSeg">
-          <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
-          <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
-        </div>
+  page.innerHTML = `
+    <div class="details-head details-head--center">
+      <div class="seg seg--accent" id="detailsSeg">
+        <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
+        <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
       </div>
-      <div id="detailsFilters"></div>
-      <div class="list" id="detailsList">
-        <div class="skeleton" style="height:60px"></div>
-        <div class="skeleton" style="height:60px"></div>
-      </div>
-    `;
+    </div>
+    <div id="detailsFilters"></div>
+    <div class="list" id="detailsList">
+      <div class="skeleton" style="height:60px"></div>
+      <div class="skeleton" style="height:60px"></div>
+    </div>
+  `;
 
-    const seg = document.getElementById("detailsSeg");
-    const filtersWrap = document.getElementById("detailsFilters");
-    const list = document.getElementById("detailsList");
+  const seg = document.getElementById("detailsSeg");
+  const filtersWrap = document.getElementById("detailsFilters");
+  const list = document.getElementById("detailsList");
 
-    function renderOrdersFromCache(filter = "all") {
-      if (!Array.isArray(ORDERS_CACHE) || !ORDERS_CACHE.length) {
-        list.innerHTML = `<div class="empty">Заказы не найдены</div>`;
-        return;
-      }
-      const norm = s => String(s||"").toLowerCase();
-      const items = ORDERS_CACHE.filter(o => {
-        if (filter === "all") return true;
-        const s = norm(o.status);
-        if (filter === "processing") return ["processing","in progress","awaiting","pending"].includes(s);
-        if (filter === "completed")  return s === "completed";
-        if (filter === "failed")     return ["failed","canceled","cancelled","failed"].includes(s);
-        return true;
-      });
+  /* ---------------- Orders ---------------- */
 
-      if (!items.length) {
-        list.innerHTML = `<div class="empty">По этому фильтру ничего нет</div>`;
-        return;
-      }
-
-      list.innerHTML = items.map(o => {
-        const st = stInfo(o.status);
-        const title = o.service || "Услуга";
-        const cat = o.category ? `${o.category} • ` : "";
-        const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
-        const net = netFromText(o.service, o.category);
-        const ico = netIcon(net);
-        return `
-          <div class="order" data-id="${o.id}">
-            <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
-            <div class="order__body">
-              <div class="order__head">
-                <div class="order__title">${title}</div>
-                <span class="badge ${st.cls}">${st.label}</span>
-              </div>
-              <div class="order__meta">${cat}Количество: ${o.quantity} • ${fmtDate(o.created_at)}</div>
-              <div class="order__foot">
-                <div class="order__sum">${sum}</div>
-                <div class="order__id">#${o.id}</div>
-              </div>
-            </div>
-          </div>
-        `;
-      }).join("");
-
-      list.querySelectorAll('.order').forEach(card=>{
-        const id = Number(card.dataset.id);
-        const o = ORDERS_CACHE.find(x => Number(x.id) === id);
-        if (!o) return;
-        card.addEventListener('click', ()=> showOrderModal(o));
-      });
+  function renderOrdersFromCache(filter = "all") {
+    if (!Array.isArray(ORDERS_CACHE) || !ORDERS_CACHE.length) {
+      list.innerHTML = `<div class="empty">Заказы не найдены</div>`;
+      return;
     }
-
-    async function renderOrders(filter = "all") {
-      filtersWrap.innerHTML = `
-        <div class="filters">
-          <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
-          <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
-          <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
-          <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отменённые</button>
-        </div>
-      `;
-      filtersWrap.querySelectorAll(".filter").forEach(b => {
-        b.addEventListener("click", () => {
-          filtersWrap.querySelectorAll(".filter").forEach(x=>x.classList.toggle("active", x===b));
-          renderOrdersFromCache(b.dataset.f);
-        });
-      });
-
-      if (Array.isArray(ORDERS_CACHE)) {
-        renderOrdersFromCache(filter);
-        return;
-      }
-
-      list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
-      try {
-        const q = new URLSearchParams({ user_id:String(UID.tgId || uid) });
-        const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
-        ORDERS_CACHE = r.ok ? await r.json() : [];
-      } catch { ORDERS_CACHE = []; }
-
-      renderOrdersFromCache(filter);
-    }
-
-    function renderPaymentsFromCache() {
-      if (!Array.isArray(PAYMENTS_CACHE) || !PAYMENTS_CACHE.length) {
-        list.innerHTML = `<div class="empty">Платежей пока нет</div>`;
-        return;
-      }
-      list.innerHTML = PAYMENTS_CACHE.map(p=>{
-        // Реф-начисления считаем завершёнными и помечаем иконкой
-        const meth = String(p.method || p.type || '').toLowerCase();
-        const st  = meth.includes('ref') ? {label:'Завершён', cls:'badge--completed'} : stInfo(p.status);
-        const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-        const prov = meth || "cryptobot";
-        const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        const ico = paymentIcon(p);
-        return `
-          <div class="pay" data-id="${p.id}">
-            <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
-            <div class="pay__body">
-              <div class="pay__top">
-                <div class="pay__sum">${sum}</div>
-                <span class="badge ${st.cls}">${st.label}</span>
-              </div>
-              <div class="pay__sub">${sub}</div>
-            </div>
-          </div>
-        `;
-      }).join("");
-
-      list.querySelectorAll('.pay').forEach(card=>{
-        const id = Number(card.dataset.id);
-        const p = PAYMENTS_CACHE.find(x => Number(x.id) === id);
-        if (p) card.addEventListener('click', ()=> showPaymentModal(p));
-      });
-    }
-
-    async function renderPayments() {
-  filtersWrap.innerHTML = "";
-  // если уже есть кэш — просто отрисуем
-  if (Array.isArray(PAYMENTS_CACHE)) {
-    renderPaymentsFromCache();
-    return;
-  }
-  list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
-
-  try {
-    const uidApi = UID.tgId || (await uidForApi());
-    // базовые платежи
-    const q = new URLSearchParams({ user_id:String(uidApi), refresh:"1" });
-    const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-    let base = r.ok ? await r.json() : [];
-    if (!Array.isArray(base)) base = [];
-
-    // реф-бонусы
-    let ref = await fetchRefBonusesAll(uidApi);
-    if (!Array.isArray(ref)) ref = [];
-
-    // объединяем и сортируем по дате убыв.
-    PAYMENTS_CACHE = [...base, ...ref].sort((a,b)=>{
-      const A = new Date(a.created_at || 0).getTime();
-      const B = new Date(b.created_at || 0).getTime();
-      return B - A;
+    const norm = s => String(s||"").toLowerCase();
+    const items = ORDERS_CACHE.filter(o => {
+      if (filter === "all") return true;
+      const s = norm(o.status);
+      if (filter === "processing") return ["processing","in progress","awaiting","pending"].includes(s);
+      if (filter === "completed")  return s === "completed";
+      if (filter === "failed")     return ["failed","canceled","cancelled","failed"].includes(s);
+      return true;
     });
-  } catch {
-    PAYMENTS_CACHE = [];
-  }
-  renderPaymentsFromCache();
-}
 
+    if (!items.length) {
+      list.innerHTML = `<div class="empty">По этому фильтру ничего нет</div>`;
+      return;
+    }
 
-    function showOrderModal(o){
+    list.innerHTML = items.map(o => {
       const st = stInfo(o.status);
+      const title = o.service || "Услуга";
+      const cat = o.category ? `${o.category} • ` : "";
+      const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
       const net = netFromText(o.service, o.category);
       const ico = netIcon(net);
-      const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
-      const linkHtml = o.link ? `<a href="${o.link}" target="_blank" rel="noopener">${o.link}</a>` : '—';
-
-      openModal(`
-        <h3>Заказ #${o.id}</h3>
-        <div class="modal-row">
-          <div style="display:flex; gap:10px; align-items:center">
-            <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
-            <div>
-              <div style="font-weight:700">${o.service || 'Услуга'}</div>
-              <div class="muted">${o.category || ''}</div>
+      return `
+        <div class="order" data-id="${o.id}">
+          <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
+          <div class="order__body">
+            <div class="order__head">
+              <div class="order__title">${title}</div>
+              <span class="badge ${st.cls}">${st.label}</span>
             </div>
-            <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+            <div class="order__meta">${cat}Количество: ${o.quantity} • ${fmtDate(o.created_at)}</div>
+            <div class="order__foot">
+              <div class="order__sum">${sum}</div>
+              <div class="order__id">#${o.id}</div>
+            </div>
           </div>
         </div>
-        <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(o.created_at)}</div></div>
-        <div class="modal-row"><div class="muted">Количество</div><div>${o.quantity}</div></div>
-        <div class="modal-row"><div class="muted">Сумма</div><div>${sum}</div></div>
-        <div class="modal-row"><div class="muted">Ссылка</div><div style="word-break:break-all">${linkHtml}</div></div>
-        ${o.provider_id ? `<div class="modal-row"><div class="muted">Поставщик</div><div>#${o.provider_id}</div></div>` : ''}
+      `;
+    }).join("");
 
-        <div class="modal-actions">
-          <button class="btn btn-secondary" id="orderClose">Закрыть</button>
-          <button class="btn btn-primary" id="orderRepeat">Повторить заказ</button>
-        </div>
-      `);
-
-      document.getElementById('orderClose')?.addEventListener('click', closeModal);
-      document.getElementById('orderRepeat')?.addEventListener('click', async ()=>{
-        let svc = o.service_id ? await fetchServiceById(o.service_id, net) : null;
-        if (!svc) svc = await findServiceByName(net, o.service);
-        if (!svc){ alert('Не удалось найти услугу для повтора'); return; }
-        closeModal();
-        openServicePage(svc, { link: o.link, qty: o.quantity });
-      });
-    }
-
-    function showPaymentModal(p){
-      const meth = String(p.method || p.type || '').toLowerCase();
-      const st = meth.includes('ref') ? {label:'Завершён', cls:'badge--completed'} : stInfo(p.status);
-      const prov = meth || "cryptobot";
-      const ico = paymentIcon(p);
-      const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-
-      openModal(`
-        <h3>Платёж #${p.id}</h3>
-        <div class="modal-row">
-          <div style="display:flex; gap:10px; align-items:center">
-            <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
-            <div>
-              <div style="font-weight:700">${sum}</div>
-              <div class="muted">${prov}</div>
-            </div>
-            <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
-          </div>
-        </div>
-        <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>
-        ${p.invoice_id ? `<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`:''}
-        ${p.amount_usd != null ? `<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`:''}
-        ${p.pay_url ? `<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`:''}
-        <div class="modal-actions">
-          <button class="btn btn-secondary" id="payClose">Закрыть</button>
-        </div>
-      `);
-      document.getElementById('payClose')?.addEventListener('click', closeModal);
-    }
-
-    async function switchTab(tab) {
-      seg.querySelectorAll(".seg__btn").forEach(b=>b.classList.toggle("seg__btn--active", b.dataset.tab===tab));
-      if (tab === "orders") await renderOrders("all"); else await renderPayments();
-    }
-
-    await switchTab(defaultTab);
-    seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+    // клики -> модалка
+    list.querySelectorAll('.order').forEach(card=>{
+      const id = String(card.dataset.id);
+      const o = ORDERS_CACHE.find(x => String(x.id) === id);
+      if (!o) return;
+      card.addEventListener('click', ()=> showOrderModal(o));
+    });
   }
+
+  async function renderOrders(filter = "all") {
+    filtersWrap.innerHTML = `
+      <div class="filters">
+        <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
+        <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
+        <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
+        <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отменённые</button>
+      </div>
+    `;
+    filtersWrap.querySelectorAll(".filter").forEach(b => {
+      b.addEventListener("click", () => {
+        filtersWrap.querySelectorAll(".filter").forEach(x=>x.classList.toggle("active", x===b));
+        renderOrdersFromCache(b.dataset.f);
+      });
+    });
+
+    if (Array.isArray(ORDERS_CACHE)) {
+      renderOrdersFromCache(filter);
+      return;
+    }
+
+    list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
+    try {
+      const q = new URLSearchParams({ user_id:String(uid) });
+      const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
+      ORDERS_CACHE = r.ok ? await r.json() : [];
+    } catch { ORDERS_CACHE = []; }
+
+    renderOrdersFromCache(filter);
+  }
+
+  /* ---------------- Payments (topups + referrals) ---------------- */
+
+  // нормализуем ответ по пополнениям
+  function normTopup(p){
+    const method = (p.method || p.provider || 'cryptobot') + '';
+    const currency = p.currency || 'RUB';
+    const created = p.created_at ?? p.createdAt ?? p.time ?? p.ts;
+    const status = p.applied ? 'completed' : (p.status || 'processing');
+    const amount = (p.amount != null ? p.amount
+                   : (p.amount_rub != null ? p.amount_rub
+                   : (p.amount_usd != null ? p.amount_usd
+                   : 0)));
+    return {
+      id: p.id, user_id: p.user_id,
+      method, status,
+      amount, currency,
+      created_at: created,
+      invoice_id: p.invoice_id, pay_url: p.pay_url,
+      _source: 'topup'
+    };
+  }
+
+  // нормализуем ответ по реф-бонусам (ref_rewards / ref_bonuses …)
+  function normRef(r){
+    const currency = r.currency || 'RUB';
+    const created  = r.created_at ?? r.createdAt ?? r.time ?? r.ts;
+    const amount   = (r.amount_credit != null ? r.amount_credit
+                      : (r.amount != null ? r.amount : 0));
+    return {
+      id: r.id,
+      user_id: (r.to_user_id ?? r.ref_user_id ?? r.user_id),
+      method: 'ref',
+      status: 'completed',               // реф-начисление сразу зачислено
+      amount, currency,
+      created_at: created,
+      invoice_id: r.topup_id || null,    // если есть связь с топапом
+      from_user_id: r.from_user_id || r.invited_user_id || null,
+      _source: 'ref'
+    };
+  }
+
+  async function fetchPaymentsUnion() {
+    if (Array.isArray(PAYMENTS_CACHE)) return PAYMENTS_CACHE;
+
+    let topups = [];
+    let refs   = [];
+
+    // 1) обычные пополнения
+    try {
+      const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
+      const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
+      const arr = r.ok ? await r.json() : [];
+      if (Array.isArray(arr)) topups = arr.map(normTopup);
+    } catch {}
+
+    // 2) пробуем несколько возможных путей для реф-начислений
+    const candidates = [
+      `${API_BASE}/ref/rewards?user_id=${encodeURIComponent(uid)}`,
+      `${API_BASE}/referrals/rewards?user_id=${encodeURIComponent(uid)}`,
+      `${API_BASE}/ref/bonuses?user_id=${encodeURIComponent(uid)}`,
+      `${API_BASE}/referral/bonuses?user_id=${encodeURIComponent(uid)}`
+    ];
+    for (const url of candidates) {
+      try {
+        const r = await fetch(bust(url), { credentials:"include" });
+        if (r.ok) {
+          const arr = await r.json();
+          if (Array.isArray(arr) && arr.length) { refs = arr.map(normRef); break; }
+        }
+      } catch {}
+    }
+
+    // 3) объединяем и сортируем
+    PAYMENTS_CACHE = [...topups, ...refs].sort((a,b)=> Number(b.created_at) - Number(a.created_at));
+    return PAYMENTS_CACHE;
+  }
+
+  function renderPaymentsFromCache() {
+    if (!Array.isArray(PAYMENTS_CACHE) || !PAYMENTS_CACHE.length) {
+      list.innerHTML = `<div class="empty">Платежей пока нет</div>`;
+      return;
+    }
+    list.innerHTML = PAYMENTS_CACHE.map(p=>{
+      const st  = stInfo(p.status);
+      const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+      const prov = String(p.method || "cryptobot").toLowerCase(); // 'cryptobot' | 'ref' | ...
+      const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
+      const ico = `static/img/${prov}.svg`;
+      return `
+        <div class="pay" data-id="${p.id}">
+          <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
+          <div class="pay__body">
+            <div class="pay__top">
+              <div class="pay__sum">${sum}</div>
+              <span class="badge ${st.cls}">${st.label}</span>
+            </div>
+            <div class="pay__sub">${sub}</div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    list.querySelectorAll('.pay').forEach(card=>{
+      const id = String(card.dataset.id);
+      const p = PAYMENTS_CACHE.find(x => String(x.id) === id);
+      if (p) card.addEventListener('click', ()=> showPaymentModal(p));
+    });
+  }
+
+  async function renderPayments() {
+    filtersWrap.innerHTML = "";
+    list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
+    await fetchPaymentsUnion();
+    renderPaymentsFromCache();
+  }
+
+  /* ---------------- Modals ---------------- */
+
+  function showOrderModal(o){
+    const st = stInfo(o.status);
+    const net = netFromText(o.service, o.category);
+    const ico = netIcon(net);
+    const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
+    const linkHtml = o.link ? `<a href="${o.link}" target="_blank" rel="noopener">${o.link}</a>` : '—';
+
+    openModal(`
+      <h3>Заказ #${o.id}</h3>
+      <div class="modal-row">
+        <div style="display:flex; gap:10px; align-items:center">
+          <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
+          <div>
+            <div style="font-weight:700">${o.service || 'Услуга'}</div>
+            <div class="muted">${o.category || ''}</div>
+          </div>
+          <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+        </div>
+      </div>
+      <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(o.created_at)}</div></div>
+      <div class="modal-row"><div class="muted">Количество</div><div>${o.quantity}</div></div>
+      <div class="modal-row"><div class="muted">Сумма</div><div>${sum}</div></div>
+      <div class="modal-row"><div class="muted">Ссылка</div><div style="word-break:break-all">${linkHtml}</div></div>
+      ${o.provider_id ? `<div class="modal-row"><div class="muted">Поставщик</div><div>#${o.provider_id}</div></div>` : ''}
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="orderClose">Закрыть</button>
+        <button class="btn btn-primary" id="orderRepeat">Повторить заказ</button>
+      </div>
+    `);
+
+    document.getElementById('orderClose')?.addEventListener('click', closeModal);
+    document.getElementById('orderRepeat')?.addEventListener('click', async ()=>{
+      // 1) если бэк когда-нибудь отдаст service_id — используем его
+      let svc = o.service_id ? await fetchServiceById(o.service_id, net) : null;
+      // 2) иначе — пытаемся найти по имени в каталоге
+      if (!svc && typeof findServiceByName === 'function') {
+        svc = await findServiceByName(net, o.service);
+      }
+      if (!svc){ alert('Не удалось найти услугу для повтора'); return; }
+      closeModal();
+      openServicePage(svc, { link: o.link, qty: o.quantity });
+    });
+  }
+
+  function showPaymentModal(p){
+    const st = stInfo(p.status);
+    const prov = String(p.method || "cryptobot").toLowerCase(); // 'cryptobot' | 'ref'
+    const ico = `static/img/${prov}.svg`;
+    const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+
+    const extraRows = [];
+    extraRows.push(`<div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>`);
+    if (prov === 'cryptobot' || prov === 'qiwi' || prov === 'card') {
+      if (p.invoice_id) extraRows.push(`<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`);
+      if (p.amount_usd != null) extraRows.push(`<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`);
+      if (p.pay_url) extraRows.push(`<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`);
+    } else if (prov === 'ref') {
+      if (p.from_user_id) extraRows.push(`<div class="modal-row"><div class="muted">От пользователя</div><div>#${p.from_user_id}</div></div>`);
+      if (p.invoice_id)   extraRows.push(`<div class="modal-row"><div class="muted">Топап</div><div>#${p.invoice_id}</div></div>`);
+    }
+
+    openModal(`
+      <h3>${prov === 'ref' ? 'Реферальное начисление' : 'Платёж'} #${p.id}</h3>
+      <div class="modal-row">
+        <div style="display:flex; gap:10px; align-items:center">
+          <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
+          <div>
+            <div style="font-weight:700">${sum}</div>
+            <div class="muted">${prov}</div>
+          </div>
+          <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+        </div>
+      </div>
+      ${extraRows.join("")}
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="payClose">Закрыть</button>
+      </div>
+    `);
+    document.getElementById('payClose')?.addEventListener('click', closeModal);
+  }
+
+  /* ---------------- Switch ---------------- */
+
+  async function switchTab(tab) {
+    seg.querySelectorAll(".seg__btn").forEach(b=>b.classList.toggle("seg__btn--active", b.dataset.tab===tab));
+    if (tab === "orders") await renderOrders("all"); else await renderPayments();
+  }
+
+  await switchTab(defaultTab);
+  seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+}
+
 
   // ====== Keyboard inset -> CSS var --kb + hide tabbar ======
   (function keyboardLift(){
