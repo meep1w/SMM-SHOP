@@ -68,6 +68,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- no-cache middleware (отключаем кэш для всех /api/*) ---
+@app.middleware("http")
+async def _no_cache_middleware(request: Request, call_next):
+    resp = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0, private"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
 # глобальный HTTP клиент
 _client = httpx.AsyncClient(timeout=30.0)
 

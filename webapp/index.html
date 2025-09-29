@@ -5,24 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Slovekiza — Магазин SMM</title>
 
-  <script>
-    (function () {
-      // меняй на каждом деплое (дата / git sha и т.д.)
-      const V = '2025-09-28-01';
+  <!-- index.html лучше не кэшировать (сервер всё равно выставит заголовки, но это не повредит) -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
 
-      const h = document.head;
-      function add(tag, attrs) {
-        const el = document.createElement(tag);
-        Object.assign(el, attrs);
-        h.appendChild(el);
-        return el;
-      }
-
-      add('link',   { rel: 'stylesheet', href: `static/css/styles.css?v=${V}` });
-      add('script', { defer: true, src: 'https://telegram.org/js/telegram-web-app.js' });
-      add('script', { defer: true, src: `static/js/app.js?v=${V}` });
-    })();
-  </script>
+  <!-- ВАЖНО: эти пути будут автоматически заменены скриптом на app.<hash>.js / styles.<hash>.css -->
+  <link rel="stylesheet" href="static/css/styles.css" />
+  <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script defer src="static/js/app.js"></script>
 </head>
 
 <body>
@@ -121,7 +112,7 @@
   </button>
 </nav>
 
-<!-- ===== Простая модалка (оставили для совместимости, но не используется для заказа) ===== -->
+<!-- ===== Простая модалка (совместимость) ===== -->
 <div class="modal" id="orderModal" aria-hidden="true">
   <div class="modal-backdrop"></div>
   <div class="modal-card">
