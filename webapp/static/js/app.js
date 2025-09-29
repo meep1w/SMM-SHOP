@@ -821,9 +821,62 @@
 
   function paymentIcon(p){
     const m = String(p.method || p.type || '').toLowerCase();
-    if (m.includes('ref')) return 'static/img/ref_bonus.svg'; // ты добавишь иконку
+    if (m.includes('ref')) return 'static/img/referral.svg'; // ты добавишь иконку
     return `static/img/${m || 'cryptobot'}.svg`;
   }
+
+  async function fetchRefBonusesAll(uid){
+  const out = [];
+  // 1) Попытка: те же /payments, но с флагом include_ref=1
+  try{
+    const q = new URLSearchParams({ user_id:String(uid), include_ref:"1", refresh:"1" });
+    const r = await fetch(`${API_BASE}/payments?${q.toString()}`, { credentials:"include" });
+    if (r.ok){
+      const arr = await r.json();
+      if (Array.isArray(arr)){
+        arr.forEach(p=>{
+          const m = String(p.method || p.type || '').toLowerCase();
+          if (m.includes('ref')) out.push(p);
+        });
+      }
+    }
+  }catch(_){}
+
+  // 2) Попытка: отдельные эндпоинты реф-истории (поддерживаем разные названия)
+  const candidates = [
+    `${API_BASE}/referrals/bonuses?user_id=${encodeURIComponent(uid)}`,
+    `${API_BASE}/referrals/history?user_id=${encodeURIComponent(uid)}`,
+    `${API_BASE}/referrals/payments?user_id=${encodeURIComponent(uid)}`
+  ];
+  for (const url of candidates){
+    try{
+      const r = await fetch(url, { credentials:"include" });
+      if (!r.ok) continue;
+      const arr = await r.json();
+      if (!Array.isArray(arr)) continue;
+      arr.forEach(raw=>{
+        // максимально гибкое сопоставление полей
+        const id  = raw.id ?? raw.bonus_id ?? raw.payment_id ?? raw.tx_id ?? raw.ts ?? Math.random();
+        const sum = Number(raw.amount ?? raw.sum ?? raw.value ?? raw.bonus ?? 0);
+        const cur = String(raw.currency || raw.curr || 'RUB');
+        const at  = raw.created_at ?? raw.time ?? raw.date ?? raw.ts ?? Date.now();
+        out.push({
+          id: 'ref_'+id,
+          method: 'ref_bonus',
+          status: 'completed',
+          amount: sum,
+          currency: cur,
+          created_at: at
+        });
+      });
+      break; // нашли — хватит
+    }catch(_){}
+  }
+
+  // убрать возможные дубли
+  const seen = new Set();
+  return out.filter(p=>{ const k = (p.id ?? p.invoice_id) + '|' + p.created_at; if (seen.has(k)) return false; seen.add(k); return true; });
+}
 
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
@@ -970,19 +1023,38 @@
     }
 
     async function renderPayments() {
-      filtersWrap.innerHTML = "";
-      if (Array.isArray(PAYMENTS_CACHE)) {
-        renderPaymentsFromCache();
-        return;
-      }
-      list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
-      try {
-        const q = new URLSearchParams({ user_id:String(UID.tgId || uid), refresh:"1" });
-        const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-        PAYMENTS_CACHE = r.ok ? await r.json() : [];
-      } catch { PAYMENTS_CACHE = []; }
-      renderPaymentsFromCache();
-    }
+  filtersWrap.innerHTML = "";
+  // если уже есть кэш — просто отрисуем
+  if (Array.isArray(PAYMENTS_CACHE)) {
+    renderPaymentsFromCache();
+    return;
+  }
+  list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
+
+  try {
+    const uidApi = UID.tgId || (await uidForApi());
+    // базовые платежи
+    const q = new URLSearchParams({ user_id:String(uidApi), refresh:"1" });
+    const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
+    let base = r.ok ? await r.json() : [];
+    if (!Array.isArray(base)) base = [];
+
+    // реф-бонусы
+    let ref = await fetchRefBonusesAll(uidApi);
+    if (!Array.isArray(ref)) ref = [];
+
+    // объединяем и сортируем по дате убыв.
+    PAYMENTS_CACHE = [...base, ...ref].sort((a,b)=>{
+      const A = new Date(a.created_at || 0).getTime();
+      const B = new Date(b.created_at || 0).getTime();
+      return B - A;
+    });
+  } catch {
+    PAYMENTS_CACHE = [];
+  }
+  renderPaymentsFromCache();
+}
+
 
     function showOrderModal(o){
       const st = stInfo(o.status);
