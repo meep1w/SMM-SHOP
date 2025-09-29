@@ -998,13 +998,20 @@ async def api_payments(
     # map referral rewards
     for r in rewards:
         created = int(getattr(r, "created_at", None) or now_ts())
-        amount  = round(float(r.amount_credit or 0.0), 2)
+        amount = round(float(r.amount_credit or 0.0), 2)
         currency = r.currency or CURRENCY
+        # гарантируем числовой amount_usd (как у топапов)
+        if CURRENCY == "USD":
+            amount_usd = amount
+        else:
+            fx = await fx_usd_rub()
+            amount_usd = round(amount / fx, 2)
+
         items.append({
-            "id": int(r.id),              # оставляем числовой id (у топапов другой диапазон)
+            "id": int(r.id),
             "created_at": created,
             "amount": amount,
-            "amount_usd": None,          # не применимо; сумма уже в валюте магазина
+            "amount_usd": amount_usd,
             "currency": currency,
             "method": "ref",
             "status": "completed",
