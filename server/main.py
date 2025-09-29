@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import os, time, json, logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple, Set
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Body, Request, Query
+from fastapi import FastAPI, HTTPException, Body, Request, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -14,6 +14,7 @@ from .db import (
     Base, engine, SessionLocal,
     User, Service, Favorite, Order, Topup,
     RefLink, RefBind, RefReward,
+    PromoCode, PromoActivation,
     stable_seq, now_ts,
 )
 
@@ -35,6 +36,8 @@ origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 
 CURRENCY = (os.getenv("CURRENCY", "RUB") or "RUB").strip().upper()
 MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER", "5.0"))
+
+ADMIN_TOKEN = (os.getenv("ADMIN_TOKEN", "") or "").strip()
 
 # CryptoBot (учтены возможные опечатки)
 CRYPTOBOT_API_KEY  = os.getenv("CRYPTOBOT_API_KEY") or os.getenv("CRYPTOPBOT_API_KEY") or ""
@@ -59,7 +62,7 @@ DISPLAY = {
 }
 
 # --- app ---
-app = FastAPI(title="SMMShop API", version="2.2")
+app = FastAPI(title="SMMShop API", version="2.3")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins or ["*"],
@@ -122,17 +125,48 @@ async def fx_usd_rub() -> float:
     return 100.0
 
 
-def client_rate_view_per_1k(base_usd_per_1k: float, fx: float) -> float:
-    usd_client = float(base_usd_per_1k) * MARKUP_MULTIPLIER
-    if CURRENCY == "RUB":
-        return usd_client * fx
-    return usd_client
-
-
 def db() -> Session:
     return SessionLocal()
 
 
+# ========== Pricing helpers (персональная наценка) ==========
+def user_markup(u: Optional[User]) -> float:
+    """
+    Возвращает персональную наценку пользователя, если задана,
+    иначе дефолт из ENV.
+    """
+    try:
+        m = float(getattr(u, "markup_override", None) or 0.0)
+        if m > 0:
+            return m
+    except Exception:
+        pass
+    return MARKUP_MULTIPLIER
+
+
+async def rate_per_1k_for_user(svc: Service, u: Optional[User]) -> float:
+    """
+    Возвращает клиентскую цену за 1000 с учётом персональной наценки.
+    В БД хранится цена под дефолтной наценкой. Восстанавливаем base_usd и
+    применяем персональную.
+    """
+    current_view = float(svc.rate_client_1000 or 0.0)
+    if current_view <= 0:
+        return 0.0
+    mul = user_markup(u)
+
+    if CURRENCY == "USD":
+        # rate_client_1000 = base * MARKUP_MULTIPLIER
+        base_usd = current_view / max(MARKUP_MULTIPLIER, 1e-9)
+        return base_usd * mul
+    else:
+        fx = await fx_usd_rub()
+        # rate_client_1000(RUB) = base * MARKUP_MULTIPLIER * fx
+        base_usd = current_view / max(MARKUP_MULTIPLIER * fx, 1e-9)
+        return base_usd * mul * fx
+
+
+# ===== ensure_user() =====
 def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
     # robust: без one_or_none()
     u = (
@@ -147,16 +181,15 @@ def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
         u.last_seen_at = now_ts()
         s.commit()
 
-        # 🔧 БЭКФИЛЛ: если у существующего пользователя нет избранных — добавим дефолтные
+        # дефолтные избранные
         fav_cnt = s.query(Favorite).filter(Favorite.user_id == u.id).count()
         if fav_cnt == 0:
             for sid in (2127, 2453, 2454):
                 s.merge(Favorite(user_id=u.id, service_id=sid))
             s.commit()
-
         return u
 
-    # пользователь создаётся впервые — как и было, добавляем дефолтные
+    # создаём
     u = User(
         tg_id=tg_id,
         seq=stable_seq(tg_id),
@@ -175,7 +208,6 @@ def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
     return u
 
 
-
 # --- схемы ---
 class UserOut(BaseModel):
     seq: int
@@ -184,6 +216,7 @@ class UserOut(BaseModel):
     balance: float = 0.0
     topup_delta: float = 0.0
     topup_currency: str = "USD"
+    markup: Optional[float] = None     # персональная наценка пользователя (если есть)
 
 
 class CreateOrderIn(BaseModel):
@@ -230,11 +263,17 @@ def _detect_network(name: str, category: str) -> Optional[str]:
     if "facebook" in t or " fb " in t or " meta " in t:
         return "facebook"
 
-    # всё прочее: twitter/x, vk, twitch, etc — не показываем в нашем каталоге
+    # всё прочее скрываем из каталога
     if "twitter" in t or "x.com" in t or " x " in t or "tweet" in t or "retweet" in t:
         return None
     return None
 
+
+def client_rate_view_per_1k(base_usd_per_1k: float, fx: float) -> float:
+    usd_client = float(base_usd_per_1k) * MARKUP_MULTIPLIER
+    if CURRENCY == "RUB":
+        return usd_client * fx
+    return usd_client
 
 
 async def sync_services_into_db():
@@ -253,8 +292,8 @@ async def sync_services_into_db():
             net = _detect_network(name, cat)
             is_active = True
             if not net:
-                net = "other"  # всё, что не распознали — в "other"
-                is_active = False  # и выключаем из каталога
+                net = "other"
+                is_active = False
 
             obj = s.get(Service, sid)
             if not obj:
@@ -332,6 +371,217 @@ def _current_rate_for_owner(s: Session, owner_user_id: int) -> float:
     return REF_TIER_RATE if cnt >= REF_TIER_THRESHOLD else REF_BASE_RATE
 
 
+# ============== PROMO: helpers & endpoints ==============
+def _norm_code(code: Optional[str]) -> str:
+    return (code or "").strip().upper()
+
+
+def _promo_active(pc: PromoCode) -> bool:
+    if not pc.is_active:
+        return False
+    now = now_ts()
+    if pc.valid_from and now < int(pc.valid_from):
+        return False
+    if pc.expires_at and now > int(pc.expires_at):
+        return False
+    return True
+
+
+def _promo_counters(s: Session, pc: PromoCode, user_id: int) -> Tuple[int, int]:
+    total = s.query(func.count(PromoActivation.id)).filter(PromoActivation.code_id == pc.id).scalar() or 0
+    per_user = (
+        s.query(func.count(PromoActivation.id))
+        .filter(PromoActivation.code_id == pc.id, PromoActivation.user_id == user_id)
+        .scalar()
+        or 0
+    )
+    return total, per_user
+
+
+def _promo_can_use(s: Session, pc: PromoCode, user_id: int) -> Tuple[bool, str]:
+    if not _promo_active(pc):
+        return False, "promo_not_active"
+    total, per_user = _promo_counters(s, pc, user_id)
+    if (pc.max_activations or 0) > 0 and total >= int(pc.max_activations or 0):
+        return False, "promo_limit_reached"
+    if (pc.per_user_limit or 0) > 0 and per_user >= int(pc.per_user_limit or 0):
+        return False, "promo_user_limit_reached"
+    return True, ""
+
+
+async def _apply_markup_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, Any]:
+    if pc.type != "markup" or not pc.markup_value or pc.markup_value <= 0:
+        raise HTTPException(400, "invalid_promo_type")
+    ok, reason = _promo_can_use(s, pc, u.id)
+    if not ok:
+        raise HTTPException(409, reason)
+    u.markup_override = float(pc.markup_value)
+    s.add(PromoActivation(code_id=pc.id, user_id=u.id, amount_credit=None, discount_applied=None, created_at=now_ts()))
+    s.commit()
+    return {"ok": True, "kind": "markup", "markup": u.markup_override}
+
+
+async def _apply_balance_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, Any]:
+    if pc.type != "balance" or not pc.balance_usd or pc.balance_usd <= 0:
+        raise HTTPException(400, "invalid_promo_type")
+    ok, reason = _promo_can_use(s, pc, u.id)
+    if not ok:
+        raise HTTPException(409, reason)
+
+    usd = float(pc.balance_usd or 0.0)
+    if CURRENCY == "USD":
+        add = round(usd, 2)
+    else:
+        fx = await fx_usd_rub()
+        add = round(usd * fx, 2)
+
+    # кредитуем сразу (без ожидания consume_topup)
+    u.balance = float(u.balance or 0.0) + add
+    t = Topup(
+        user_id=u.id,
+        provider="promo",
+        invoice_id=str(pc.code),
+        amount_usd=usd,
+        currency="USD",
+        status="paid",
+        applied=True,
+        pay_url=None,
+        created_at=now_ts(),
+    )
+    s.add(t)
+    s.add(PromoActivation(code_id=pc.id, user_id=u.id, amount_credit=add, discount_applied=None, created_at=now_ts()))
+    s.commit()
+    return {"ok": True, "kind": "balance", "added": add, "currency": CURRENCY}
+
+
+def _check_discount_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, Any]:
+    if pc.type != "discount" or pc.discount_percent is None or pc.discount_percent <= 0:
+        raise HTTPException(400, "invalid_promo_type")
+    ok, reason = _promo_can_use(s, pc, u.id)
+    if not ok:
+        raise HTTPException(409, reason)
+    pct = float(pc.discount_percent)
+    if pct >= 1.0:
+        pct = pct / 100.0  # на случай ввода "15" вместо "0.15"
+    pct = max(0.0, min(0.95, pct))  # защитим от 100%
+    return {"ok": True, "kind": "discount", "percent": pct}
+
+
+class PromoApplyIn(BaseModel):
+    user_id: int
+    code: str
+
+
+@app.post("/api/v1/promo/apply")
+async def promo_apply(body: PromoApplyIn):
+    """
+    Применение промокода в профиле.
+    Поддерживает:
+      - type=markup  — навсегда: устанавливает персональную наценку пользователю
+      - type=balance — одноразово: начисляет баланс (в USD-эквив., конвертируем в валюту магазина)
+    Для скидок используйте /promo/check и передачу promo_code в /order/create.
+    """
+    code = _norm_code(body.code)
+    if not code:
+        raise HTTPException(400, "empty_code")
+
+    with db() as s:
+        u = ensure_user(s, body.user_id)
+        pc = s.query(PromoCode).filter(func.upper(PromoCode.code) == code).one_or_none()
+        if not pc:
+            raise HTTPException(404, "promo_not_found")
+
+        if pc.type == "markup":
+            return await _apply_markup_promo(s, u, pc)
+        elif pc.type == "balance":
+            return await _apply_balance_promo(s, u, pc)
+        elif pc.type == "discount":
+            # сообщаем, что этот ввод — на странице заказа
+            data = _check_discount_promo(s, u, pc)
+            data["hint"] = "use_in_order"
+            return data
+        else:
+            raise HTTPException(400, "unknown_promo_type")
+
+
+@app.get("/api/v1/promo/check")
+async def promo_check(user_id: int = Query(...), code: str = Query(...)):
+    """
+    Проверка скидочного промокода перед оформлением заказа.
+    Возвращает percent (0..1).
+    """
+    code = _norm_code(code)
+    if not code:
+        raise HTTPException(400, "empty_code")
+    with db() as s:
+        u = ensure_user(s, user_id)
+        pc = s.query(PromoCode).filter(func.upper(PromoCode.code) == code).one_or_none()
+        if not pc:
+            raise HTTPException(404, "promo_not_found")
+        if pc.type != "discount":
+            raise HTTPException(400, "not_discount_code")
+        return _check_discount_promo(s, u, pc)
+
+
+# ---- Admin create promo ----
+class PromoAdminCreateIn(BaseModel):
+    code: str
+    type: str  # markup | balance | discount
+    markup_value: Optional[float] = None
+    balance_usd: Optional[float] = None
+    discount_percent: Optional[float] = None
+    max_activations: int = 1
+    per_user_limit: int = 1
+    valid_from: Optional[int] = None
+    expires_at: Optional[int] = None
+    is_active: bool = True
+    notes: Optional[str] = None
+
+
+@app.post("/api/v1/promo/admin/create")
+async def promo_admin_create(
+    body: PromoAdminCreateIn,
+    authorization: Optional[str] = Header(None)
+):
+    if not ADMIN_TOKEN:
+        raise HTTPException(403, "admin_token_not_set")
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "missing_bearer")
+    token = authorization.split(" ", 1)[1].strip()
+    if token != ADMIN_TOKEN:
+        raise HTTPException(403, "forbidden")
+
+    code = _norm_code(body.code)
+    if not code:
+        raise HTTPException(400, "empty_code")
+
+    if body.type not in ("markup", "balance", "discount"):
+        raise HTTPException(400, "invalid_type")
+
+    with db() as s:
+        exists = s.query(PromoCode.id).filter(func.upper(PromoCode.code) == code).first()
+        if exists:
+            raise HTTPException(409, "code_exists")
+        pc = PromoCode(
+            code=code,
+            type=body.type,
+            markup_value=body.markup_value if body.type == "markup" else None,
+            balance_usd=body.balance_usd if body.type == "balance" else None,
+            discount_percent=body.discount_percent if body.type == "discount" else None,
+            max_activations=int(body.max_activations or 0),
+            per_user_limit=int(body.per_user_limit or 0),
+            valid_from=body.valid_from,
+            expires_at=body.expires_at,
+            is_active=bool(body.is_active),
+            notes=body.notes,
+            created_at=now_ts(),
+        )
+        s.add(pc)
+        s.commit()
+        s.refresh(pc)
+        return {"ok": True, "id": pc.id, "code": pc.code, "type": pc.type}
+
+
 # --- endpoints ---
 @app.get("/api/v1/ping")
 async def ping():
@@ -382,7 +632,6 @@ async def api_user(
                 # курс для конвертации в валюту магазина
                 fx = await fx_usd_rub()
                 for t in pays:
-                    # зачисляем пользователю основной платёж
                     usd = float(t.amount_usd or 0.0)
                     add = usd if CURRENCY == "USD" else (usd * fx)
                     add = round(add, 2)
@@ -422,6 +671,7 @@ async def api_user(
             balance=float(u.balance or 0.0),
             topup_delta=round(delta, 6),
             topup_currency="USD",
+            markup=float(u.markup_override) if u.markup_override else None,
         )
 
 
@@ -553,40 +803,98 @@ async def api_referrals_stats(user_id: int = Query(...)):
 
 
 @app.get("/api/v1/services")
-async def api_services():
+async def api_services(user_id: Optional[int] = Query(None)):
+    """
+    Если передан user_id — возвращаем цены с учётом персональной наценки.
+    Иначе — как в базе (под дефолтную наценку).
+    """
     with db() as s:
+        u: Optional[User] = None
+        if user_id:
+            u = (
+                s.query(User)
+                .filter(User.tg_id == user_id)
+                .order_by(User.id.desc())
+                .first()
+            ) or s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
+
         groups = {k: {**DISPLAY[k], "count": 0} for k in DISPLAY}
         for it in s.query(Service).filter(Service.active == True).all():  # noqa: E712
             if it.network in groups:
                 groups[it.network]["count"] += 1
+        # просто выдаём счётчик по сетям
         return [groups[k] for k in ["telegram", "tiktok", "instagram", "youtube", "facebook"]]
 
 
 @app.get("/api/v1/services/{network}")
-async def api_services_by_network(network: str):
+async def api_services_by_network(network: str, user_id: Optional[int] = Query(None)):
+    """
+    Возвращает список услуг сети. Если user_id задан — цена с учётом персональной наценки.
+    """
     if network not in NETWORKS:
         raise HTTPException(404, "Unknown network")
     with db() as s:
+        u: Optional[User] = None
+        if user_id:
+            u = (
+                s.query(User)
+                .filter(User.tg_id == user_id)
+                .order_by(User.id.desc())
+                .first()
+            ) or s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
+
         items = (
             s.query(Service)
             .filter(Service.network == network, Service.active == True)  # noqa: E712
             .order_by(Service.id.asc())
             .all()
         )
-        return [
-            {
-                "service": it.id,
-                "network": it.network,
-                "name": it.name,
-                "type": it.type,
-                "min": it.min,
-                "max": it.max,
-                "rate_client_1000": float(it.rate_client_1000 or 0.0),
-                "currency": it.currency or CURRENCY,
-                "description": it.description or "",
-            }
-            for it in items
-        ]
+
+        # если есть пользователь — пересчитываем rate_client_1000 под его наценку
+        out = []
+        if u is not None:
+            import asyncio
+            fx = None
+            if CURRENCY == "RUB":
+                fx = asyncio.get_event_loop().run_until_complete(fx_usd_rub())
+            for it in items:
+                # вручную повтор расчёта без ожидания (чтобы не делать await много раз)
+                current_view = float(it.rate_client_1000 or 0.0)
+                mul = user_markup(u)
+                if CURRENCY == "USD":
+                    base_usd = current_view / max(MARKUP_MULTIPLIER, 1e-9)
+                    new_rate = base_usd * mul
+                else:
+                    base_usd = current_view / max(MARKUP_MULTIPLIER * (fx or 1.0), 1e-9)
+                    new_rate = base_usd * mul * (fx or 1.0)
+
+                out.append({
+                    "service": it.id,
+                    "network": it.network,
+                    "name": it.name,
+                    "type": it.type,
+                    "min": it.min,
+                    "max": it.max,
+                    "rate_client_1000": float(round(new_rate, 4)),
+                    "currency": it.currency or CURRENCY,
+                    "description": it.description or "",
+                })
+        else:
+            out = [
+                {
+                    "service": it.id,
+                    "network": it.network,
+                    "name": it.name,
+                    "type": it.type,
+                    "min": it.min,
+                    "max": it.max,
+                    "rate_client_1000": float(it.rate_client_1000 or 0.0),
+                    "currency": it.currency or CURRENCY,
+                    "description": it.description or "",
+                }
+                for it in items
+            ]
+        return out
 
 
 # ---- Favorites ----
@@ -649,7 +957,28 @@ async def api_order_create(body: CreateOrderIn):
         if body.quantity < (svc.min or 0) or body.quantity > (svc.max or 0):
             raise HTTPException(400, f"Количество должно быть от {svc.min} до {svc.max}")
 
-        cost = round(float(svc.rate_client_1000 or 0.0) * body.quantity / 1000.0, 2)
+        # цена с учётом персональной наценки
+        rate = await rate_per_1k_for_user(svc, u)
+        base_cost = float(round(rate * body.quantity / 1000.0, 2))
+
+        # скидочный промокод (если передан)
+        discount_applied = 0.0
+        promo_row: Optional[PromoCode] = None
+        if body.promo_code:
+            code = _norm_code(body.promo_code)
+            if code:
+                pc = s.query(PromoCode).filter(func.upper(PromoCode.code) == code).one_or_none()
+                if not pc:
+                    raise HTTPException(404, "promo_not_found")
+                if pc.type != "discount":
+                    raise HTTPException(400, "promo_not_discount")
+                chk = _check_discount_promo(s, u, pc)
+                pct = float(chk["percent"])
+                discount_applied = round(base_cost * pct, 2)
+                promo_row = pc
+
+        cost = max(0.0, round(base_cost - discount_applied, 2))
+
         if float(u.balance or 0.0) < cost:
             raise HTTPException(402, "Недостаточно средств")
 
@@ -668,6 +997,7 @@ async def api_order_create(body: CreateOrderIn):
         except Exception as e:
             raise HTTPException(502, f"Supplier error: {e}")
 
+        # списываем баланс
         u.balance = float(u.balance or 0.0) - cost
         o = Order(
             user_id=u.id,
@@ -682,6 +1012,19 @@ async def api_order_create(body: CreateOrderIn):
         s.add(o)
         s.commit()
         s.refresh(o)
+
+        # фиксируем активацию скидочного промокода, если был
+        if promo_row and discount_applied > 0:
+            s.add(PromoActivation(
+                code_id=promo_row.id,
+                user_id=u.id,
+                order_id=o.id,
+                amount_credit=None,
+                discount_applied=discount_applied,
+                created_at=now_ts(),
+            ))
+            s.commit()
+
         return {"order_id": o.id, "cost": cost, "currency": o.currency, "status": o.status}
 
 
@@ -889,7 +1232,7 @@ async def api_orders(
     status: Optional[str] = None,  # processing/completed/failed/pending
     limit: int = 50,
     offset: int = 0,
-    refresh: int = 0,              # <— НОВОЕ: 1 = обновить статусы перед выдачей
+    refresh: int = 0,              # 1 = обновить статусы перед выдачей
 ):
 
     limit = max(1, min(200, int(limit)))
@@ -939,6 +1282,7 @@ async def api_orders(
             })
         return out
 
+
 # ===== Payments (topups + referral rewards) =====
 @app.get("/api/v1/payments")
 async def api_payments(
@@ -951,6 +1295,7 @@ async def api_payments(
     Возвращает объединённый список:
       • Topups (обычные пополнения)
       • RefReward (реферальные начисления) как method='ref', status='completed'
+      • Topups с provider='promo' (балансовые промокоды)
     Сортировано по времени (desc). Всегда массив, не null.
     """
     limit = max(1, min(200, int(limit)))
@@ -965,7 +1310,7 @@ async def api_payments(
             raise HTTPException(404, "user_not_found")
 
         # нормализация статуса
-        status_set: Optional[set[str]] = None
+        status_set: Optional[Set[str]] = None
         if status:
             key = _pay_status_norm(status)
             status_set = set(_PAY_STATUS_SYNONYMS.get(key, [key]))
@@ -1010,12 +1355,11 @@ async def api_payments(
         created = int(getattr(r, "created_at", None) or now_ts())
         amount = round(float(r.amount_credit or 0.0), 2)
         currency = r.currency or CURRENCY
-        # гарантируем числовой amount_usd (как у топапов)
+        # нормализуем amount_usd
         if CURRENCY == "USD":
             amount_usd = amount
         else:
-            fx = await fx_usd_rub()
-            amount_usd = round(amount / fx, 2)
+            amount_usd = round(amount / (fx or 1.0), 2) if (fx or 0) > 0 else None
 
         items.append({
             "id": int(r.id),
