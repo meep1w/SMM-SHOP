@@ -1,15 +1,15 @@
 /* Slovekiza Mini-App
- * - Стабильная идентификация пользователя (не уходит в "Гость")
- * - Профиль, баланс, оверлей успешного пополнения (consume_topup)
- * - Категории / Услуги / Страница услуги (поддержка "Повторить")
+ * - Профиль, баланс, оверлей успешного пополнения
+ * - Категории / Услуги / Полная страница услуги (поддержка "Повторить")
  * - Избранное (локально) + синк с сервером
  * - Рефералка (линк, прогресс, статы)
- * - Детализация (Заказы / Платежи) + модалки
- * - Реф-начисления как платежи (иконка method=ref_bonus/type=referral)
- * - Скрытие таббара при открытой клавиатуре (body.kb-open)
+ * - Детализация (Заказы / Платежи + реф-начисления) + модалки
+ * - Скрытие таббара при открытой клавиатуре
  */
 
 (function () {
+  console.log('app.js ready (ref-payments build)');
+
   // ====== Telegram WebApp ======
   const tg = (window.Telegram && window.Telegram.WebApp) || null;
   try {
@@ -49,7 +49,6 @@
   const btnBackToServices = document.getElementById("btnBackToServices");
 
   // ====== helpers ======
-  const sleep = (ms)=> new Promise(r=>setTimeout(r, ms));
   function curSign(c){ return c==='RUB' ? ' ₽' : (c==='USD' ? ' $' : ` ${c}`); }
   function fmt(n, d=2){ return Number(n||0).toFixed(d); }
   function bust(url){
@@ -90,51 +89,6 @@
       const mi = String(dt.getMinutes()).padStart(2,'0');
       return `${dd}.${mm}.${yy} ${hh}:${mi}`;
     } catch(_) { return String(val); }
-  }
-
-  function stableHashId(x){ let h=0,s=String(x||''); for(let i=0;i<s.length;i++){ h=((h<<5)-h+s.charCodeAt(i))|0; } h=Math.abs(h); return (h%100000)+1; }
-
-  // --- user identity (избегаем "Гость" при оплате) ---
-  const UID = {
-    tgId: null,          // Telegram user id, если есть
-    localSeq: null,      // локальный фоллбек (анон)
-    serverSeq: null,     // seq от бэка (красивый #)
-    async init() {
-      // локальный фоллбек сразу
-      const saved = parseInt(localStorage.getItem('smm_user_seq')||'0',10);
-      this.localSeq = Number.isFinite(saved) && saved>0 ? saved : stableHashId('anon:'+Math.random());
-      // на всякий ждем initDataUnsafe (до ~800мс)
-      for (let i=0;i<10;i++){
-        try { this.tgId = tg?.initDataUnsafe?.user?.id || null; } catch(_) {}
-        if (this.tgId) break;
-        await sleep(80);
-      }
-      return this.id();
-    },
-    id() {
-      // ВАЖНО: если есть Telegram ID, ВСЕГДА шлем его.
-      // Фоллбек в localSeq только когда tgId нет вообще (открыли в браузере).
-      return this.tgId || this.serverSeq || this.localSeq;
-    },
-    setServerSeq(n){
-      if (!n) return;
-      this.serverSeq = Number(n) || null;
-      if (this.serverSeq) {
-        localStorage.setItem('smm_user_seq', String(this.serverSeq));
-      }
-    }
-  };
-
-  // ===== Avatar & nickname (ранний пререндер) =====
-  function urlNick(){ try{ const p=new URLSearchParams(location.search); const v=p.get('n'); return v?decodeURIComponent(v):null; }catch(_){ return null; } }
-  const nickFromUrl = urlNick();
-  if (nicknameEl) nicknameEl.textContent = nickFromUrl || "Гость";
-  try {
-    const photo = tg?.initDataUnsafe?.user?.photo_url;
-    if (photo && avatarEl) avatarEl.src = photo;
-  } catch (_) {}
-  if (avatarEl && !avatarEl.getAttribute("src")){
-    avatarEl.src='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect fill="#1b1e24" width="80" height="80" rx="40"/><circle cx="40" cy="33" r="15" fill="#2a2f36"/><path d="M15 66c5-12 18-18 25-18s20 6 25 18" fill="#2a2f36"/></svg>');
   }
 
   // — сеть из текста + путь к иконке
@@ -203,33 +157,38 @@
   }
   function hideOverlay(){ document.getElementById("topupOverlay")?.classList.remove("overlay--show"); }
 
-  // ====== profile / identity ======
+  // ====== profile ======
+  let userId = null; try { userId = tg?.initDataUnsafe?.user?.id || null; } catch(_){}
+  function urlNick(){ try{ const p=new URLSearchParams(location.search); const v=p.get('n'); return v?decodeURIComponent(v):null; }catch(_){ return null; } }
+  const nickFromUrl = urlNick();
+
+  if (nicknameEl) nicknameEl.textContent = nickFromUrl || "Гость";
+  try {
+    const photo = tg?.initDataUnsafe?.user?.photo_url;
+    if (photo && avatarEl) avatarEl.src = photo;
+  } catch (_) {}
+  if (avatarEl && !avatarEl.getAttribute("src")){
+    avatarEl.src='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect fill="#1b1e24" width="80" height="80" rx="40"/><circle cx="40" cy="33" r="15" fill="#2a2f36"/><path d="M15 66c5-12 18-18 25-18s20 6 25 18" fill="#2a2f36"/></svg>');
+  }
+
+  function stableHashId(x){ let h=0,s=String(x||''); for(let i=0;i<s.length;i++){ h=((h<<5)-h+s.charCodeAt(i))|0; } h=Math.abs(h); return (h%100000)+1; }
+  let seq = parseInt(localStorage.getItem('smm_user_seq')||'0',10) || stableHashId(userId||nickFromUrl||'guest');
+  if (userSeqEl) userSeqEl.textContent = `#${seq}`;
+
   let currentCurrency = "RUB";
   let lastBalance = 0;
 
-  // единый способ получить корректный uid перед любым API-вызовом
-  async function uidForApi(){
-    // дождемся первичной инициализации
-    await UID.init();
-    // если tgId все еще нет — дадим маленькую паузу (часто initData появляется через 1-2 тика)
-    if (!UID.tgId) { for (let i=0;i<6;i++){ try{ UID.tgId = tg?.initDataUnsafe?.user?.id || null; }catch(_){} if (UID.tgId) break; await sleep(60); } }
-    return UID.id();
-  }
-
-  // хранить последний профиль
-  let lastProfile = null;
-
   async function fetchProfile(){
     try {
-      const uid = await uidForApi();
-      const qp = new URLSearchParams({ user_id: String(UID.tgId || uid), consume_topup: '1' });
+      const qp = new URLSearchParams({ user_id: String(userId||seq), consume_topup: '1' });
+      if (nickFromUrl) qp.set('nick', nickFromUrl);
       const r = await fetch(bust(`${API_BASE}/user?${qp.toString()}`));
       if (!r.ok) throw 0;
       const p = await r.json();
-      lastProfile = p;
 
       if (p.seq){
-        UID.setServerSeq(p.seq);
+        seq = p.seq;
+        localStorage.setItem('smm_user_seq', String(p.seq));
         if (userSeqEl) userSeqEl.textContent = `#${p.seq}`;
       }
       if (p.nick && nicknameEl) nicknameEl.textContent = p.nick;
@@ -258,11 +217,9 @@
       if (!s) return;
       const amount = parseFloat(s);
       if (isNaN(amount) || amount < 0.10){ alert('Минимальная сумма — 0.10 USDT'); return; }
-
-      const uid = await uidForApi(); // КЛЮЧЕВОЕ: не уходим в localSeq, если есть tgId
       const r = await fetch(`${API_BASE}/pay/invoice`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: UID.tgId || uid, amount_usd: amount }),
+        body: JSON.stringify({ user_id: userId||seq, amount_usd: amount }),
       });
       if (r.status === 501){ alert('Оплата через CryptoBot ещё не настроена.'); return; }
       if (!r.ok) throw new Error(await r.text());
@@ -299,7 +256,7 @@
     } else if (tab === 'refs') {
       loadRefs();
     } else if (tab === 'details') {
-      loadDetails('orders');
+      loadDetails('payments'); // покажем сразу платежи
     }
   }
   document.querySelectorAll(".tabbar .tab").forEach(b=> b.addEventListener('click', ()=> activateTab(b)));
@@ -320,11 +277,11 @@
       renderCategories(items);
     }catch(_){
       renderCategories([
-        {id:'telegram', name:'Telegram',  desc:'подписчики, просмотры'},
-        {id:'tiktok',   name:'TikTok',    desc:'просмотры, фолловеры'},
-        {id:'instagram',name:'Instagram', desc:'подписчики, лайки'},
-        {id:'youtube',  name:'YouTube',   desc:'просмотры, подписки'},
-        {id:'facebook', name:'Facebook',  desc:'лайки, подписчики'},
+        {id:'telegram', name:'Telegram',  desc:'подписчики, просмотры', count:319},
+        {id:'tiktok',   name:'TikTok',    desc:'просмотры, фолловеры', count:37},
+        {id:'instagram',name:'Instagram', desc:'подписчики, лайки', count:19},
+        {id:'youtube',  name:'YouTube',   desc:'просмотры, подписки', count:56},
+        {id:'facebook', name:'Facebook',  desc:'лайки, подписчики', count:18},
       ]);
     }
   }
@@ -353,7 +310,8 @@
     renderServicesSkeleton(4);
     try{
       const r = await fetch(bust(`${API_BASE}/services/${network}`));
-      const items = await r.json();
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const items = await r.json().catch(()=>[]);
       servicesAll = Array.isArray(items) ? items : [];
       if (servicesSearchEl) servicesSearchEl.value = '';
       applyServicesFilter();
@@ -412,7 +370,7 @@
     });
   }
 
-  // ====== Favorites ======
+  // ====== Favorites (local mirror + server sync) ======
   function favLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]'); } catch(_){ return []; } }
   function favSave(a){ localStorage.setItem('smm_favs', JSON.stringify(a||[])); }
   function favHas(id){ return favLoad().some(x=>x.id===id); }
@@ -438,8 +396,8 @@
   }
   async function syncFavsFromServer(){
     try{
-      const uid = await uidForApi();
-      const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(UID.tgId || uid)}`);
+      const uid = userId || seq;
+      const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
       if(!r.ok) return;
       const arr = await r.json();
       if(!Array.isArray(arr)) return;
@@ -617,16 +575,12 @@
     favToggle.addEventListener('change', ()=>{
       if (favToggle.checked){
         favAdd({ id:s.service, name:s.name, network:currentNetwork, min:s.min, max:s.max, rate:s.rate_client_1000, currency:s.currency, _raw:s });
-        uidForApi().then(uid=>{
-          fetch(`${API_BASE}/favorites`, { method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ user_id: UID.tgId || uid, service_id:s.service })
-          }).catch(()=>{});
-        });
+        fetch(`${API_BASE}/favorites`, { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ user_id:userId||seq, service_id:s.service })
+        }).catch(()=>{});
       } else {
         favRemove(s.service);
-        uidForApi().then(uid=>{
-          fetch(`${API_BASE}/favorites/${s.service}?user_id=${encodeURIComponent(UID.tgId || uid)}`, { method:'DELETE' }).catch(()=>{});
-        });
+        fetch(`${API_BASE}/favorites/${s.service}?user_id=${encodeURIComponent(userId||seq)}`, { method:'DELETE' }).catch(()=>{});
       }
     });
 
@@ -654,8 +608,7 @@
 
       btnCreate.disabled = true; btnCreate.textContent = 'Оформляем...';
       try{
-        const uid = await uidForApi();
-        const body = { user_id: UID.tgId || uid, service:s.service, link, quantity:q };
+        const body = { user_id:userId||seq, service:s.service, link, quantity:q };
         const promo=(promoInput?.value||'').trim(); if (promo) body.promo_code=promo;
         const r = await fetch(`${API_BASE}/order/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
         if (!r.ok) throw new Error(await r.text());
@@ -682,6 +635,7 @@
 
   // === Рефералка ===
   async function loadRefs() {
+    const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
     const page = document.getElementById("page-refs");
     if (!page) return;
 
@@ -693,19 +647,23 @@
     `;
 
     try {
-      const uid = await uidForApi();
-      const url = `${API_BASE}/referrals/stats?user_id=${encodeURIComponent(UID.tgId || uid)}`;
+      const API_BASE_L = (typeof window.API_BASE === "string" && window.API_BASE) ? window.API_BASE : "/api/v1";
+      let uid = null;
+      try { uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id; } catch (_) {}
+      if (!uid && window.USER_ID) uid = window.USER_ID;
+
+      const url = API_BASE_L + "/referrals/stats" + (uid ? ("?user_id=" + encodeURIComponent(uid)) : "");
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
 
       const inviteLink = String(data.invite_link || data.link || "");
       const threshold = Number(data.threshold != null ? data.threshold : 50);
-      const invited = Number(data.invited_total != null ? data.invited_total : 0);
-      const withDep = Number(data.invited_with_deposit != null ? data.invited_with_deposit : 0);
+      const invited   = Number(data.invited_total != null ? data.invited_total : 0);
+      const withDep   = Number(data.invited_with_deposit != null ? data.invited_with_deposit : 0);
       const earnedRaw = (data.earned_total != null ? data.earned_total : 0);
-      const earned = typeof earnedRaw === "number" ? earnedRaw.toFixed(2) : String(earnedRaw);
-      const currency = String(data.earned_currency || data.currency || "₽");
+      const earned    = typeof earnedRaw === "number" ? earnedRaw.toFixed(2) : String(earnedRaw);
+      const currency  = String(data.earned_currency || data.currency || "₽");
 
       const denom = threshold > 0 ? threshold : 50;
       const prog = Math.max(0, Math.min(100, Math.round((withDep / denom) * 100)));
@@ -775,7 +733,7 @@
       async function copyLink() {
         const text = (input && input.value) ? input.value : inviteLink;
         try {
-          if (navigator.clipboard?.writeText) {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
             await navigator.clipboard.writeText(text);
           } else {
             const ta = document.createElement("textarea");
@@ -785,16 +743,20 @@
             document.execCommand("copy");
             document.body.removeChild(ta);
           }
-          tg?.HapticFeedback?.notificationOccurred?.("success");
-          bar?.classList.add("copied");
-          setTimeout(() => bar?.classList.remove("copied"), 600);
+          if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
+            tg.HapticFeedback.notificationOccurred("success");
+          }
+          bar && bar.classList.add("copied");
+          setTimeout(() => { bar && bar.classList.remove("copied"); }, 600);
         } catch (err) {
-          tg?.HapticFeedback?.notificationOccurred?.("error");
+          if (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred) {
+            tg.HapticFeedback.notificationOccurred("error");
+          }
           console.error("copy failed", err);
         }
       }
-      bar?.addEventListener("click", copyLink);
-      btn?.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
+      bar && bar.addEventListener("click", copyLink);
+      btn && btn.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
 
     } catch (err) {
       console.error("loadRefs error:", err);
@@ -807,6 +769,8 @@
   }
 
   // ====== Детализация ======
+
+  /* statuses view map */
   const STATUS_MAP = {
     processing:   { label: "В обработке", cls: "badge--processing" },
     "in progress":{ label: "В обработке", cls: "badge--processing" },
@@ -819,16 +783,11 @@
   };
   const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
 
-  function paymentIcon(p){
-    const m = String(p.method || p.type || '').toLowerCase();
-    if (m.includes('ref')) return 'static/img/ref_bonus.svg'; // ты добавишь иконку
-    return `static/img/${m || 'cryptobot'}.svg`;
-  }
-
+  // ---- Детализация (Orders/Payments + ref-бонусы) ----
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
     if (!page) return;
-    const uid = await uidForApi();
+    const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
 
     let ORDERS_CACHE = null;
     let PAYMENTS_CACHE = null;
@@ -851,6 +810,7 @@
     const filtersWrap = document.getElementById("detailsFilters");
     const list = document.getElementById("detailsList");
 
+    // ---------- Orders ----------
     function renderOrdersFromCache(filter = "all") {
       if (!Array.isArray(ORDERS_CACHE) || !ORDERS_CACHE.length) {
         list.innerHTML = `<div class="empty">Заказы не найдены</div>`;
@@ -897,8 +857,8 @@
       }).join("");
 
       list.querySelectorAll('.order').forEach(card=>{
-        const id = Number(card.dataset.id);
-        const o = ORDERS_CACHE.find(x => Number(x.id) === id);
+        const id = String(card.dataset.id);
+        const o = ORDERS_CACHE.find(x => String(x.id) === id);
         if (!o) return;
         card.addEventListener('click', ()=> showOrderModal(o));
       });
@@ -927,12 +887,88 @@
 
       list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
       try {
-        const q = new URLSearchParams({ user_id:String(UID.tgId || uid) });
+        const q = new URLSearchParams({ user_id:String(uid) });
         const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
         ORDERS_CACHE = r.ok ? await r.json() : [];
       } catch { ORDERS_CACHE = []; }
 
       renderOrdersFromCache(filter);
+    }
+
+    // ---------- Payments (topups + ref) ----------
+    function nDate(x){
+      if (x == null) return 0;
+      if (typeof x === 'number') return x < 1e12 ? x*1000 : x;
+      if (/^\d+$/.test(String(x))) { const n = Number(x); return n<1e12 ? n*1000 : n; }
+      const t = +new Date(x); return Number.isFinite(t) ? t : 0;
+    }
+
+    function normTopup(p){
+      const method = (p.method || p.provider || 'cryptobot') + '';
+      const currency = p.currency || 'RUB';
+      const created = p.created_at ?? p.createdAt ?? p.time ?? p.ts;
+      const status = p.applied ? 'completed' : (p.status || 'processing');
+      const amount = (p.amount != null ? p.amount
+                   : (p.amount_rub != null ? p.amount_rub
+                   : (p.amount_usd != null ? p.amount_usd : 0)));
+      return {
+        id: p.id, user_id: p.user_id,
+        method, status,
+        amount, currency,
+        created_at: created,
+        invoice_id: p.invoice_id, pay_url: p.pay_url,
+        _source: 'topup'
+      };
+    }
+
+    function normRef(r){
+      const currency = r.currency || 'RUB';
+      const created  = r.created_at ?? r.createdAt ?? r.time ?? r.ts;
+      const amount   = (r.amount_credit != null ? r.amount_credit
+                        : (r.amount != null ? r.amount : 0));
+      return {
+        id: r.id,
+        user_id: (r.to_user_id ?? r.ref_user_id ?? r.user_id),
+        method: 'ref',
+        status: 'completed',
+        amount, currency,
+        created_at: created,
+        invoice_id: r.topup_id || null,
+        from_user_id: r.from_user_id || r.invited_user_id || null,
+        _source: 'ref'
+      };
+    }
+
+    async function fetchPaymentsUnion() {
+      if (Array.isArray(PAYMENTS_CACHE)) return PAYMENTS_CACHE;
+
+      let topups = [];
+      let refs   = [];
+
+      try {
+        const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
+        const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
+        const arr = (r.ok ? await r.json().catch(()=>[]) : []);
+        if (Array.isArray(arr)) topups = arr.map(normTopup);
+      } catch {}
+
+      const candidates = [
+        `${API_BASE}/ref/rewards?user_id=${encodeURIComponent(uid)}`,
+        `${API_BASE}/referrals/rewards?user_id=${encodeURIComponent(uid)}`,
+        `${API_BASE}/ref/bonuses?user_id=${encodeURIComponent(uid)}`,
+        `${API_BASE}/referral/bonuses?user_id=${encodeURIComponent(uid)}`
+      ];
+      for (const url of candidates) {
+        try {
+          const r = await fetch(bust(url), { credentials:"include" });
+          if (!r.ok) continue;
+          const arr = await r.json().catch(()=>[]);
+          if (Array.isArray(arr) && arr.length) { refs = arr.map(normRef); break; }
+        } catch {}
+      }
+
+      PAYMENTS_CACHE = [...topups, ...refs].sort((a,b)=> nDate(b.created_at) - nDate(a.created_at));
+      return PAYMENTS_CACHE;
     }
 
     function renderPaymentsFromCache() {
@@ -941,13 +977,11 @@
         return;
       }
       list.innerHTML = PAYMENTS_CACHE.map(p=>{
-        // Реф-начисления считаем завершёнными и помечаем иконкой
-        const meth = String(p.method || p.type || '').toLowerCase();
-        const st  = meth.includes('ref') ? {label:'Завершён', cls:'badge--completed'} : stInfo(p.status);
+        const st  = stInfo(p.status);
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-        const prov = meth || "cryptobot";
+        const prov = String(p.method || "cryptobot").toLowerCase(); // 'cryptobot' | 'ref' | ...
         const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        const ico = paymentIcon(p);
+        const ico = `static/img/${prov}.svg`;
         return `
           <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
@@ -963,24 +997,16 @@
       }).join("");
 
       list.querySelectorAll('.pay').forEach(card=>{
-        const id = Number(card.dataset.id);
-        const p = PAYMENTS_CACHE.find(x => Number(x.id) === id);
+        const id = String(card.dataset.id);
+        const p = PAYMENTS_CACHE.find(x => String(x.id) === id);
         if (p) card.addEventListener('click', ()=> showPaymentModal(p));
       });
     }
 
     async function renderPayments() {
       filtersWrap.innerHTML = "";
-      if (Array.isArray(PAYMENTS_CACHE)) {
-        renderPaymentsFromCache();
-        return;
-      }
       list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
-      try {
-        const q = new URLSearchParams({ user_id:String(UID.tgId || uid), refresh:"1" });
-        const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
-        PAYMENTS_CACHE = r.ok ? await r.json() : [];
-      } catch { PAYMENTS_CACHE = []; }
+      await fetchPaymentsUnion();
       renderPaymentsFromCache();
     }
 
@@ -1026,14 +1052,24 @@
     }
 
     function showPaymentModal(p){
-      const meth = String(p.method || p.type || '').toLowerCase();
-      const st = meth.includes('ref') ? {label:'Завершён', cls:'badge--completed'} : stInfo(p.status);
-      const prov = meth || "cryptobot";
-      const ico = paymentIcon(p);
+      const st = stInfo(p.status);
+      const prov = String(p.method || "cryptobot").toLowerCase();
+      const ico = `static/img/${prov}.svg`;
       const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
 
+      const extraRows = [];
+      extraRows.push(`<div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>`);
+      if (prov === 'cryptobot' || prov === 'qiwi' || prov === 'card') {
+        if (p.invoice_id) extraRows.push(`<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`);
+        if (p.amount_usd != null) extraRows.push(`<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`);
+        if (p.pay_url) extraRows.push(`<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`);
+      } else if (prov === 'ref') {
+        if (p.from_user_id) extraRows.push(`<div class="modal-row"><div class="muted">От пользователя</div><div>#${p.from_user_id}</div></div>`);
+        if (p.invoice_id)   extraRows.push(`<div class="modal-row"><div class="muted">Топап</div><div>#${p.invoice_id}</div></div>`);
+      }
+
       openModal(`
-        <h3>Платёж #${p.id}</h3>
+        <h3>${prov === 'ref' ? 'Реферальное начисление' : 'Платёж'} #${p.id}</h3>
         <div class="modal-row">
           <div style="display:flex; gap:10px; align-items:center">
             <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
@@ -1044,10 +1080,7 @@
             <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
           </div>
         </div>
-        <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>
-        ${p.invoice_id ? `<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`:''}
-        ${p.amount_usd != null ? `<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`:''}
-        ${p.pay_url ? `<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`:''}
+        ${extraRows.join("")}
         <div class="modal-actions">
           <button class="btn btn-secondary" id="payClose">Закрыть</button>
         </div>
@@ -1064,14 +1097,19 @@
     seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
   }
 
-  // ====== Keyboard inset -> CSS var --kb + hide tabbar ======
+  // ====== Keyboard inset -> hide tabbar ======
   (function keyboardLift(){
     const root=document.documentElement;
+    const tabbar = document.querySelector('.tabbar');
+
     function applyKbInset(px){
       const v = px>40 ? px : 0;
       root.style.setProperty('--kb', v+'px');
-      document.body.classList.toggle('kb-open', v>40); // <- добавь в CSS: .kb-open .tabbar{display:none}
+      const open = v > 40;
+      document.body.classList.toggle('kb-open', open);
+      if (tabbar) tabbar.style.display = open ? 'none' : 'grid'; // скрываем/возвращаем таббар без CSS-правок
     }
+
     if (window.visualViewport){
       const vv=window.visualViewport;
       const handler=()=>{ const inset=Math.max(0, window.innerHeight - vv.height - vv.offsetTop); applyKbInset(inset); };
@@ -1086,4 +1124,7 @@
       });
     }catch(_){}
   })();
+
+  // Глобальный лог ошибок (помогает ловить падения)
+  window.addEventListener('error', e => console.error('JS error:', e.message, e.filename, e.lineno));
 })();
