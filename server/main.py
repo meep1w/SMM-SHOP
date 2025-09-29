@@ -124,7 +124,13 @@ def db() -> Session:
 
 
 def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
-    u = s.query(User).filter(User.tg_id == tg_id).one_or_none()
+    # robust: без one_or_none()
+    u = (
+        s.query(User)
+        .filter(User.tg_id == tg_id)
+        .order_by(User.id.desc())
+        .first()
+    )
     if u:
         if nick and not u.nick:
             u.nick = nick
@@ -339,7 +345,13 @@ async def api_user(
     autocreate: int = 1,  # 1 — как раньше; 0 — без создания (вернёт 404)
 ):
     with db() as s:
-        u = s.query(User).filter(User.tg_id == user_id).one_or_none()
+        # robust lookup: tg_id -> seq
+        u = (
+            s.query(User)
+            .filter(User.tg_id == user_id)
+            .order_by(User.id.desc())
+            .first()
+        )
         if not u:
             if not autocreate:
                 raise HTTPException(404, "user_not_found")
@@ -412,7 +424,12 @@ async def api_register(body: RegisterIn):
     with db() as s:
         if s.query(User.id).filter(User.nick == nick).first():
             raise HTTPException(409, "Ник уже занят")
-        u = s.query(User).filter(User.tg_id == body.user_id).one_or_none()
+        u = (
+            s.query(User)
+            .filter(User.tg_id == body.user_id)
+            .order_by(User.id.desc())
+            .first()
+        )
         if not u:
             u = ensure_user(s, body.user_id, nick=nick)
         else:
@@ -453,10 +470,15 @@ async def api_referrals_bind(body: RefBindIn):
 @app.get("/api/v1/referrals/stats")
 async def api_referrals_stats(user_id: int = Query(...)):
     with db() as s:
-        u = s.query(User).filter(User.tg_id == user_id).one_or_none()
+        # tg_id -> seq
+        u = (
+            s.query(User)
+            .filter(User.tg_id == user_id)
+            .order_by(User.id.desc())
+            .first()
+        )
         if not u:
-            # пробуем как seq
-            u = s.query(User).filter(User.seq == user_id).one_or_none()
+            u = s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
         if not u:
             # создадим минимальный профиль, чтобы отдать ссылку
             u = ensure_user(s, tg_id=user_id)
@@ -863,9 +885,18 @@ async def api_orders(
     limit = max(1, min(200, int(limit)))
     offset = max(0, int(offset))
     with db() as s:
-        u = s.query(User).filter((User.tg_id == user_id) | (User.seq == user_id)).one_or_none()
+        # robust lookup
+        u = (
+            s.query(User)
+            .filter(User.tg_id == user_id)
+            .order_by(User.id.desc())
+            .first()
+        )
+        if not u:
+            u = s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
         if not u:
             raise HTTPException(404, "user_not_found")
+
         if refresh:
             try:
                 await refresh_orders_for_user(s, u, limit=40)
@@ -898,7 +929,7 @@ async def api_orders(
             })
         return out
 
-# ===== Payments (topups) list =====
+# ===== Payments (topups + referral rewards) =====
 @app.get("/api/v1/payments")
 async def api_payments(
     user_id: int = Query(...),
@@ -906,37 +937,81 @@ async def api_payments(
     limit: int = 50,
     offset: int = 0,
 ):
+    """
+    Возвращает объединённый список:
+      • Topups (обычные пополнения)
+      • RefReward (реферальные начисления) как method='ref', status='completed'
+    Сортировано по времени (desc). Всегда массив, не null.
+    """
     limit = max(1, min(200, int(limit)))
     offset = max(0, int(offset))
+
     with db() as s:
-        u = s.query(User).filter((User.tg_id == user_id) | (User.seq == user_id)).one_or_none()
+        # robust lookup: tg_id -> seq
+        u = s.query(User).filter(User.tg_id == user_id).order_by(User.id.desc()).first()
+        if not u:
+            u = s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
         if not u:
             raise HTTPException(404, "user_not_found")
 
-        q = s.query(Topup).filter(Topup.user_id == u.id)
+        # нормализация статуса
+        status_set: Optional[set[str]] = None
         if status:
             key = _pay_status_norm(status)
-            syns = _PAY_STATUS_SYNONYMS.get(key, [key])
-            q = q.filter(func.lower(Topup.status).in_(syns))
+            status_set = set(_PAY_STATUS_SYNONYMS.get(key, [key]))
 
-        rows = q.order_by(Topup.id.desc()).limit(limit).offset(offset).all()
+        # --- Topups
+        q_top = s.query(Topup).filter(Topup.user_id == u.id)
+        if status_set:
+            q_top = q_top.filter(func.lower(Topup.status).in_(status_set))
+        topups = q_top.all()
 
-        fx = await fx_usd_rub()
-        out = []
-        for t in rows:
-            usd = float(t.amount_usd or 0.0)
-            if CURRENCY == "USD":
-                amount = round(usd, 2); currency = "USD"
-            else:
-                amount = round(usd * fx, 2); currency = CURRENCY
-            out.append({
-                "id": t.id,
-                "created_at": int(getattr(t, "created_at", None) or now_ts()),
-                "amount": amount,
-                "amount_usd": round(usd, 2),
-                "currency": currency,
-                "method": t.provider or "cryptobot",
-                "status": _pay_status_norm(t.status),
-                "invoice_id": t.invoice_id,
-            })
-        return out
+        # --- Ref rewards (всегда считаем completed)
+        rewards: List[RefReward] = []
+        if not status_set or ("completed" in status_set):
+            rewards = s.query(RefReward).filter(RefReward.to_user_id == u.id).all()
+
+    fx = await fx_usd_rub()
+
+    items: List[Dict[str, Any]] = []
+
+    # map topups
+    for t in topups:
+        usd = float(t.amount_usd or 0.0)
+        if CURRENCY == "USD":
+            amount = round(usd, 2); currency = "USD"
+        else:
+            amount = round(usd * fx, 2); currency = CURRENCY
+        created = int(getattr(t, "created_at", None) or now_ts())
+        items.append({
+            "id": int(t.id),
+            "created_at": created,
+            "amount": amount,
+            "amount_usd": round(usd, 2),
+            "currency": currency,
+            "method": t.provider or "cryptobot",
+            "status": _pay_status_norm(t.status),
+            "invoice_id": t.invoice_id,
+            "pay_url": getattr(t, "pay_url", None),
+        })
+
+    # map referral rewards
+    for r in rewards:
+        created = int(getattr(r, "created_at", None) or now_ts())
+        amount  = round(float(r.amount_credit or 0.0), 2)
+        currency = r.currency or CURRENCY
+        items.append({
+            "id": int(r.id),              # оставляем числовой id (у топапов другой диапазон)
+            "created_at": created,
+            "amount": amount,
+            "amount_usd": None,          # не применимо; сумма уже в валюте магазина
+            "currency": currency,
+            "method": "ref",
+            "status": "completed",
+            "invoice_id": None,
+            "pay_url": None,
+        })
+
+    # сортировка и пагинация
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return items[offset: offset + limit]
