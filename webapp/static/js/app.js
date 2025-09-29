@@ -1,6 +1,7 @@
-/* Slovekiza Mini-App
- * - Профиль, баланс, оверлей успешного пополнения
- * - Категории / Услуги / Полная страница услуги (поддержка "Повторить")
+/* Slovekiza Mini-App — промокоды + профиль + персональная наценка
+ * - Профиль: отображение ника/SEQ/баланса/наценки, ввод промокодов (navсегда/баланс)
+ * - Скидочный промокод на странице услуги (check + учёт в расчёте и заказе)
+ * - Категории / Услуги / Страница услуги
  * - Избранное (локально) + синк с сервером
  * - Рефералка (линк, прогресс, статы)
  * - Детализация (Заказы / Платежи + реф-начисления) + модалки
@@ -8,7 +9,7 @@
  */
 
 (function () {
-  console.log('app.js ready (ref-payments build)');
+  console.log('app.js ready (promos + profile)');
 
   // ====== Telegram WebApp ======
   const tg = (window.Telegram && window.Telegram.WebApp) || null;
@@ -28,6 +29,7 @@
   const userSeqEl  = document.getElementById("userSeq");
   const balanceEl  = document.getElementById("balanceValue");
   const btnTopup   = document.getElementById("btnTopup");
+  const profileBtn = document.getElementById("profileBtn");
 
   const pages = {
     catalog:  document.getElementById("page-categories"),
@@ -36,6 +38,7 @@
     favs:     document.getElementById("page-favs"),
     refs:     document.getElementById("page-refs"),
     details:  document.getElementById("page-details"),
+    profile:  null, // создадим динамически
   };
 
   const catsListEl       = document.getElementById("catsList");
@@ -157,7 +160,7 @@
   }
   function hideOverlay(){ document.getElementById("topupOverlay")?.classList.remove("overlay--show"); }
 
-  // ====== profile ======
+  // ====== profile / identity ======
   let userId = null; try { userId = tg?.initDataUnsafe?.user?.id || null; } catch(_){}
   function urlNick(){ try{ const p=new URLSearchParams(location.search); const v=p.get('n'); return v?decodeURIComponent(v):null; }catch(_){ return null; } }
   const nickFromUrl = urlNick();
@@ -177,6 +180,7 @@
 
   let currentCurrency = "RUB";
   let lastBalance = 0;
+  let userMarkup = null; // персональная наценка, если назначена
 
   async function fetchProfile(){
     try {
@@ -197,6 +201,9 @@
       lastBalance = Number(p.balance || 0);
       if (balanceEl) balanceEl.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
 
+      userMarkup = (p.markup != null ? Number(p.markup) : null);
+      updateProfilePageView();
+
       if (p.topup_delta && Number(p.topup_delta) > 0){
         showOverlay(Number(p.topup_delta), p.topup_currency || currentCurrency);
       }
@@ -210,29 +217,126 @@
   window.addEventListener('focus', fetchProfile);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) fetchProfile(); });
 
-  // ====== Topup ======
-  btnTopup?.addEventListener('click', async ()=>{
+  // ====== make Profile page (динамически) ======
+  function ensureProfilePage() {
+    if (pages.profile) return pages.profile;
+    const wrap = document.createElement('section');
+    wrap.id = 'page-profile';
+    wrap.className = 'page';
+    wrap.innerHTML = `
+      <div class="subheader">
+        <button class="back" id="btnBackFromProfile" aria-label="Назад">←</button>
+        <h2 class="subheader-title">Профиль</h2>
+      </div>
+
+      <div class="card" style="padding:16px">
+        <div style="display:flex; gap:12px; align-items:center;">
+          <img id="profAvatar" class="avatar" style="width:48px;height:48px;border-radius:999px" alt="">
+          <div>
+            <div style="font-weight:700" id="profNick">—</div>
+            <div class="muted">ID <span id="profSeq">#—</span></div>
+          </div>
+          <div style="margin-left:auto; text-align:right">
+            <div class="muted" style="font-size:12px">Баланс</div>
+            <div id="profBalance" style="font-weight:700">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:16px">
+        <div class="label">Персональная наценка</div>
+        <div id="profMarkup">—</div>
+        <div class="muted" style="margin-top:6px">Можно снизить с помощью промокода</div>
+      </div>
+
+      <div class="card" style="padding:16px">
+        <div class="label">Промокод (навсегда / на баланс)</div>
+        <div class="promo-wrap" style="display:flex; gap:8px; align-items:center">
+          <input id="profilePromoInput" type="text" placeholder="Введите код" style="flex:1; min-width:0;">
+          <button class="btn" id="profilePromoApply">Активировать</button>
+        </div>
+        <div class="muted" style="margin-top:6px">
+          • Код на скидку вводится на странице оформления услуги.
+        </div>
+      </div>
+    `;
+    document.getElementById('appMain')?.appendChild(wrap);
+    pages.profile = wrap;
+
+    // binds
+    wrap.querySelector('#btnBackFromProfile')?.addEventListener('click', ()=> showPage('page-categories'));
+    wrap.querySelector('#profilePromoApply')?.addEventListener('click', onProfilePromoApply);
+    return wrap;
+  }
+
+  function updateProfilePageView() {
+    const p = pages.profile || document.getElementById('page-profile');
+    if (!p) return;
+    // основной хедер
+    const a = document.getElementById('profAvatar');
+    if (a && avatarEl?.src) a.src = avatarEl.src;
+    const nick = document.getElementById('profNick');
+    if (nick) nick.textContent = nicknameEl?.textContent || '—';
+    const ps = document.getElementById('profSeq');
+    if (ps) ps.textContent = `#${seq}`;
+    const pb = document.getElementById('profBalance');
+    if (pb) pb.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
+
+    const pm = document.getElementById('profMarkup');
+    if (pm) {
+      pm.textContent = (userMarkup && userMarkup > 0)
+        ? `${userMarkup}×`
+        : 'По умолчанию';
+    }
+  }
+
+  async function onProfilePromoApply(){
+    const input = document.getElementById('profilePromoInput');
+    const code = (input?.value || '').trim();
+    if (!code){ alert('Введите промокод'); return; }
     try{
-      const s = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
-      if (!s) return;
-      const amount = parseFloat(s);
-      if (isNaN(amount) || amount < 0.10){ alert('Минимальная сумма — 0.10 USDT'); return; }
-      const r = await fetch(`${API_BASE}/pay/invoice`, {
+      const r = await fetch(`${API_BASE}/promo/apply`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: userId||seq, amount_usd: amount }),
+        body: JSON.stringify({ user_id: userId || seq, code })
       });
-      if (r.status === 501){ alert('Оплата через CryptoBot ещё не настроена.'); return; }
-      if (!r.ok) throw new Error(await r.text());
-      const j = await r.json();
-      (tg?.openLink ? tg.openLink(j.pay_url) : window.open(j.pay_url, '_blank'));
-    }catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
+      const js = await r.json().catch(()=> ({}));
+      if (!r.ok){
+        const msg = typeof js === 'object' && js && js.detail ? js.detail : String(js||'Ошибка');
+        alert('Не удалось применить промокод: ' + msg);
+        return;
+      }
+      if (js.kind === 'markup'){
+        userMarkup = Number(js.markup || userMarkup);
+        alert('Персональная наценка обновлена!');
+        await fetchProfile();
+      } else if (js.kind === 'balance'){
+        alert(`Начисление по промокоду: +${js.added} ${js.currency || ''}`);
+        await fetchProfile();
+      } else if (js.kind === 'discount' || js.hint === 'use_in_order'){
+        alert('Этот код — скидочный. Введите его на странице оформления заказа.');
+      } else {
+        alert('Промокод применён.');
+        await fetchProfile();
+      }
+      if (input) input.value = '';
+    }catch(e){
+      alert('Ошибка: ' + (e?.message||e));
+    }
+  }
+
+  // Вызов профиля
+  profileBtn?.addEventListener('click', ()=>{
+    ensureProfilePage();
+    updateProfilePageView();
+    showPage('page-profile');
   });
 
   // ====== Tabs / Pages ======
   function showPage(id){
-    ["page-categories","page-services","page-service","page-favs","page-refs","page-details"].forEach(pid=>{
+    ["page-categories","page-services","page-service","page-favs","page-refs","page-details","page-profile"].forEach(pid=>{
       const el = document.getElementById(pid);
-      if (el) el.classList.toggle("active", pid===id);
+      if (!el) return;
+      el.classList.toggle("active", pid===id);
     });
     try { window.scrollTo({top:0, behavior:'instant'}); } catch(_) {}
   }
@@ -246,7 +350,6 @@
   function activateTab(btn){
     document.querySelectorAll(".tabbar .tab")
       .forEach(b => b.classList.toggle("active", b === btn));
-
     const tab = btn?.dataset?.tab || 'catalog';
     const id  = pageIdByTab(tab);
     showPage(id);
@@ -256,7 +359,7 @@
     } else if (tab === 'refs') {
       loadRefs();
     } else if (tab === 'details') {
-      loadDetails('payments'); // покажем сразу платежи
+      loadDetails('payments');
     }
   }
   document.querySelectorAll(".tabbar .tab").forEach(b=> b.addEventListener('click', ()=> activateTab(b)));
@@ -272,7 +375,7 @@
     if (!catsListEl) return;
     catsListEl.innerHTML = '';
     try{
-      const r = await fetch(bust(`${API_BASE}/services`));
+      const r = await fetch(bust(`${API_BASE}/services`)); // тут счётчики; user_id не обязателен
       const items = await r.json();
       renderCategories(items);
     }catch(_){
@@ -309,7 +412,8 @@
     showPage("page-services");
     renderServicesSkeleton(4);
     try{
-      const r = await fetch(bust(`${API_BASE}/services/${network}`));
+      const uid = userId || seq;
+      const r = await fetch(bust(`${API_BASE}/services/${network}?user_id=${encodeURIComponent(uid)}`));
       if (!r.ok) throw new Error('HTTP '+r.status);
       const items = await r.json().catch(()=>[]);
       servicesAll = Array.isArray(items) ? items : [];
@@ -427,7 +531,7 @@
     for(let i=0;i<6;i++){ a.push(q); q=Math.min(max,Math.round(q*2)); if(q===a[a.length-1]) break; }
     return a.slice(0,6);
   }
-  function priceFor(q,s){ return Math.max(0, Number(s.rate_client_1000||0) * Number(q||0) / 1000); }
+  function priceFor(q,rate1000){ return Math.max(0, Number(rate1000||0) * Number(q||0) / 1000); }
 
   async function fetchServiceById(serviceId, netHint){
     if (Array.isArray(servicesAll) && servicesAll.length){
@@ -436,7 +540,8 @@
     }
     const net = netHint || currentNetwork || 'telegram';
     try{
-      const r = await fetch(bust(`${API_BASE}/services/${net}`));
+      const uid = userId || seq;
+      const r = await fetch(bust(`${API_BASE}/services/${net}?user_id=${encodeURIComponent(uid)}`));
       const arr = r.ok ? await r.json() : [];
       return arr.find(s => Number(s.service) === Number(serviceId)) || null;
     }catch(_){ return null; }
@@ -448,7 +553,8 @@
       if (f) return f;
     }
     try{
-      const r = await fetch(bust(`${API_BASE}/services/${net}`));
+      const uid = userId || seq;
+      const r = await fetch(bust(`${API_BASE}/services/${net}?user_id=${encodeURIComponent(uid)}`));
       const arr = r.ok ? await r.json() : [];
       return arr.find(s => String(s.name||'').toLowerCase() === lower) || null;
     }catch(_){ return null; }
@@ -458,8 +564,13 @@
     if (!s) return;
     const min = Number(s.min||1), max = Number(s.max||100000);
     const presets = presetValues(min,max);
-    const cur = Math.max(min, Math.min(presets[0]||min, max));
     const currency = (s.currency||currentCurrency);
+
+    // скидочный промокод состояние
+    let discountCode = '';
+    let discountPct  = 0;  // 0..1
+    let qtyCurrent   = Math.max(min, Math.min(presets[0]||min, max));
+    const rate1000   = Number(s.rate_client_1000 || 0);
 
     if (serviceTitleEl) serviceTitleEl.textContent = s.name || 'Услуга';
 
@@ -469,7 +580,7 @@
           <div class="label">Количество</div>
           <div class="qty-grid" id="qtyGrid"></div>
           <div class="qty-input">
-            <input id="svcQty" type="number" min="${min}" max="${max}" step="1" value="${cur}">
+            <input id="svcQty" type="number" min="${min}" max="${max}" step="1" value="${qtyCurrent}">
             <div class="chips">
               <button class="chip" id="chipMin">мин ${min}</button>
               <button class="chip" id="chipMax">макс ${max}</button>
@@ -483,16 +594,20 @@
             <input id="svcLink" type="url" placeholder="https://...">
             <div class="error" id="svcLinkErr">Обязательное поле</div>
           </div>
-          <button class="promo-toggle chip" id="promoToggle">У меня есть промокод</button>
-          <div class="promo-wrap" id="promoWrap">
-            <input id="promoInput" type="text" placeholder="Промокод">
-            <button class="chip" id="promoApply">Активировать</button>
+
+          <div class="promo-section">
+            <div class="label">Промокод на скидку</div>
+            <div class="promo-wrap" id="promoWrap">
+              <input id="promoInput" type="text" placeholder="Промокод">
+              <button class="chip" id="promoApply">Проверить</button>
+            </div>
+            <div class="muted" id="promoHint">Скидка применится к сумме заказа</div>
           </div>
         </div>
 
         <div class="card summary">
-          <div class="sum-row"><span>Количество</span><b id="sumQty">${cur}</b></div>
-          <div class="sum-row"><span>Цена</span><b id="sumPrice">${priceFor(cur,s).toFixed(4)}${curSign(currency)}</b></div>
+          <div class="sum-row"><span>Количество</span><b id="sumQty">${qtyCurrent}</b></div>
+          <div class="sum-row"><span>Цена</span><b id="sumPrice">—</b></div>
           <button class="btn btn-primary btn-lg" id="svcCreate">Создать заказ</button>
         </div>
 
@@ -520,56 +635,91 @@
     const sumPrice  = document.getElementById('sumPrice');
     const linkEl    = document.getElementById('svcLink');
     const linkErr   = document.getElementById('svcLinkErr');
-    const promoToggle = document.getElementById('promoToggle');
-    const promoWrap   = document.getElementById('promoWrap');
-    const promoInput  = document.getElementById('promoInput');
-    const promoApply  = document.getElementById('promoApply');
-    const btnCreate   = document.getElementById('svcCreate');
-    const favToggle   = document.getElementById('favToggle');
+    const promoInput= document.getElementById('promoInput');
+    const promoApply= document.getElementById('promoApply');
+    const promoHint = document.getElementById('promoHint');
+    const btnCreate = document.getElementById('svcCreate');
+    const favToggle = document.getElementById('favToggle');
+
+    function recalc(){
+      const base = priceFor(qtyCurrent, rate1000);
+      const disc = Math.round(base * discountPct * 100) / 100;
+      const total = Math.max(0, Math.round((base - disc) * 100) / 100);
+      sumQty.textContent = qtyCurrent;
+      sumPrice.textContent = `${total.toFixed(4)}${curSign(currency)}${disc>0 ? ` (−${disc.toFixed(2)})` : ''}`;
+    }
 
     qtyGrid.innerHTML = '';
     presets.forEach(q=>{
       const btn=document.createElement('button');
       btn.className='qty';
       btn.innerHTML = `<div class="num">${q.toLocaleString('ru-RU')}</div>
-                       <div class="price">${priceFor(q,s).toFixed(4)}${curSign(currency)}</div>`;
-      if (q===cur) btn.classList.add('active');
+                       <div class="price">${priceFor(q,rate1000).toFixed(4)}${curSign(currency)}</div>`;
+      if (q===qtyCurrent) btn.classList.add('active');
       btn.addEventListener('click', ()=>{
         qtyGrid.querySelectorAll('.qty').forEach(x=>x.classList.remove('active'));
         btn.classList.add('active');
+        qtyCurrent = q;
         qtyInput.value = String(q);
-        sumQty.textContent = q;
-        sumPrice.textContent = `${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+        recalc();
       });
       qtyGrid.appendChild(btn);
     });
 
     chipMin?.addEventListener('click', ()=>{
-      const q=min; qtyInput.value=String(q);
+      qtyCurrent=min; qtyInput.value=String(min);
       qtyGrid.querySelectorAll('.qty').forEach(x=>x.classList.remove('active'));
-      sumQty.textContent=q; sumPrice.textContent=`${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+      recalc();
     });
     chipMax?.addEventListener('click', ()=>{
-      const q=max; qtyInput.value=String(q);
+      qtyCurrent=max; qtyInput.value=String(max);
       qtyGrid.querySelectorAll('.qty').forEach(x=>x.classList.remove('active'));
-      sumQty.textContent=q; sumPrice.textContent=`${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+      recalc();
     });
 
     qtyInput?.addEventListener('input', ()=>{
       let q=parseInt(qtyInput.value||'0',10);
       if(!Number.isFinite(q)) q=min;
-      q=Math.max(min, Math.min(max, q));
-      sumQty.textContent=q;
-      sumPrice.textContent=`${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
+      qtyCurrent=Math.max(min, Math.min(max, q));
+      recalc();
     });
 
-    promoToggle?.addEventListener('click', ()=> promoWrap?.classList.toggle('show'));
-    promoApply?.addEventListener('click', ()=>{
-      const code=(promoInput?.value||'').trim();
-      if(!code){ alert('Введите промокод'); return; }
-      alert('Промокод принят (визуально). Скидка будет применена при обработке заказа.');
+    // Prefill из opts (для "Повторить заказ")
+    const presetQty  = Number(opts.qty || 0);
+    const presetLink = String(opts.link || '');
+    if (presetLink && linkEl) linkEl.value = presetLink;
+    if (presetQty && qtyInput){
+      const q = Math.max(min, Math.min(max, presetQty));
+      qtyCurrent = q;
+      qtyInput.value = String(q);
+      qtyGrid?.querySelectorAll('.qty').forEach(bt=>{
+        const num = parseInt(bt.querySelector('.num')?.textContent.replace(/\s/g,'')||'0',10);
+        bt.classList.toggle('active', num === q);
+      });
+    }
+
+    // Скидочный промокод: валидация против API
+    promoApply?.addEventListener('click', async ()=>{
+      const code = (promoInput?.value||'').trim();
+      if (!code){ alert('Введите промокод'); return; }
+      try{
+        const r = await fetch(bust(`${API_BASE}/promo/check?user_id=${encodeURIComponent(userId||seq)}&code=${encodeURIComponent(code)}`));
+        const js = await r.json().catch(()=> ({}));
+        if (!r.ok){
+          const msg = (js && js.detail) ? js.detail : 'Код недействителен';
+          alert(msg); return;
+        }
+        const pct = Number(js.percent||0);
+        discountPct = (pct>1 ? pct/100 : pct);
+        discountCode = code;
+        promoHint.textContent = `Скидка активна: −${Math.round(discountPct*100)}%`;
+        recalc();
+      }catch(e){
+        alert('Ошибка проверки промокода: ' + (e?.message||e));
+      }
     });
 
+    // Избранное
     const isFav = favHas(s.service);
     favToggle.checked = isFav;
     favToggle.addEventListener('change', ()=>{
@@ -584,32 +734,17 @@
       }
     });
 
-    // Prefill из opts (для "Повторить заказ")
-    const presetQty  = Number(opts.qty || 0);
-    const presetLink = String(opts.link || '');
-    if (presetLink && linkEl) linkEl.value = presetLink;
-    if (presetQty && qtyInput){
-      const q = Math.max(min, Math.min(max, presetQty));
-      qtyInput.value = String(q);
-      sumQty.textContent = q;
-      sumPrice.textContent = `${priceFor(q,s).toFixed(4)}${curSign(currency)}`;
-      qtyGrid?.querySelectorAll('.qty').forEach(btn=>{
-        const num = parseInt(btn.querySelector('.num')?.textContent.replace(/\s/g,'')||'0',10);
-        btn.classList.toggle('active', num === q);
-      });
-    }
-
+    // Создать заказ
     btnCreate?.addEventListener('click', async ()=>{
       const link=(linkEl?.value||'').trim();
-      const q   = parseInt(qtyInput?.value||'0',10);
       if (!link){ linkErr?.classList.add('show'); linkEl?.focus(); return; }
       linkErr?.classList.remove('show');
-      if (q<min || q>max){ alert(`Количество должно быть от ${min} до ${max}`); return; }
+      if (qtyCurrent<min || qtyCurrent>max){ alert(`Количество должно быть от ${min} до ${max}`); return; }
 
       btnCreate.disabled = true; btnCreate.textContent = 'Оформляем...';
       try{
-        const body = { user_id:userId||seq, service:s.service, link, quantity:q };
-        const promo=(promoInput?.value||'').trim(); if (promo) body.promo_code=promo;
+        const body = { user_id:userId||seq, service:s.service, link, quantity:qtyCurrent };
+        if (discountCode) body.promo_code = discountCode;
         const r = await fetch(`${API_BASE}/order/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
         if (!r.ok) throw new Error(await r.text());
         const j = await r.json();
@@ -623,6 +758,7 @@
     });
 
     showPage("page-service");
+    recalc();
     try { history.replaceState(null, '', `#service-${s.service}`); } catch(_) {}
   }
 
@@ -769,8 +905,6 @@
   }
 
   // ====== Детализация ======
-
-  /* statuses view map */
   const STATUS_MAP = {
     processing:   { label: "В обработке", cls: "badge--processing" },
     "in progress":{ label: "В обработке", cls: "badge--processing" },
@@ -783,7 +917,6 @@
   };
   const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
 
-  // ---- Детализация (Orders/Payments + ref-бонусы) ----
   async function loadDetails(defaultTab = "orders") {
     const page = document.getElementById("page-details");
     if (!page) return;
@@ -952,21 +1085,7 @@
         if (Array.isArray(arr)) topups = arr.map(normTopup);
       } catch {}
 
-      const candidates = [
-        `${API_BASE}/ref/rewards?user_id=${encodeURIComponent(uid)}`,
-        `${API_BASE}/referrals/rewards?user_id=${encodeURIComponent(uid)}`,
-        `${API_BASE}/ref/bonuses?user_id=${encodeURIComponent(uid)}`,
-        `${API_BASE}/referral/bonuses?user_id=${encodeURIComponent(uid)}`
-      ];
-      for (const url of candidates) {
-        try {
-          const r = await fetch(bust(url), { credentials:"include" });
-          if (!r.ok) continue;
-          const arr = await r.json().catch(()=>[]);
-          if (Array.isArray(arr) && arr.length) { refs = arr.map(normRef); break; }
-        } catch {}
-      }
-
+      // рефка отражается внутри /payments как method='ref' (добавочные источники не нужны)
       PAYMENTS_CACHE = [...topups, ...refs].sort((a,b)=> nDate(b.created_at) - nDate(a.created_at));
       return PAYMENTS_CACHE;
     }
@@ -981,7 +1100,8 @@
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
         const prov = String(p.method || "cryptobot").toLowerCase(); // 'cryptobot' | 'ref' | ...
         const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        const ico = `static/img/${prov}.svg`;
+        // ВАЖНО: для рефов используем referral.svg
+        const ico = prov === 'ref' ? 'static/img/referral.svg' : `static/img/${prov}.svg`;
         return `
           <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
@@ -1054,12 +1174,12 @@
     function showPaymentModal(p){
       const st = stInfo(p.status);
       const prov = String(p.method || "cryptobot").toLowerCase();
-      const ico = `static/img/${prov}.svg`;
+      const ico = prov === 'ref' ? 'static/img/referral.svg' : `static/img/${prov}.svg`;
       const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
 
       const extraRows = [];
       extraRows.push(`<div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>`);
-      if (prov === 'cryptobot' || prov === 'qiwi' || prov === 'card') {
+      if (prov === 'cryptobot' || prov === 'qiwi' || prov === 'card' || prov === 'promo') {
         if (p.invoice_id) extraRows.push(`<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`);
         if (p.amount_usd != null) extraRows.push(`<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`);
         if (p.pay_url) extraRows.push(`<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`);
@@ -1097,6 +1217,24 @@
     seg.querySelectorAll(".seg__btn").forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
   }
 
+  // ====== Topup ======
+  btnTopup?.addEventListener('click', async ()=>{
+    try{
+      const s = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
+      if (!s) return;
+      const amount = parseFloat(s);
+      if (isNaN(amount) || amount < 0.10){ alert('Минимальная сумма — 0.10 USDT'); return; }
+      const r = await fetch(`${API_BASE}/pay/invoice`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: userId||seq, amount_usd: amount }),
+      });
+      if (r.status === 501){ alert('Оплата через CryptoBot ещё не настроена.'); return; }
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      (tg?.openLink ? tg.openLink(j.pay_url) : window.open(j.pay_url, '_blank'));
+    }catch(e){ alert('Ошибка создания счёта: ' + (e?.message||e)); }
+  });
+
   // ====== Keyboard inset -> hide tabbar ======
   (function keyboardLift(){
     const root=document.documentElement;
@@ -1107,7 +1245,7 @@
       root.style.setProperty('--kb', v+'px');
       const open = v > 40;
       document.body.classList.toggle('kb-open', open);
-      if (tabbar) tabbar.style.display = open ? 'none' : 'grid'; // скрываем/возвращаем таббар без CSS-правок
+      if (tabbar) tabbar.style.display = open ? 'none' : 'grid';
     }
 
     if (window.visualViewport){
@@ -1125,6 +1263,6 @@
     }catch(_){}
   })();
 
-  // Глобальный лог ошибок (помогает ловить падения)
+  // Глобальный лог ошибок
   window.addEventListener('error', e => console.error('JS error:', e.message, e.filename, e.lineno));
 })();
