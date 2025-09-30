@@ -842,7 +842,7 @@
         <div class="ref">
           <div class="card ref-hero">
             <div class="ref-ico">
-              <img src="static/img/tab-referrals.svg" alt="" class="ref-ico-img">
+              <img src="static/img/tab-referrals.svg?v=2025-09-30-0" alt="" class="ref-ico-img">
             </div>
             <div class="ref-h1">
               Приглашайте пользователей <br> и получайте от <span class="accent">10%</span> их платежей
