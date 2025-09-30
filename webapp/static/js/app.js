@@ -845,7 +845,7 @@
               <img src="static/img/tab-referrals.svg?v=2025-09-30-1" alt="" class="ref-ico-img">
             </div>
             <div class="ref-h1">
-              Приглашайте пользователей <br> и получайте от <span class="accent">10%</span> их платежей
+              Приглашайте пользователей <br> и получайте <span class="accent">10%</span>от их платежей
             </div>
             <div class="ref-h2">
               Средства автоматически поступают на ваш баланс.
