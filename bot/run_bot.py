@@ -15,6 +15,8 @@ from bot.config import BOT_TOKEN
 # Роутеры
 from bot.handlers.start import router as start_router
 from bot.handlers.registration import router as reg_router
+from bot.admin_promos import router as admin_promos_router
+
 
 
 async def main() -> None:
@@ -29,6 +31,7 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(start_router)
     dp.include_router(reg_router)
+    dp.include_router(admin_promos_router)
 
     # Чистим «зависшие» апдейты и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
