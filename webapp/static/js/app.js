@@ -51,11 +51,21 @@
   const serviceDetailsEl  = document.getElementById("serviceDetails");
   const btnBackToServices = document.getElementById("btnBackToServices");
 
-// Версия статики для кэш-бастинга (можешь менять при каждом релизе)
-const ASSET_VER = (window.ASSET_VER || '2025-09-30-01');
+// одно значение меняешь при каждом релизе
+const ASSET_STAMP = '2025-09-30-02';
+const IMG_BASE = `static/img_${ASSET_STAMP}`;
 
-// Добавляет ?v=… (или &v=…) к любому пути
-const vurl = (p) => p + (p.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(ASSET_VER);
+function vurl(p){ return p + (p.includes('?') ? '&' : '?') + 'v=' + ASSET_STAMP; }
+
+// было: function netIcon(net){ return `static/img/${net}.svg`; }
+function netIcon(net){ return `${IMG_BASE}/${net}.svg`; }
+
+// где ещё есть прямые пути к svg — тоже поменяй:
+/// примеры:
+/// vurl(`${IMG_BASE}/tab-favorites.svg`)
+/// vurl(`${IMG_BASE}/referral.svg`)
+/// vurl(`${IMG_BASE}/cryptobot.svg`)
+
 
 
   // ====== helpers ======
