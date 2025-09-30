@@ -1,5 +1,5 @@
 /* Slovekiza Mini-App — промокоды + профиль + персональная наценка
- * - Профиль: отображение ника/SEQ/баланса/наценки, ввод промокодов (navсегда/баланс)
+ * - Профиль: отображение ника/SEQ/баланса/наценки, ввод промокодов (навсегда/баланс)
  * - Скидочный промокод на странице услуги (check + учёт в расчёте и заказе)
  * - Категории / Услуги / Страница услуги
  * - Избранное (локально) + синк с сервером
@@ -284,8 +284,9 @@
 
     const pm = document.getElementById('profMarkup');
     if (pm) {
-      pm.textContent = (userMarkup && userMarkup > 0)
-        ? `${userMarkup}×`
+      const hasPersonal = (typeof userMarkup === 'number') && (userMarkup > 0.01);
+      pm.textContent = hasPersonal
+        ? `${Number(userMarkup).toFixed(3).replace(/\.?0+$/,'')}×`
         : 'По умолчанию';
     }
   }
@@ -596,12 +597,16 @@
           </div>
 
           <div class="promo-section">
-            <div class="label">Промокод на скидку</div>
-            <div class="promo-wrap" id="promoWrap">
-              <input id="promoInput" type="text" placeholder="Промокод">
-              <button class="chip" id="promoApply">Проверить</button>
+            <button id="promoToggle" class="linklike" style="padding:0; background:none; border:0; color:#7aa7ff; text-align:left">
+              У вас есть промокод?
+            </button>
+
+            <div id="promoBlock" class="promo-wrap" style="display:none; gap:8px; margin-top:8px; align-items:center">
+              <input id="promoInput" type="text" placeholder="Введите промокод" style="flex:1; min-width:0;">
+              <button class="chip" id="promoApply">Активировать</button>
             </div>
-            <div class="muted" id="promoHint">Скидка применится к сумме заказа</div>
+
+            <div class="muted" id="promoHint" style="display:none">Скидка применится к сумме заказа</div>
           </div>
         </div>
 
@@ -635,11 +640,13 @@
     const sumPrice  = document.getElementById('sumPrice');
     const linkEl    = document.getElementById('svcLink');
     const linkErr   = document.getElementById('svcLinkErr');
-    const promoInput= document.getElementById('promoInput');
-    const promoApply= document.getElementById('promoApply');
-    const promoHint = document.getElementById('promoHint');
-    const btnCreate = document.getElementById('svcCreate');
-    const favToggle = document.getElementById('favToggle');
+
+    // promo dom
+    const promoToggle = document.getElementById('promoToggle');
+    const promoBlock  = document.getElementById('promoBlock');
+    const promoInput  = document.getElementById('promoInput');
+    const promoApply  = document.getElementById('promoApply');
+    const promoHint   = document.getElementById('promoHint');
 
     function recalc(){
       const base = priceFor(qtyCurrent, rate1000);
@@ -698,11 +705,32 @@
       });
     }
 
+    // ========= ПРОМО UI (ссылка -> раскрывающийся блок) =========
+    let promoOpen = false;
+    function setPromoUI(){
+      if (!promoBlock || !promoToggle || !promoHint) return;
+      promoBlock.style.display = promoOpen ? 'flex' : 'none';
+      if (discountPct > 0){
+        promoToggle.textContent = `Промокод применён: −${Math.round(discountPct*100)}% (изменить)`;
+        promoHint.style.display = 'block';
+        promoHint.textContent = `Скидка активна: −${Math.round(discountPct*100)}%`;
+      } else {
+        promoToggle.textContent = 'У вас есть промокод?';
+        promoHint.style.display = 'none';
+      }
+    }
+    promoToggle?.addEventListener('click', ()=>{
+      promoOpen = !promoOpen;
+      setPromoUI();
+      if (promoOpen) promoInput?.focus();
+    });
+
     // Скидочный промокод: валидация против API
     promoApply?.addEventListener('click', async ()=>{
       const code = (promoInput?.value||'').trim();
-      if (!code){ alert('Введите промокод'); return; }
+      if (!code){ alert('Введите промокод'); promoInput?.focus(); return; }
       try{
+        promoApply.disabled = true; promoApply.textContent = 'Проверка...';
         const r = await fetch(bust(`${API_BASE}/promo/check?user_id=${encodeURIComponent(userId||seq)}&code=${encodeURIComponent(code)}`));
         const js = await r.json().catch(()=> ({}));
         if (!r.ok){
@@ -710,16 +738,20 @@
           alert(msg); return;
         }
         const pct = Number(js.percent||0);
-        discountPct = (pct>1 ? pct/100 : pct);
+        discountPct  = (pct>1 ? pct/100 : pct);
         discountCode = code;
-        promoHint.textContent = `Скидка активна: −${Math.round(discountPct*100)}%`;
+        promoOpen    = false;        // сворачиваем после успешной активации
+        setPromoUI();
         recalc();
       }catch(e){
         alert('Ошибка проверки промокода: ' + (e?.message||e));
+      }finally{
+        promoApply.disabled = false; promoApply.textContent = 'Активировать';
       }
     });
 
     // Избранное
+    const favToggle = document.getElementById('favToggle');
     const isFav = favHas(s.service);
     favToggle.checked = isFav;
     favToggle.addEventListener('change', ()=>{
@@ -735,6 +767,7 @@
     });
 
     // Создать заказ
+    const btnCreate = document.getElementById('svcCreate');
     btnCreate?.addEventListener('click', async ()=>{
       const link=(linkEl?.value||'').trim();
       if (!link){ linkErr?.classList.add('show'); linkEl?.focus(); return; }
@@ -759,6 +792,7 @@
 
     showPage("page-service");
     recalc();
+    setPromoUI();
     try { history.replaceState(null, '', `#service-${s.service}`); } catch(_) {}
   }
 
@@ -1098,10 +1132,12 @@
       list.innerHTML = PAYMENTS_CACHE.map(p=>{
         const st  = stInfo(p.status);
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
-        const prov = String(p.method || "cryptobot").toLowerCase(); // 'cryptobot' | 'ref' | ...
+        const prov = String(p.method || "cryptobot").toLowerCase(); // 'cryptobot' | 'ref' | 'promo' | ...
         const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        // ВАЖНО: для рефов используем referral.svg
-        const ico = prov === 'ref' ? 'static/img/referral.svg' : `static/img/${prov}.svg`;
+        // для рефов используем referral.svg, для promo — promo.svg (должен лежать в static/img)
+        const ico = prov === 'ref'
+          ? 'static/img/referral.svg'
+          : `static/img/${prov}.svg`;
         return `
           <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
