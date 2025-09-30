@@ -35,8 +35,9 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 
 CURRENCY = (os.getenv("CURRENCY", "RUB") or "RUB").strip().upper()
+# поддержим старое имя DEFAULT_MARKUP, но по умолчанию именно 5.0
 DEFAULT_MARKUP = os.getenv("DEFAULT_MARKUP")
-MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER") or DEFAULT_MARKUP or "4.0")
+MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER") or DEFAULT_MARKUP or "5.0")
 
 ADMIN_TOKEN = (os.getenv("ADMIN_TOKEN", "") or "").strip()
 
@@ -63,7 +64,7 @@ DISPLAY = {
 }
 
 # --- app ---
-app = FastAPI(title="SMMShop API", version="2.3")
+app = FastAPI(title="SMMShop API", version="2.4")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins or ["*"],
@@ -85,7 +86,7 @@ async def _no_cache_middleware(request: Request, call_next):
 # глобальный HTTP клиент
 _client = httpx.AsyncClient(timeout=30.0)
 
-# --- FX cache ---
+# --- FX cache (нужно только для платежей/рефов, к прайсингу не относится) ---
 _fx_cache: Dict[str, Dict[str, Any]] = {}
 
 
@@ -134,7 +135,7 @@ def db() -> Session:
 def user_markup(u: Optional[User]) -> float:
     """
     Возвращает персональную наценку пользователя, если задана,
-    иначе дефолт из ENV.
+    иначе дефолт из ENV (MARKUP_MULTIPLIER).
     """
     try:
         m = float(getattr(u, "markup_override", None) or 0.0)
@@ -147,24 +148,17 @@ def user_markup(u: Optional[User]) -> float:
 
 async def rate_per_1k_for_user(svc: Service, u: Optional[User]) -> float:
     """
-    Возвращает клиентскую цену за 1000 с учётом персональной наценки.
-    В БД хранится цена под дефолтной наценкой. Восстанавливаем base_usd и
-    применяем персональную.
+    Клиентская цена за 1000 для конкретного пользователя.
+    В БД хранится rate_client_1000 = supplier_rub * MARKUP_MULTIPLIER.
+    Базовая цена поставщика (руб/1000) = rate_client_1000 / MARKUP_MULTIPLIER.
+    Дальше применяем персональную наценку пользователя (или дефолтную).
     """
     current_view = float(svc.rate_client_1000 or 0.0)
     if current_view <= 0:
         return 0.0
+    base_rub = current_view / max(MARKUP_MULTIPLIER, 1e-9)
     mul = user_markup(u)
-
-    if CURRENCY == "USD":
-        # rate_client_1000 = base * MARKUP_MULTIPLIER
-        base_usd = current_view / max(MARKUP_MULTIPLIER, 1e-9)
-        return base_usd * mul
-    else:
-        fx = await fx_usd_rub()
-        # rate_client_1000(RUB) = base * MARKUP_MULTIPLIER * fx
-        base_usd = current_view / max(MARKUP_MULTIPLIER * fx, 1e-9)
-        return base_usd * mul * fx
+    return base_rub * mul
 
 
 # ===== ensure_user() =====
@@ -263,23 +257,23 @@ def _detect_network(name: str, category: str) -> Optional[str]:
         return "youtube"
     if "facebook" in t or " fb " in t or " meta " in t:
         return "facebook"
-
     # всё прочее скрываем из каталога
     if "twitter" in t or "x.com" in t or " x " in t or "tweet" in t or "retweet" in t:
         return None
     return None
 
 
-def client_rate_view_per_1k(base_usd_per_1k: float, fx: float) -> float:
-    usd_client = float(base_usd_per_1k) * MARKUP_MULTIPLIER
-    if CURRENCY == "RUB":
-        return usd_client * fx
-    return usd_client
+def client_rate_from_supplier_rub(supplier_rate_rub_per_1k: float) -> float:
+    """Клиентская цена/1000 = (руб. поставщика/1000) × MARKUP_MULTIPLIER"""
+    return float(supplier_rate_rub_per_1k) * MARKUP_MULTIPLIER
 
 
 async def sync_services_into_db():
+    """
+    Синхронизация каталога. ВАЖНО: трактуем it['rate'] как РУБ/1000 у поставщика.
+    В БД храним rate_client_1000 = supplier_rub * MARKUP_MULTIPLIER.
+    """
     raw = await vex_services_raw()
-    fx = await fx_usd_rub()
     with db() as s:
         for it in raw:
             sid = int(it.get("service"))
@@ -288,8 +282,8 @@ async def sync_services_into_db():
             cat = it.get("category") or ""
             min_ = int(it.get("min") or 0)
             max_ = int(it.get("max") or 0)
-            base_rate_usd = float(it.get("rate") or 0.0)
-            rate_view = client_rate_view_per_1k(base_rate_usd, fx)
+            supplier_rate_rub = float(it.get("rate") or 0.0)
+            rate_view = client_rate_from_supplier_rub(supplier_rate_rub)
             net = _detect_network(name, cat)
             is_active = True
             if not net:
@@ -854,18 +848,11 @@ async def api_services_by_network(network: str, user_id: Optional[int] = Query(N
         # если есть пользователь — пересчитываем rate_client_1000 под его наценку
         out = []
         if u is not None:
-            fx = await fx_usd_rub() if CURRENCY == "RUB" else None
+            mul = user_markup(u)
             for it in items:
-                # вручную повтор расчёта без ожидания (чтобы не делать await много раз)
-                current_view = float(it.rate_client_1000 or 0.0)
-                mul = user_markup(u)
-                if CURRENCY == "USD":
-                    base_usd = current_view / max(MARKUP_MULTIPLIER, 1e-9)
-                    new_rate = base_usd * mul
-                else:
-                    base_usd = current_view / max(MARKUP_MULTIPLIER * (fx or 1.0), 1e-9)
-                    new_rate = base_usd * mul * (fx or 1.0)
-
+                current_view = float(it.rate_client_1000 or 0.0)           # = supplier_rub * default_markup
+                base_rub = current_view / max(MARKUP_MULTIPLIER, 1e-9)     # supplier_rub
+                new_rate = base_rub * mul
                 out.append({
                     "service": it.id,
                     "network": it.network,
@@ -955,7 +942,7 @@ async def api_order_create(body: CreateOrderIn):
         if body.quantity < (svc.min or 0) or body.quantity > (svc.max or 0):
             raise HTTPException(400, f"Количество должно быть от {svc.min} до {svc.max}")
 
-        # цена с учётом персональной наценки
+        # цена с учётом персональной наценки (всё в RUB)
         rate = await rate_per_1k_for_user(svc, u)
         base_cost = float(round(rate * body.quantity / 1000.0, 2))
 
@@ -1374,3 +1361,38 @@ async def api_payments(
     # сортировка и пагинация
     items.sort(key=lambda x: x["created_at"], reverse=True)
     return items[offset: offset + limit]
+
+
+# ---- Pricing explain (для проверки математики ×5 и персональных наценок) ----
+@app.get("/api/v1/pricing/explain")
+async def pricing_explain(service_id: int = Query(...), user_id: Optional[int] = None, qty: int = 1000):
+    """
+    Пояснение: supplier_rub -> ×наценка -> клиентская цена (всё в RUB).
+    """
+    with db() as s:
+        u: Optional[User] = None
+        if user_id:
+            u = (
+                s.query(User).filter(User.tg_id == user_id).order_by(User.id.desc()).first()
+            ) or s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
+
+        svc = s.get(Service, int(service_id))
+        if not svc:
+            raise HTTPException(404, "service not found")
+
+        view = float(svc.rate_client_1000 or 0.0)                 # supplier_rub * default_markup
+        base_rub = view / max(MARKUP_MULTIPLIER, 1e-9)            # supplier_rub
+        mul = user_markup(u) if u else MARKUP_MULTIPLIER
+        client_rate_1000 = base_rub * mul
+
+        return {
+            "service": svc.id,
+            "name": svc.name,
+            "qty": int(qty),
+            "supplier_rub_per_1000": round(base_rub, 6),
+            "default_markup": MARKUP_MULTIPLIER,
+            "user_markup": float(mul),
+            "client_rate_per_1000": round(client_rate_1000, 6),
+            "client_price": round(client_rate_1000 * (qty/1000.0), 6),
+            "currency": CURRENCY,
+        }
