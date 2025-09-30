@@ -101,38 +101,17 @@ const vurl = (p) => p + (p.includes('?') ? '&' : '?') + 'v=' + encodeURIComponen
     } catch(_) { return String(val); }
   }
 
-  // кэш-бастинг для любых статик-URL (меняй метку — принудительное обновление)
-function vurl(path) {
-  const V = '2025-09-30-04';
-  return path + (path.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(V);
-}
-
-// — сеть из текста (оставляем как есть)
-function netFromText(name, category){
-  const t = `${name || ""} ${category || ""}`.toLowerCase();
-  if (t.includes('telegram') || t.includes(' tg ')) return 'telegram';
-  if (t.includes('tiktok')   || t.includes('tik tok')) return 'tiktok';
-  if (t.includes('instagram')|| t.includes(' insta') || t.includes(' ig ')) return 'instagram';
-  if (t.includes('youtube')  || t.includes(' yt '))   return 'youtube';
-  if (t.includes('facebook') || t.includes(' fb '))   return 'facebook';
-  return 'generic';
-}
-
-// — путь к иконке с новыми именами файлов (…1.svg)
-const ICON_MAP = {
-  telegram:  'telegram1',
-  tiktok:    'tiktok1',
-  instagram: 'instagram1',
-  youtube:   'youtube1',
-  facebook:  'facebook1',
-  generic:   'generic1',    // сделай такой файл, если надо
-};
-function netIcon(net) {
-  const key = (net || 'generic').toLowerCase();
-  const file = ICON_MAP[key] || ICON_MAP.generic;
-  return vurl(`static/img/${file}.svg`);
-}
-
+  // — сеть из текста + путь к иконке
+  function netFromText(name, category){
+    const t = `${name || ""} ${category || ""}`.toLowerCase();
+    if (t.includes('telegram') || t.includes(' tg ')) return 'telegram';
+    if (t.includes('tiktok')   || t.includes('tik tok')) return 'tiktok';
+    if (t.includes('instagram')|| t.includes(' insta') || t.includes(' ig ')) return 'instagram';
+    if (t.includes('youtube')  || t.includes(' yt '))   return 'youtube';
+    if (t.includes('facebook') || t.includes(' fb '))   return 'facebook';
+    return 'generic';
+  }
+  function netIcon(net){ return vurl(`static/img/${net}.svg`); }
 
 
   // --- modal helpers ---
@@ -419,24 +398,22 @@ function netIcon(net) {
     }
   }
   function renderCategories(items){
-  catsListEl.innerHTML = '';
-  items.forEach(c=>{
-    const a = document.createElement('a');
-    a.href = '#';
-    a.className = 'cat';
-    a.dataset.cat = c.id;
-    const ico = netIcon(c.id); // <— вот это добавили
-    a.innerHTML = `
-      <div class="cat-icon"><img src="${ico}" alt=""></div>
-      <div class="cat-body">
-        <div class="cat-name">${c.name}</div>
-        <div class="cat-desc">${c.desc || ''}${c.count ? ' • '+c.count : ''}</div>
-      </div>`;
-    a.addEventListener('click', e => { e.preventDefault(); openServices(c.id, c.name); });
-    catsListEl.appendChild(a);
-  });
-}
-
+    catsListEl.innerHTML = '';
+    items.forEach(c=>{
+      const a = document.createElement('a');
+      a.href = '#';
+      a.className = 'cat';
+      a.dataset.cat = c.id;
+      a.innerHTML = `
+        <div class="cat-icon"><img src="static/img/${c.id}.svg" alt=""></div>
+        <div class="cat-body">
+          <div class="cat-name">${c.name}</div>
+          <div class="cat-desc">${c.desc || ''}${c.count ? ' • '+c.count : ''}</div>
+        </div>`;
+      a.addEventListener('click', e => { e.preventDefault(); openServices(c.id, c.name); });
+      catsListEl.appendChild(a);
+    });
+  }
 
   async function openServices(network, title){
     currentNetwork = network;
