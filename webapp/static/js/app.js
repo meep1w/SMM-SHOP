@@ -51,6 +51,12 @@
   const serviceDetailsEl  = document.getElementById("serviceDetails");
   const btnBackToServices = document.getElementById("btnBackToServices");
 
+  // Версия статики для кэш-бастинга (можешь менять при каждом релизе)
+  const ASSET_VER = (window.ASSET_VER || '2025-09-30-01');
+
+  // Добавляет ?v=… (или &v=…) к любому пути
+  const vurl = (p) => p + (p.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(ASSET_VER);
+
   // ====== helpers ======
   function curSign(c){ return c==='RUB' ? ' ₽' : (c==='USD' ? ' $' : ` ${c}`); }
   function fmt(n, d=2){ return Number(n||0).toFixed(d); }
@@ -104,7 +110,8 @@
     if (t.includes('facebook') || t.includes(' fb '))   return 'facebook';
     return 'generic';
   }
-  function netIcon(net){ return `static/img/${net}.svg`; }
+     function netIcon(net){ return vurl(`static/img/${net}.svg`); }
+
 
   // --- modal helpers ---
   function ensureModal(){
