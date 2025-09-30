@@ -35,7 +35,8 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 
 CURRENCY = (os.getenv("CURRENCY", "RUB") or "RUB").strip().upper()
-MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER", "5.0"))
+DEFAULT_MARKUP = os.getenv("DEFAULT_MARKUP")
+MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER") or DEFAULT_MARKUP or "4.0")
 
 ADMIN_TOKEN = (os.getenv("ADMIN_TOKEN", "") or "").strip()
 
@@ -853,10 +854,7 @@ async def api_services_by_network(network: str, user_id: Optional[int] = Query(N
         # если есть пользователь — пересчитываем rate_client_1000 под его наценку
         out = []
         if u is not None:
-            import asyncio
-            fx = None
-            if CURRENCY == "RUB":
-                fx = asyncio.get_event_loop().run_until_complete(fx_usd_rub())
+            fx = await fx_usd_rub() if CURRENCY == "RUB" else None
             for it in items:
                 # вручную повтор расчёта без ожидания (чтобы не делать await много раз)
                 current_view = float(it.rate_client_1000 or 0.0)
