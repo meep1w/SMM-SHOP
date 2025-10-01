@@ -293,15 +293,26 @@ window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
           • Код на скидку вводится на странице оформления услуги.
         </div>
       </div>
-    `;
+
+      <div class="card" style="padding:16px">
+          <button id="openRoulette"
+              class="btn btn-primary"
+                style="display:flex; gap:8px; align-items:center">
+                <img src="static/img/roulette.svg" alt="" style="width:18px;height:18px">
+              <span>Открыть рулетку</span>
+          </button>
+      </div>`;
     document.getElementById('appMain')?.appendChild(wrap);
     pages.profile = wrap;
 
     // binds
     wrap.querySelector('#btnBackFromProfile')?.addEventListener('click', ()=> showPage('page-categories'));
     wrap.querySelector('#profilePromoApply')?.addEventListener('click', onProfilePromoApply);
+    wrap.querySelector('#openRoulette')?.addEventListener('click', openRoulette);
+
     return wrap;
   }
+
 
   function updateProfilePageView() {
     const p = pages.profile || document.getElementById('page-profile');
@@ -366,9 +377,52 @@ window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
     showPage('page-profile');
   });
 
+   function ensureRoulettePage() {
+  let p = document.getElementById('page-roulette');
+  if (p) return p;
+  p = document.createElement('section');
+  p.id = 'page-roulette';
+  p.className = 'page';
+  // пустая заглушка; контент сверстаем позже
+  p.innerHTML = `<div style="min-height:100vh"></div>`;
+  document.getElementById('appMain')?.appendChild(p);
+  return p;
+}
+
+function openRoulette() {
+  ensureRoulettePage();
+
+  // скрыть таббар целиком
+  const tabbar = document.querySelector('.tabbar');
+  if (tabbar) tabbar.style.display = 'none';
+
+  showPage('page-roulette');
+
+  // системная кнопка Назад от Telegram
+  try {
+    tg?.BackButton?.show?.();
+    tg?.BackButton?.offClick?.(closeRoulette); // на всякий
+    tg?.BackButton?.onClick?.(closeRoulette);
+  } catch (_) {}
+}
+
+function closeRoulette() {
+  showPage('page-profile');
+
+  const tabbar = document.querySelector('.tabbar');
+  if (tabbar) tabbar.style.display = 'grid';
+
+  try {
+    tg?.BackButton?.offClick?.(closeRoulette);
+    tg?.BackButton?.hide?.();
+  } catch (_) {}
+}
+
   // ====== Tabs / Pages ======
   function showPage(id){
-    ["page-categories","page-services","page-service","page-favs","page-refs","page-details","page-profile"].forEach(pid=>{
+    ["page-categories","page-services","page-service","page-favs","page-refs","page-details","page-profile","page-roulette"]
+  .forEach(pid => {
+
       const el = document.getElementById(pid);
       if (!el) return;
       el.classList.toggle("active", pid===id);
