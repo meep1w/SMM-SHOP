@@ -12,14 +12,31 @@
   console.log('app.js ready (promos + profile)');
 
   // ====== Telegram WebApp ======
-  const tg = (window.Telegram && window.Telegram.WebApp) || null;
-  try {
-    tg?.expand?.();
-    tg?.ready?.();
-    tg?.MainButton?.hide?.();
-    tg?.BackButton?.hide?.();
-    tg?.disableVerticalSwipes?.();
-  } catch (_) {}
+const tg = window.Telegram?.WebApp || null;
+
+try {
+  // корректная инициализация
+  tg?.ready?.();
+  tg?.expand?.();                 // растянуть на максимум
+  tg?.disableVerticalSwipes?.();  // запрет pull-to-dismiss (свайп вниз)
+
+  // скрываем стандартные кнопки, если вдруг активны
+  tg?.MainButton?.hide?.();
+  tg?.BackButton?.hide?.();
+
+  // фирменные цвета шапки/фона (подставь свои при желании)
+  const HEADER_COLOR = '#0F172A';
+  const BG_COLOR     = '#0B1220';
+  tg?.setHeaderColor?.(HEADER_COLOR);
+  tg?.setBackgroundColor?.(BG_COLOR);
+
+  // при смене темы в ТГ повторно задаём свои цвета
+  tg?.onEvent?.('themeChanged', () => {
+    tg?.setHeaderColor?.(HEADER_COLOR);
+    tg?.setBackgroundColor?.(BG_COLOR);
+  });
+} catch (_) {}
+
 
   const API_BASE = "/api/v1";
 
