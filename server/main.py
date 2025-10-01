@@ -1033,7 +1033,7 @@ async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
         "asset": "USDT",
         "amount": round(amount, 2),
         "payload": str(user_id),
-        "description": "SMMShop topup",
+        "description": "Пополнение баланса",
     }
 
     async with httpx.AsyncClient(timeout=15.0) as c:
