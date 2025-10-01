@@ -1303,36 +1303,42 @@ window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
 
 
   // ====== Topup ======
-  btnTopup?.addEventListener('click', async ()=>{
-  try{
+  // ====== Topup ======
+btnTopup?.addEventListener('click', async () => {
+  try {
     const s = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
     if (!s) return;
+
     const amount = parseFloat(s);
-    if (isNaN(amount) || amount < 0.10){ alert('Минимальная сумма — 0.10 USDT'); return; }
+    if (isNaN(amount) || amount < 0.10) {
+      alert('Минимальная сумма — 0.10 USDT');
+      return;
+    }
 
     const r = await fetch(`${API_BASE}/pay/invoice`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ user_id: userId||seq, amount_usd: amount }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId || seq, amount_usd: amount }),
     });
-    if (r.status === 501){ alert('Оплата через CryptoBot ещё не настроена.'); return; }
+
+    if (r.status === 501) { alert('Оплата через CryptoBot ещё не настроена.'); return; }
     if (!r.ok) throw new Error(await r.text());
+
     const j = await r.json();
+    const url = j.mini_app_url || j.pay_url; // <— сначала mini_app_url
 
-    const url = j.mini_app_url || j.pay_url;               // <-- предпочитаем мини-апп
-    if (!url) { alert('Не удалось получить ссылку оплаты'); return; }
+    if (!url) { alert('Не удалось получить ссылку на оплату'); return; }
 
-    // если это t.me или tg:// — открываем «внутри» Телеграма
-    if (/^(?:tg:|https:\/\/t\.me\/)/i.test(url)) {
-      if (tg?.openTelegramLink) tg.openTelegramLink(url);
-      else window.location.href = url;
-    } else {
-      if (tg?.openLink) tg.openLink(url);
-      else window.open(url, '_blank');
-    }
-  }catch(e){
-    alert('Ошибка создания счёта: ' + (e?.message||e));
+    // внутри Telegram лучше так — без подтверждающих попапов
+    if (tg?.openTelegramLink) tg.openTelegramLink(url);
+    else if (tg?.openLink)    tg.openLink(url);
+    else                      window.location.href = url;
+
+  } catch (e) {
+    alert('Ошибка создания счёта: ' + (e?.message || e));
   }
 });
+
 
 
   // ====== Keyboard inset -> hide tabbar ======
