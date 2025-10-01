@@ -41,20 +41,58 @@ def _kb_types():
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=kb)
 
+# ==== helpers ====
+
+def api_url(path: str) -> str:
+    """
+    Собирает URL так, чтобы /api/v1 был строго один раз.
+    Примеры:
+      API_BASE=http://127.0.0.1:8011, path='promo/admin/create'
+          -> http://127.0.0.1:8011/api/v1/promo/admin/create
+      API_BASE=https://slovekinzshop.net/api/v1, path='/promo/admin/create'
+          -> https://slovekinzshop.net/api/v1/promo/admin/create
+    """
+    base = API_BASE.rstrip("/")
+    p = path.lstrip("/")
+    # если base уже оканчивается на /api/v1 — второй раз не добавляем
+    if not base.endswith("/api/v1"):
+        p = "api/v1/" + p
+    return f"{base}/{p}"
+
 async def _create_promo(payload: dict) -> tuple[bool, str]:
     if not ADMIN_TOKEN:
         return False, "ADMIN_TOKEN не задан в окружении бота"
-    url = f"{API_BASE}/api/v1/promo/admin/create"
-    headers = {"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"}
+    if len(ADMIN_TOKEN) < 40:  # наш валидный — 64 символа
+        return False, "ADMIN_TOKEN выглядит подозрительно (слишком короткий)"
+
+    url = api_url("promo/admin/create")  # !!! без /api/v1 здесь
+    headers = {
+        "Authorization": f"Bearer {ADMIN_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
     try:
         async with httpx.AsyncClient(timeout=20.0) as c:
             r = await c.post(url, headers=headers, json=payload)
-        if r.status_code == 200 and r.json().get("ok"):
+        # API отвечает {"ok": true, ...} при успехе
+        try:
             js = r.json()
+        except Exception:
+            js = None
+
+        if r.status_code == 200 and isinstance(js, dict) and js.get("ok"):
             return True, f"✅ Готово: {js}"
+
+        # Подсветим частые кейсы
+        if r.status_code == 403:
+            return False, "❌ 403 Forbidden — проверь ADMIN_TOKEN у бота (и перезапусти бота)"
+        if r.status_code == 404:
+            return False, f"❌ 404 Not Found — проверь базовый URL (API_BASE) и путь. URL: {url}"
+
         return False, f"❌ Ошибка API: {r.status_code} {r.text}"
     except Exception as e:
         return False, f"❌ Сеть/исключение: {e}"
+
 
 # ==== entry ====
 @router.message(Command("admin"))
