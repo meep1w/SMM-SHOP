@@ -413,10 +413,31 @@ function exitFullPage() {
   return p;
 }
 
+function ensureFullpageStyles() {
+  if (document.getElementById('fullpageStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'fullpageStyles';
+  st.textContent = `
+    /* скрыть таббар */
+    body.fullpage .tabbar { display: none !important; }
+
+    /* внутри основного контейнера оставить только рулетку */
+    body.fullpage #appMain > *:not(#page-roulette) { display: none !important; }
+    body.fullpage #page-roulette { display: block !important; }
+
+    /* на всякий — локальные сабхедеры внутри страниц */
+    body.fullpage .subheader { display: none !important; }
+  `;
+  document.head.appendChild(st);
+}
+
 function openRoulette() {
   ensureRoulettePage();
-  enterFullPage();
+  ensureFullpageStyles();
+
+  document.body.classList.add('fullpage');   // <-- спрятать всё, кроме roulette
   showPage('page-roulette');
+
   try {
     tg?.BackButton?.show?.();
     tg?.BackButton?.offClick?.(closeRoulette);
@@ -424,14 +445,17 @@ function openRoulette() {
   } catch (_) {}
 }
 
+
 function closeRoulette() {
+  document.body.classList.remove('fullpage'); // вернуть обычный режим
   showPage('page-profile');
-  exitFullPage();
+
   try {
     tg?.BackButton?.offClick?.(closeRoulette);
     tg?.BackButton?.hide?.();
   } catch (_) {}
 }
+
 
 
   // ====== Tabs / Pages ======
