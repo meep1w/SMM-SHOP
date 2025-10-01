@@ -377,6 +377,30 @@ window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
     showPage('page-profile');
   });
 
+// ===== Fullpage helpers (hide tabbar & subheaders) =====
+function ensureFullpageStyles() {
+  if (document.getElementById('fullpageStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'fullpageStyles';
+  st.textContent = `
+    body.fullpage .tabbar{display:none !important;}
+    body.fullpage .subheader{display:none !important;}
+    body.fullpage .details-head{display:none !important;}
+  `;
+  document.head.appendChild(st);
+}
+function enterFullPage() {
+  ensureFullpageStyles();
+  document.body.classList.add('fullpage');
+  const tabbar = document.querySelector('.tabbar');
+  if (tabbar) tabbar.style.display = 'none';
+}
+function exitFullPage() {
+  document.body.classList.remove('fullpage');
+  const tabbar = document.querySelector('.tabbar');
+  if (tabbar) tabbar.style.display = 'grid';
+}
+
    function ensureRoulettePage() {
   let p = document.getElementById('page-roulette');
   if (p) return p;
@@ -391,32 +415,24 @@ window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
 
 function openRoulette() {
   ensureRoulettePage();
-
-  // скрыть таббар целиком
-  const tabbar = document.querySelector('.tabbar');
-  if (tabbar) tabbar.style.display = 'none';
-
+  enterFullPage();
   showPage('page-roulette');
-
-  // системная кнопка Назад от Telegram
   try {
     tg?.BackButton?.show?.();
-    tg?.BackButton?.offClick?.(closeRoulette); // на всякий
+    tg?.BackButton?.offClick?.(closeRoulette);
     tg?.BackButton?.onClick?.(closeRoulette);
   } catch (_) {}
 }
 
 function closeRoulette() {
   showPage('page-profile');
-
-  const tabbar = document.querySelector('.tabbar');
-  if (tabbar) tabbar.style.display = 'grid';
-
+  exitFullPage();
   try {
     tg?.BackButton?.offClick?.(closeRoulette);
     tg?.BackButton?.hide?.();
   } catch (_) {}
 }
+
 
   // ====== Tabs / Pages ======
   function showPage(id){
@@ -1401,12 +1417,19 @@ btnTopup?.addEventListener('click', async () => {
     const tabbar = document.querySelector('.tabbar');
 
     function applyKbInset(px){
-      const v = px>40 ? px : 0;
-      root.style.setProperty('--kb', v+'px');
-      const open = v > 40;
-      document.body.classList.toggle('kb-open', open);
-      if (tabbar) tabbar.style.display = open ? 'none' : 'grid';
-    }
+  // В полноэкранных страницах (рулетка) UI скрыт принудительно
+  if (document.body.classList.contains('fullpage')) {
+    const tabbar = document.querySelector('.tabbar');
+    if (tabbar) tabbar.style.display = 'none';
+    return;
+  }
+  const v = px>40 ? px : 0;
+  root.style.setProperty('--kb', v+'px');
+  const open = v > 40;
+  document.body.classList.toggle('kb-open', open);
+  if (tabbar) tabbar.style.display = open ? 'none' : 'grid';
+}
+
 
     if (window.visualViewport){
       const vv=window.visualViewport;
