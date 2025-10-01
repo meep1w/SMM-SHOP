@@ -1029,19 +1029,24 @@ async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
 
     link = f"{CRYPTOBOT_BASE}/createInvoice"
     headers = {"Content-Type": "application/json", "Crypto-Pay-API-Token": CRYPTOBOT_API_KEY}
-    body = {"asset": "USDT", "amount": round(amount, 2), "payload": str(user_id), "description": "SMMShop topup"}
+    body = {
+        "asset": "USDT",
+        "amount": round(amount, 2),
+        "payload": str(user_id),
+        "description": "SMMShop topup",
+    }
 
     async with httpx.AsyncClient(timeout=15.0) as c:
         r = await c.post(link, headers=headers, json=body)
         js = r.json()
 
-    if isinstance(js.get("result"), dict) and js["result"].get("pay_url"):
-        pay_url = js["result"]["pay_url"]
-        invoice_id = js["result"].get("invoice_id", "")
-    elif isinstance(js.get("invoice"), dict) and js["invoice"].get("pay_url"):
-        pay_url = js["invoice"]["pay_url"]
-        invoice_id = js["invoice"].get("invoice_id", "")
-    else:
+    # Унифицировано: достаём из result или invoice
+    res = js.get("result") or js.get("invoice") or {}
+    pay_url = res.get("pay_url")
+    mini_app_url = res.get("mini_app_invoice_url")  # <— НУЖНОЕ ПОЛЕ
+    invoice_id = res.get("invoice_id") or res.get("id") or ""
+
+    if not pay_url:
         raise HTTPException(502, f"CryptoBot error: {js}")
 
     with db() as s:
@@ -1054,12 +1059,14 @@ async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
             currency="USD",
             status="created",
             applied=False,
-            pay_url=pay_url,
+            pay_url=pay_url,  # можно хранить только pay_url
         )
         s.add(t)
         s.commit()
 
-    return {"pay_url": pay_url}
+    # Возвращаем обе ссылки — фронт откроет mini_app_url, если есть
+    return {"pay_url": pay_url, "mini_app_url": mini_app_url, "invoice_id": invoice_id}
+
 
 
 # ---- Webhook ----
