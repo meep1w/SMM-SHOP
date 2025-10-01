@@ -25,8 +25,8 @@ try {
   tg?.BackButton?.hide?.();
 
   // фирменные цвета шапки/фона (подставь свои при желании)
-  const HEADER_COLOR = '#0F172A';
-  const BG_COLOR     = '#0B1220';
+  const HEADER_COLOR = '#0e1013';
+  const BG_COLOR     = '#0e1013';
   tg?.setHeaderColor?.(HEADER_COLOR);
   tg?.setBackgroundColor?.(BG_COLOR);
 
