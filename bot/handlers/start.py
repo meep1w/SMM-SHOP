@@ -26,6 +26,7 @@ from bot.config import (
     WELCOME_IMG,
     MENU_IMG,
 )
+from time import time
 
 router = Router()
 _http = httpx.AsyncClient(timeout=15.0)
@@ -37,8 +38,10 @@ def kb_welcome() -> InlineKeyboardMarkup:
     ])
 
 def kb_main() -> InlineKeyboardMarkup:
+    force_ver = int(time())  # уникальный параметр
+    open_url = f"{WEBAPP_URL}?v={force_ver}"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍 Открыть магазин", web_app=WebAppInfo(url=WEBAPP_URL))],
+        [InlineKeyboardButton(text="🛍 Открыть магазин", web_app=WebAppInfo(url=open_url))],
         [InlineKeyboardButton(text="👥 Реф система", callback_data="menu:refs"),
          InlineKeyboardButton(text="🎰 Рулетка",     callback_data="menu:roulette")],
         [InlineKeyboardButton(text="ℹ️ О магазине", callback_data="menu:about"),

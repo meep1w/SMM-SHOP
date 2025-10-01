@@ -37,6 +37,21 @@ try {
   });
 } catch (_) {}
 
+// Глобальная версия (подставь из .env в index.html)
+window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
+
+// Добавляем ?v=... ко всем <img src="static/...">, если нет
+(function bumpStaticImages() {
+  const v = encodeURIComponent(window.WEBAPP_VERSION);
+  document.querySelectorAll('img[src^="static/"]:not([src*="?v="])')
+    .forEach(img => {
+      const url = new URL(img.getAttribute('src'), location.origin);
+      if (!url.searchParams.has('v')) {
+        url.searchParams.set('v', v);
+        img.setAttribute('src', url.pathname + '?' + url.searchParams.toString());
+      }
+    });
+})();
 
   const API_BASE = "/api/v1";
 
