@@ -383,12 +383,27 @@ function ensureFullpageStyles() {
   const st = document.createElement('style');
   st.id = 'fullpageStyles';
   st.textContent = `
-    body.fullpage .tabbar{display:none !important;}
-    body.fullpage .subheader{display:none !important;}
-    body.fullpage .details-head{display:none !important;}
+    /* скрыть таббар */
+    body.fullpage .tabbar { display: none !important; }
+
+    /* скрыть все страницы в приложении */
+    body.fullpage #appMain .page { display: none !important; }
+
+    /* оставить только рулетку */
+    body.fullpage #appMain #page-roulette { display: block !important; }
+
+    /* прикрыть локальные сабхедеры внутри страниц */
+    body.fullpage .subheader,
+    body.fullpage .details-head { display: none !important; }
+
+    /* на случай, если «карточный хедер» не внутри страниц */
+    body.fullpage .hero,
+    body.fullpage .userbar,
+    body.fullpage .header-card { display: none !important; }
   `;
   document.head.appendChild(st);
 }
+
 function enterFullPage() {
   ensureFullpageStyles();
   document.body.classList.add('fullpage');
@@ -413,29 +428,21 @@ function exitFullPage() {
   return p;
 }
 
-function ensureFullpageStyles() {
-  if (document.getElementById('fullpageStyles')) return;
-  const st = document.createElement('style');
-  st.id = 'fullpageStyles';
-  st.textContent = `
-    /* скрыть таббар */
-    body.fullpage .tabbar { display: none !important; }
 
-    /* внутри основного контейнера оставить только рулетку */
-    body.fullpage #appMain > *:not(#page-roulette) { display: none !important; }
-    body.fullpage #page-roulette { display: block !important; }
-
-    /* на всякий — локальные сабхедеры внутри страниц */
-    body.fullpage .subheader { display: none !important; }
-  `;
-  document.head.appendChild(st);
-}
 
 function openRoulette() {
   ensureRoulettePage();
   ensureFullpageStyles();
 
-  document.body.classList.add('fullpage');   // <-- спрятать всё, кроме roulette
+  // Прячем возможный «карточный хедер» программно
+  const candidates = [
+    document.getElementById('nickname')?.closest('.card'),
+    document.getElementById('balanceValue')?.closest('.card'),
+    document.querySelector('.hero, .userbar, .header-card')
+  ].filter(Boolean);
+  candidates.forEach(el => { el.dataset._prevDisplay = el.style.display || ''; el.style.display = 'none'; });
+
+  document.body.classList.add('fullpage');
   showPage('page-roulette');
 
   try {
@@ -445,9 +452,14 @@ function openRoulette() {
   } catch (_) {}
 }
 
-
 function closeRoulette() {
-  document.body.classList.remove('fullpage'); // вернуть обычный режим
+  // Вернуть карточный хедер, если прятали
+  document.querySelectorAll('[data-_prev-display]').forEach(el => {
+    el.style.display = el.dataset._prevDisplay;
+    delete el.dataset._prevDisplay;
+  });
+
+  document.body.classList.remove('fullpage');
   showPage('page-profile');
 
   try {
@@ -455,6 +467,7 @@ function closeRoulette() {
     tg?.BackButton?.hide?.();
   } catch (_) {}
 }
+
 
 
 
