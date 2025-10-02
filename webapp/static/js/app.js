@@ -399,11 +399,16 @@
         background: linear-gradient(180deg,#ff6b6b 0%, #ff3e3e 100%); color:#fff;
       }
 
-      /* увеличить поле под рулетку */
-/* поле под рулетку — повыше */
+   /* ===== рулетка: фикс-высота и фикс-размер билетов ===== */
+#page-roulette{
+  --wheel-h: 520px;      /* фиксированная высота поля */
+  --ticket-h: 150px;     /* фиксированная высота билета */
+  --ticket-gap: 18px;    /* вертикальный зазор между билетами */
+}
+
 #page-roulette .wheel-pad{
-  height: 70vh;
-  min-height: 420px;
+  height: var(--wheel-h);
+  min-height: var(--wheel-h);
   border: 1px dashed rgba(255,255,255,.12);
   border-radius: 16px;
   display: grid; place-items: center;
@@ -411,33 +416,34 @@
   margin-bottom: 16px;
 }
 
-/* контейнер и вертикальная лента */
 #page-roulette .wheel{ position:relative; width:100%; height:100%; overflow:hidden; }
+
 #page-roulette .strip{
   position:absolute; left:50%; top:0;
-  display:flex; flex-direction:column; gap:18px;
-  transform:translateX(-50%) translateY(0);
-  will-change:transform;
-  padding:12px 0;
+  display:flex; flex-direction:column; gap: var(--ticket-gap);
+  transform: translate3d(-50%, 0, 0);
+  will-change: transform;
+  padding: 12px 0;
 }
 
-/* билет — чистая картинка, без дополнительных эффектов */
+/* чистая картинка билета фиксированной высоты (без scale/подсветок) */
 #page-roulette .ticket{ flex:0 0 auto; }
 #page-roulette .ticket img{
   display:block;
-  width: clamp(220px, 78vw, 340px);
-  height:auto;
-  border-radius:14px;
+  height: var(--ticket-h);
+  width: auto;
+  border-radius: 14px;
   box-shadow: 0 6px 16px rgba(0,0,0,.22);
 }
 
-/* строгий маркер по центру (тонкая линия) */
+/* тонкая линия-маркер по центру */
 #page-roulette .marker{
   position:absolute; left:8%; right:8%; top:50%;
   height:2px; transform:translateY(-1px);
   background: rgba(255,255,255,.35);
   pointer-events:none;
 }
+
 
 
     `;
@@ -513,7 +519,7 @@
     }
   }
 
-  function initRouletteUI(root){
+ function initRouletteUI(root){
   const wheel = root.querySelector('#rouletteWheel');
   const strip = root.querySelector('#rouletteStrip');
   rouletteState.wheel = wheel;
@@ -524,20 +530,20 @@
   const oneCol = ROULETTE.VALUES.map(card).join('');
   strip.innerHTML = new Array(8).fill(oneCol).join('');
 
-  requestAnimationFrame(() => {
-    const probe = strip.querySelector('.ticket img');
-    const gap = parseFloat(getComputedStyle(strip).gap) || 0;
-    const hWheel = wheel.getBoundingClientRect().height;
-    const hItem  = probe ? probe.getBoundingClientRect().height : 120;
+  // читаем фикс-размеры из CSS (px)
+  const cs = getComputedStyle(root);
+  const TICKET_H = parseFloat(cs.getPropertyValue('--ticket-h')) || 150;
+  const GAP      = parseFloat(cs.getPropertyValue('--ticket-gap')) || 18;
+  const WHEEL_H  = parseFloat(cs.getPropertyValue('--wheel-h')) || wheel.getBoundingClientRect().height;
 
-    rouletteState.cardStep = hItem + gap;
-    rouletteState.centerOffset = (hWheel/2) - (hItem/2);
-    rouletteState.indexBase = ROULETTE.VALUES.length * 2;
+  rouletteState.cardStep     = TICKET_H + GAP;               // строгий шаг по вертикали
+  rouletteState.centerOffset = (WHEEL_H/2) - (TICKET_H/2);   // центр контейнера к центру билета
+  rouletteState.indexBase    = ROULETTE.VALUES.length * 2;   // ставим ленту примерно посередине
 
-    strip.style.transform =
-      `translateX(-50%) translateY(${-(rouletteState.indexBase * rouletteState.cardStep - rouletteState.centerOffset)}px)`;
-  });
+  const y0 = - (rouletteState.indexBase * rouletteState.cardStep - rouletteState.centerOffset);
+  strip.style.transform = `translate3d(-50%, ${Math.round(y0)}px, 0)`;
 }
+
 
 
 
@@ -553,32 +559,36 @@
   if (String(currentCurrency).toUpperCase() !== 'RUB'){ alert('Рулетка работает только в RUB'); return; }
   if (Number(lastBalance) < ROULETTE_COST_RUB){ alert('Недостаточно средств'); return; }
 
-  // локальное списание
+  // локальное списание 10₽
   lastBalance = Math.max(0, Number(lastBalance) - ROULETTE_COST_RUB);
   updateRouletteBar(); updateProfilePageView?.();
 
   const strip = rouletteState.strip;
   const { cardStep, centerOffset } = rouletteState;
 
-  const winIdx = weightedIndex(ROULETTE.WEIGHTS);
-  const cycles = 5;
+  const winIdx = weightedIndex(ROULETTE.WEIGHTS);   // индекс призового билета внутри VALUES
+  const cycles = 5;                                 // «оборотов» до финиша
   const absoluteIdx = rouletteState.indexBase + cycles*ROULETTE.VALUES.length + winIdx;
-  const toY = -(absoluteIdx * cardStep - centerOffset);
+
+  const toY = Math.round(-(absoluteIdx * cardStep - centerOffset));
 
   rouletteState.spinning = true;
   strip.style.transition = `transform ${ROULETTE.SPIN_MS}ms cubic-bezier(.12,.75,.13,1)`;
   void strip.offsetHeight;
-  strip.style.transform = `translateX(-50%) translateY(${toY}px)`;
+  strip.style.transform = `translate3d(-50%, ${toY}px, 0)`;
 
   const onEnd = () => {
     strip.removeEventListener('transitionend', onEnd);
     rouletteState.spinning = false;
 
-    rouletteState.indexBase = absoluteIdx % (ROULETTE.VALUES.length*2);
-    strip.style.transition = 'none';
-    strip.style.transform =
-      `translateX(-50%) translateY(${-(rouletteState.indexBase * cardStep - centerOffset)}px)`;
+    // зафиксируем базу так, чтобы следующий спин снова был «в глубине» ленты
+    rouletteState.indexBase = absoluteIdx % (ROULETTE.VALUES.length * 2);
 
+    strip.style.transition = 'none';
+    const yFix = Math.round(-(rouletteState.indexBase * cardStep - centerOffset));
+    strip.style.transform = `translate3d(-50%, ${yFix}px, 0)`;
+
+    // начисление выигрыша
     const win = Number(ROULETTE.VALUES[winIdx] || 0);
     if (win > 0) lastBalance = Number(lastBalance) + win;
 
@@ -587,6 +597,7 @@
   };
   strip.addEventListener('transitionend', onEnd);
 }
+
 
 
 
