@@ -394,36 +394,62 @@
         background: linear-gradient(180deg,#ff6b6b 0%, #ff3e3e 100%); color:#fff;
       }
 
-      #page-roulette .wheel-pad{
-        height: 55vh; min-height: 320px; border:1px dashed rgba(255,255,255,.1);
-        border-radius: 16px; display:grid; place-items:center; color:var(--muted);
-        margin-bottom: 12px;
-      }
-      #page-roulette .wheel{ position:relative; width:100%; height:100%; overflow:hidden; }
-      /* было: flex-row по X и вертикальный маркер */
-#page-roulette .strip{
-  /* top:50%; left:0; transform:translateY(-50%) translateX(0); */
-  position:absolute; left:50%; top:0;
-  display:flex; flex-direction:column; gap:10px;
-  transform:translateX(-50%) translateY(0); /* двигаем по Y */
-  will-change:transform;
+      /* увеличить поле под рулетку */
+#page-roulette .wheel-pad{
+  height: 70vh;              /* было ~55vh */
+  min-height: 420px;
+  border: 1px dashed rgba(255,255,255,.12);
+  border-radius: 16px;
+  display: grid; place-items: center;
+  color: var(--muted);
+  margin-bottom: 16px;       /* было 12px */
 }
 
-/* маркер — теперь горизонтальная линия по центру */
+/* контейнер и вертикальная лента */
+#page-roulette .wheel{ position:relative; width:100%; height:100%; overflow:hidden; }
+#page-roulette .strip{
+  position:absolute; left:50%; top:0;
+  display:flex; flex-direction:column; gap:16px;    /* gap был 10px */
+  transform:translateX(-50%) translateY(0);
+  will-change:transform;
+  padding: 18px 0;
+}
+
+/* крупные «билеты» */
+#page-roulette .ticket{
+  width: min(82%, 320px);     /* адаптивная ширина, максимум 320px */
+  height: 120px;              /* фиксированная высота для стабильной геометрии */
+  flex: 0 0 auto;
+  display: grid; place-items:center;
+  border-radius: 16px;
+  background: linear-gradient(180deg,#171b21,#14181e);
+  border: 1px solid var(--stroke);
+  box-shadow: 0 6px 16px rgba(0,0,0,.25);
+  transition: transform .22s ease, box-shadow .22s ease;
+}
+#page-roulette .ticket img{ height:100%; width:auto; display:block; }
+
+/* подсветка центрального билета */
+#page-roulette .ticket.is-center{
+  transform: scale(1.08);
+  box-shadow: 0 10px 26px rgba(0,0,0,.35), 0 0 0 2px rgba(255,255,255,.10) inset;
+}
+
+/* заметный «маркер» по центру (что выпало) */
 #page-roulette .marker{
-  position:absolute; left:0; right:0; top:50%;
-  height:2px; transform:translateY(-1px);
-  background:linear-gradient(90deg,transparent,rgba(255,255,255,.38),transparent);
+  position:absolute; left:10%; right:10%; top:50%;
+  height: 3px; transform: translateY(-1.5px);
+  background: linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+  box-shadow: 0 0 18px rgba(255,255,255,.35);
   pointer-events:none;
 }
+#page-roulette .marker::after{
+  content:''; position:absolute; left:50%; top:-8px; transform:translateX(-50%);
+  width:12px; height:12px; border-radius:999px;
+  background: rgba(255,255,255,.65);
+  box-shadow: 0 0 14px rgba(255,255,255,.65);
+}
 
-      #page-roulette .ticket img{ width:320px; height:160px; display:block; }
-      #page-roulette .marker{
-        position:absolute; top:0; bottom:0; left:50%;
-        width:2px; transform:translateX(-1px);
-        background:linear-gradient(180deg,transparent,rgba(255,255,255,.38),transparent);
-        pointer-events:none;
-      }
     `;
     document.head.appendChild(st);
   }
@@ -506,22 +532,22 @@
   const vq = window.WEBAPP_VERSION ? `?v=${encodeURIComponent(window.WEBAPP_VERSION)}` : '';
   const card = val => `<div class="ticket"><img src="${ROULETTE.IMG_DIR}/ticket-${val}.svg${vq}" alt="${val}"></div>`;
   const oneCol = ROULETTE.VALUES.map(card).join('');
-  strip.innerHTML = new Array(8).fill(oneCol).join(''); // длинная вертикальная колонка
+  strip.innerHTML = new Array(8).fill(oneCol).join('');
 
   requestAnimationFrame(() => {
     const any = strip.querySelector('.ticket');
+    const g = parseFloat(getComputedStyle(strip).gap) || 0;               // берём gap из CSS
     const h = wheel.getBoundingClientRect().height;
-    const cardH = any ? any.getBoundingClientRect().height : 84;
-
-    rouletteState.cardH = cardH + 10;               // высота карточки + gap
-    rouletteState.centerOffset = (h/2) - (cardH/2); // центр экрана по Y
+    const itemH = any ? any.getBoundingClientRect().height : 120;        // наша фикс. высота
+    rouletteState.cardStep = itemH + g;                                   // «шаг» карточки по Y
+    rouletteState.centerOffset = (h/2) - (itemH/2);
     rouletteState.indexBase = ROULETTE.VALUES.length * 2;
 
-    // ставим базовую позицию так, чтобы карточка стояла по центру горизонтального маркера
     strip.style.transform =
-      `translateX(-50%) translateY(${-(rouletteState.indexBase * rouletteState.cardH - rouletteState.centerOffset)}px)`;
+      `translateX(-50%) translateY(${-(rouletteState.indexBase * rouletteState.cardStep - rouletteState.centerOffset)}px)`;
   });
 }
+
 
 
   function weightedIndex(weights){
@@ -539,12 +565,12 @@
   updateRouletteBar(); updateProfilePageView?.();
 
   const strip = rouletteState.strip;
-  const { cardH, centerOffset } = rouletteState;
+  const { cardStep, centerOffset } = rouletteState;
 
   const winIdx = weightedIndex(ROULETTE.WEIGHTS);
   const cycles = 5;
   const absoluteIdx = rouletteState.indexBase + cycles*ROULETTE.VALUES.length + winIdx;
-  const toY = -(absoluteIdx * cardH - centerOffset);
+  const toY = -(absoluteIdx * cardStep - centerOffset);
 
   rouletteState.spinning = true;
   strip.style.transition = `transform ${ROULETTE.SPIN_MS}ms cubic-bezier(.12,.75,.13,1)`;
@@ -558,14 +584,25 @@
     rouletteState.indexBase = absoluteIdx % (ROULETTE.VALUES.length*2);
     strip.style.transition = 'none';
     strip.style.transform =
-      `translateX(-50%) translateY(${-(rouletteState.indexBase * cardH - centerOffset)}px)`;
+      `translateX(-50%) translateY(${-(rouletteState.indexBase * cardStep - centerOffset)}px)`;
 
+    // подсветить «выпавший» и начислить
+    markCenter(absoluteIdx);
     const win = Number(ROULETTE.VALUES[winIdx] || 0);
     if (win > 0) lastBalance = Number(lastBalance) + win;
     try { tg?.HapticFeedback?.notificationOccurred?.(win>0?'success':'error'); } catch(_){}
     updateRouletteBar(); updateProfilePageView?.();
   };
   strip.addEventListener('transitionend', onEnd);
+}
+
+
+  function markCenter(absIdx){
+  const s = rouletteState.strip;
+  if (!s) return;
+  s.querySelectorAll('.ticket.is-center').forEach(el => el.classList.remove('is-center'));
+  const el = s.children[absIdx];
+  if (el) el.classList.add('is-center');
 }
 
 
