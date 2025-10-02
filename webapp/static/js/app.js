@@ -476,7 +476,6 @@ function ensureRouletteStyles() {
       width:44px; height:44px; border-radius:12px; flex:0 0 auto;
       display:grid; place-items:center; overflow:hidden;
       background: linear-gradient(180deg,#1a1e24,#14181e);
-      border:1px solid var(--stroke);
     }
     #page-roulette .rbar__ico img{ width:100%; height:100%; object-fit:cover; display:block; border-radius: 50%; }
     #page-roulette .rbar__title{ font-weight:700; font-size:15px; }
