@@ -440,43 +440,77 @@
       }
 
       /* ===== Авто-спин (модалка) ===== */
-      #appModal .asm{
-        width:min(520px, 92vw);
-        margin:10vh auto 0;
-        background:linear-gradient(180deg,#14171c,#101318);
-        border:1px solid var(--stroke);
-        border-radius:28px;
-        padding:24px;
-        box-shadow:0 22px 48px rgba(0,0,0,.4);
-        color:#fff;
-      }
-      #appModal .asm h3{ margin:0 0 8px 0; font-size:28px; font-weight:800; text-align:center; }
-      #appModal .asm .sub{ text-align:center; color:var(--muted); margin-bottom:18px; }
-      #appModal .asm .row{ margin-top:12px; }
-      #appModal .asm .label{ font-size:12px; color:var(--muted); margin-bottom:6px; }
-      #appModal .asm .inp{
-        display:flex; align-items:center; gap:12px; border:1px solid var(--stroke);
-        border-radius:12px; padding:12px 14px; background:#0f1217;
-      }
-      #appModal .asm .inp input{
-        appearance:textfield; -moz-appearance:textfield; -webkit-appearance:textfield;
-        flex:1 1 auto; border:0; outline:0; background:transparent; color:#fff; font-size:22px; font-weight:700;
-      }
-      #appModal .asm .inp .max{
-        color:#ff8f8f; font-weight:700; cursor:pointer; user-select:none;
-      }
-      #appModal .asm .slider{ margin:14px 2px 4px; width:100%; }
-      #appModal .asm .actions{
-        margin-top:18px; display:grid; grid-template-columns:1fr 1fr; gap:12px;
-      }
-      #appModal .asm .btnx{
-        border:1px solid var(--stroke); border-radius:16px; padding:14px 16px; font-weight:700; cursor:pointer;
-        background:var(--surface-2); color:#c9d2e2; text-align:center;
-      }
-      #appModal .asm .btnp{
-        border:0; border-radius:16px; padding:14px 16px; font-weight:800; cursor:pointer; text-align:center;
-        background:linear-gradient(180deg,#ff6b6b,#ff4242); color:#fff;
-      }
+#appModal .asm{
+  width:min(520px, 92vw);
+  margin:10vh auto 0;
+  background:linear-gradient(180deg,#14171c,#101318);
+  border:1px solid var(--stroke);
+  border-radius:28px;
+  padding:24px;
+  box-shadow:0 22px 48px rgba(0,0,0,.4);
+  color:#fff;
+}
+#appModal .asm h3{ margin:0 0 8px 0; font-size:28px; font-weight:800; text-align:center; }
+#appModal .asm .sub{ text-align:center; color:var(--muted); margin-bottom:18px; }
+#appModal .asm .row{ margin-top:12px; }
+#appModal .asm .label{ font-size:12px; color:var(--muted); margin-bottom:6px; }
+#appModal .asm .inp{
+  display:flex; align-items:center; gap:12px; border:1px solid var(--stroke);
+  border-radius:12px; padding:12px 14px; background:#0f1217;
+}
+#appModal .asm .inp input{
+  appearance:textfield; -moz-appearance:textfield; -webkit-appearance:textfield;
+  flex:1 1 auto; border:0; outline:0; background:transparent; color:#fff; font-size:22px; font-weight:700;
+}
+#appModal .asm .inp .max{
+  color:#ff8f8f; font-weight:700; cursor:pointer; user-select:none;
+}
+
+/* NEW: толстый трек, белый кружок, заливка – акцент */
+#appModal .asm .slider{
+  -webkit-appearance:none; appearance:none;
+  width:100%;
+  height:12px;                 /* толще */
+  border-radius:999px;
+  background:transparent;
+  outline:none;
+  margin:14px 2px 4px;
+}
+/* WebKit */
+#appModal .asm .slider::-webkit-slider-runnable-track{
+  height:12px; border-radius:999px;
+  background:linear-gradient(90deg,#ff6b6b var(--as-fill,0%), rgba(255,255,255,.16) var(--as-fill,0%));
+}
+#appModal .asm .slider::-webkit-slider-thumb{
+  -webkit-appearance:none; appearance:none;
+  width:20px; height:20px; border-radius:50%;
+  background:#fff; border:0;
+  box-shadow:0 2px 6px rgba(0,0,0,.35);
+  margin-top:-4px; /* выровнять центр кружка с треком */
+}
+/* Firefox */
+#appModal .asm .slider::-moz-range-track{
+  height:12px; border-radius:999px;
+  background:linear-gradient(90deg,#ff6b6b var(--as-fill,0%), rgba(255,255,255,.16) var(--as-fill,0%));
+}
+#appModal .asm .slider::-moz-range-thumb{
+  width:20px; height:20px; border-radius:50%;
+  background:#fff; border:0;
+  box-shadow:0 2px 6px rgba(0,0,0,.35);
+}
+
+#appModal .asm .actions{
+  margin-top:18px; display:grid; grid-template-columns:1fr 1fr; gap:12px;
+}
+#appModal .asm .btnx{
+  border:1px solid var(--stroke); border-radius:16px; padding:14px 16px; font-weight:700; cursor:pointer;
+  background:var(--surface-2); color:#c9d2e2; text-align:center;
+}
+#appModal .asm .btnp{
+  border:0; border-radius:16px; padding:14px 16px; font-weight:800; cursor:pointer; text-align:center;
+  background:linear-gradient(180deg,#ff6b6b,#ff4242); color:#fff;
+}
+
     `;
     document.head.appendChild(st);
   }
@@ -753,52 +787,81 @@
   let autoSpinState = { active:false, remaining:0, plan:null };
 
   function openAutospinModal(){
-    const curDefault = 25;
-    openModal(`
-      <div class="asm">
-        <h3>Авто-спин</h3>
-        <div class="sub">Рулетка крутится автоматически</div>
-        <div class="row">
-          <div class="label">Количество спинов</div>
-          <div class="inp">
-            <input id="asCount" type="number" min="1" max="${AUTOSPIN_MAX}" step="1" value="${curDefault}">
-            <div class="max" id="asMax">Макс</div>
-          </div>
-        </div>
-        <input id="asSlider" class="slider" type="range" min="25" max="${AUTOSPIN_MAX}" step="25" value="${curDefault}">
-        <div class="actions">
-          <button id="asCancel" class="btnx">Закрыть</button>
-          <button id="asRun" class="btnp">Запустить</button>
+  const curDefault = 25;
+  openModal(`
+    <div class="asm">
+      <h3>Авто-спин</h3>
+      <div class="sub">Рулетка крутится автоматически</div>
+      <div class="row">
+        <div class="label">Количество спинов</div>
+        <div class="inp">
+          <input id="asCount" type="number" min="1" max="${AUTOSPIN_MAX}" step="1" value="${curDefault}">
+          <div class="max" id="asMax">Макс</div>
         </div>
       </div>
-    `);
+      <input id="asSlider" class="slider" type="range" min="25" max="${AUTOSPIN_MAX}" step="25" value="${curDefault}">
+      <div class="actions">
+        <button id="asCancel" class="btnx">Закрыть</button>
+        <button id="asRun" class="btnp">Запустить</button>
+      </div>
+    </div>
+  `);
 
-    const inp = document.getElementById('asCount');
-    const sld = document.getElementById('asSlider');
-    const btnMax = document.getElementById('asMax');
-    const btnRun = document.getElementById('asRun');
-    const btnCancel = document.getElementById('asCancel');
+  const inp = document.getElementById('asCount');
+  const sld = document.getElementById('asSlider');
+  const btnMax = document.getElementById('asMax');
+  const btnRun = document.getElementById('asRun');
+  const btnCancel = document.getElementById('asCancel');
 
-    function clamp(n){
-      n = Math.floor(Number(n||0));
-      if (!Number.isFinite(n)) n = 1;
-      return Math.max(1, Math.min(AUTOSPIN_MAX, n));
-    }
-    function nearest25(n){ return Math.max(25, Math.min(AUTOSPIN_MAX, Math.round(n/25)*25)); }
-    function syncFromInput(){ const c = clamp(inp.value); inp.value = c; sld.value = nearest25(c); }
-    function syncFromSlider(){ const c = clamp(sld.value); sld.value = nearest25(c); inp.value = c; }
+  const nearest25 = n => Math.max(25, Math.min(AUTOSPIN_MAX, Math.round(n/25)*25));
+  const clamp = n => Math.max(1, Math.min(AUTOSPIN_MAX, Math.floor(n)));
 
-    inp.addEventListener('input', syncFromInput);
-    sld.addEventListener('input', syncFromSlider);
-    btnMax.addEventListener('click', ()=>{ inp.value = AUTOSPIN_MAX; syncFromInput(); });
-    btnCancel.addEventListener('click', closeModal);
-    inp.addEventListener('keydown', e=>{ if(e.key==='Enter') btnRun.click(); });
-
-    btnRun.addEventListener('click', async ()=>{
-      const count = clamp(inp.value);
-      await startAutoSpin(count);
-    });
+  function setFill(val){
+    const min = Number(sld.min), max = Number(sld.max);
+    const p = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+    sld.style.setProperty('--as-fill', p + '%');
   }
+  setFill(Number(sld.value));
+
+  function parsedCountFromInput(){
+    const raw = inp.value.trim();
+    if (raw === '') return null;                  // позволяем очистить поле
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n)) return null;
+    return clamp(n);
+  }
+
+  // --- связь инпут ↔ ползунок (без «насильного» подстановки 1, можно стереть до пусто)
+  inp.addEventListener('input', ()=>{
+    const c = parsedCountFromInput();
+    if (c == null) { setFill(Number(sld.min)); return; }  // не трогаем inp, просто обновим заливку
+    sld.value = String(nearest25(c));
+    setFill(Number(sld.value));
+  });
+
+  sld.addEventListener('input', ()=>{
+    const v = Number(sld.value);
+    setFill(v);
+    inp.value = String(v); // движение ползунка обновляет поле
+  });
+
+  btnMax.addEventListener('click', ()=>{
+    inp.value = String(AUTOSPIN_MAX);
+    sld.value = String(AUTOSPIN_MAX);
+    setFill(AUTOSPIN_MAX);
+  });
+  btnCancel.addEventListener('click', closeModal);
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') btnRun.click(); });
+
+  btnRun.addEventListener('click', async ()=>{
+    // Если поле пустое — берём значение со слайдера
+    const c = parsedCountFromInput();
+    const count = c == null ? Number(sld.value) : c;
+    inp.value = String(count); // «зафиксировать» окончательное значение
+    await startAutoSpin(count);
+  });
+}
+
 
   async function tryPrepayAutoSpin(count){
     // Предоплата серии на бэке: /api/v1/roulette/autospin
