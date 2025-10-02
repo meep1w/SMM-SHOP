@@ -1426,40 +1426,39 @@ btnTopup?.addEventListener('click', async () => {
 
 
 
-  // ====== Keyboard inset -> hide tabbar ======
-  (function keyboardLift(){
-    const root=document.documentElement;
-    const tabbar = document.querySelector('.tabbar');
+ // ====== Keyboard inset -> hide tabbar ======
+(function keyboardLift(){
+  const root = document.documentElement;
 
-   function applyKbInset(px){
-  const v = px > 40 ? px : 0;
-  document.documentElement.style.setProperty('--kb', v + 'px');
-  document.body.classList.toggle('kb-open', v > 40);
-  // ВАЖНО: здесь не менять tabbar.style.display!
-}
+  function applyKbInset(px){
+    const v = px > 40 ? px : 0;
+    root.style.setProperty('--kb', v + 'px');
+    document.body.classList.toggle('kb-open', v > 40);
+    // ВАЖНО: не менять tabbar.style.display здесь.
+  }
 
-  const v = px>40 ? px : 0;
-  root.style.setProperty('--kb', v+'px');
-  const open = v > 40;
-  document.body.classList.toggle('kb-open', open);
-  if (tabbar) tabbar.style.display = open ? 'none' : 'grid';
-}
+  if (window.visualViewport){
+    const vv = window.visualViewport;
+    const handler = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      applyKbInset(inset);
+    };
+    vv.addEventListener('resize', handler);
+    vv.addEventListener('scroll', handler);
+    handler();
+  }
 
+  try{
+    const tg = window.Telegram?.WebApp;
+    tg?.onEvent?.('viewportChanged', (e) => {
+      const vh = (e && (e.height || e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
+      if (!vh) return;
+      const inset = Math.max(0, window.innerHeight - vh);
+      applyKbInset(inset);
+    });
+  } catch(_) {}
+})();
 
-    if (window.visualViewport){
-      const vv=window.visualViewport;
-      const handler=()=>{ const inset=Math.max(0, window.innerHeight - vv.height - vv.offsetTop); applyKbInset(inset); };
-      vv.addEventListener('resize', handler);
-      vv.addEventListener('scroll', handler);
-      handler();
-    }
-    try{
-      tg?.onEvent?.('viewportChanged', (e)=>{
-        const vh=(e&&(e.height||e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
-        if (!vh) return; const inset=Math.max(0, window.innerHeight - vh); applyKbInset(inset);
-      });
-    }catch(_){}
-  })();
 
   // Глобальный лог ошибок
   window.addEventListener('error', e => console.error('JS error:', e.message, e.filename, e.lineno));
