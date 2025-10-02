@@ -548,6 +548,40 @@
     strip.style.transform = `translate3d(-50%, ${Math.round(y0)}px, 0)`;
   }
 
+  // Переставить ленту в середину на такой же билет (без анимации)
+function recenterToValue(val) {
+  const s = rouletteState.strip;
+  if (!s) return;
+  const idxInCycle = ROULETTE.VALUES.indexOf(Number(val));
+  if (idxInCycle < 0) return;
+
+  const newIdx = rouletteState.indexBase + idxInCycle; // середина
+  const y = - (newIdx * rouletteState.cardStep - rouletteState.centerOffset);
+
+  s.style.transition = 'none';
+  s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`;
+  // форс-рефлоу, чтобы убрать transition корректно
+  // eslint-disable-next-line no-unused-expressions
+  s.offsetHeight;
+  s.style.transition = '';
+  rouletteState.currentIndex = newIdx;
+}
+
+// Проверить, что впереди достаточно карточек для спина; иначе — перецентровать
+function ensureHeadroom() {
+  const s = rouletteState.strip;
+  if (!s) return;
+  const total = s.children.length;
+  const cur   = getCurrentIndex();
+  const needAhead = ROULETTE.VALUES.length * 4; // минимум 4 круга запас
+
+  if (total - cur < needAhead) {
+    const curVal = Number(s.children[cur]?.dataset?.win || ROULETTE.VALUES[0]);
+    recenterToValue(curVal);
+  }
+}
+
+
   function getCurrentIndex(){
     return typeof rouletteState.currentIndex === 'number'
       ? rouletteState.currentIndex
@@ -649,14 +683,18 @@
 
     const winVal = Number(result.win);
     const finalBalance = Number(result.balance);
+    ensureHeadroom();
 
     // 3) Крутимся ТОЧНО к билету с winVal
     const targetIdx = findNextIndexOfValue(winVal);
     animateToIndex(targetIdx, ROULETTE.SPIN_MS, () => {
-      // 4) Начисление выигрыша показываем после остановки
-      setBalanceUI(finalBalance);
-      try { tg?.HapticFeedback?.impactOccurred?.('medium'); } catch(_){}
-    });
+  setBalanceUI(finalBalance);
+  // тихо переносим ленту в середину на такой же win-билет,
+  // чтобы на следующий спин снова был большой запас
+  recenterToValue(winVal);
+  try { tg?.HapticFeedback?.impactOccurred?.('medium'); } catch(_){}
+});
+
   }
 
   // ====== Tabs / Pages ======
