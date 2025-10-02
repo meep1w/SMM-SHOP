@@ -416,59 +416,52 @@ function exitFullPage() {
   if (tabbar) tabbar.style.display = 'grid';
 }
 
-   function ensureRoulettePage() {
+ function ensureRoulettePage() {
   let p = document.getElementById('page-roulette');
   if (p) return p;
   p = document.createElement('section');
   p.id = 'page-roulette';
   p.className = 'page';
-  // пустая заглушка; контент сверстаем позже
-  p.innerHTML = `<div style="min-height:100vh"></div>`;
+  p.innerHTML = ''; // полностью пусто
   document.getElementById('appMain')?.appendChild(p);
   return p;
 }
 
-
-
 function openRoulette() {
   ensureRoulettePage();
-  ensureFullpageStyles();
 
-  // Прячем возможный «карточный хедер» программно
-  const candidates = [
-    document.getElementById('nickname')?.closest('.card'),
-    document.getElementById('balanceValue')?.closest('.card'),
-    document.querySelector('.hero, .userbar, .header-card')
-  ].filter(Boolean);
-  candidates.forEach(el => { el.dataset._prevDisplay = el.style.display || ''; el.style.display = 'none'; });
+  // спрятать свой хедер и таббар
+  const header = document.getElementById('appHeader');
+  const tabbar = document.getElementById('tabbar');
+  if (header) header.style.display = 'none';
+  if (tabbar) tabbar.style.display = 'none';
 
-  document.body.classList.add('fullpage');
+  // переключить на пустую страницу
   showPage('page-roulette');
 
+  // системная «Назад» от Telegram
   try {
     tg?.BackButton?.show?.();
     tg?.BackButton?.offClick?.(closeRoulette);
     tg?.BackButton?.onClick?.(closeRoulette);
-  } catch (_) {}
+  } catch(_) {}
 }
 
 function closeRoulette() {
-  // Вернуть карточный хедер, если прятали
-  document.querySelectorAll('[data-_prev-display]').forEach(el => {
-    el.style.display = el.dataset._prevDisplay;
-    delete el.dataset._prevDisplay;
-  });
-
-  document.body.classList.remove('fullpage');
+  // вернуться (например) в профиль
   showPage('page-profile');
+
+  // вернуть хедер и таббар
+  const header = document.getElementById('appHeader');
+  const tabbar = document.getElementById('tabbar');
+  if (header) header.style.display = '';
+  if (tabbar) tabbar.style.display = '';
 
   try {
     tg?.BackButton?.offClick?.(closeRoulette);
     tg?.BackButton?.hide?.();
-  } catch (_) {}
+  } catch(_) {}
 }
-
-
 
 
   // ====== Tabs / Pages ======
