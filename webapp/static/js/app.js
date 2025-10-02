@@ -1,5 +1,5 @@
 /* Slovekiza Mini-App — промокоды + профиль + персональная наценка
- * + Рулетка (микро-табар + холдер под колесо, без авто-спина)
+ * + Рулетка (фикс-колесо + авто-спин с предоплатой)
  * - Профиль: отображение ника/SEQ/баланса/наценки, ввод промокодов (навсегда/баланс)
  * - Скидочный промокод на странице услуги (check + учёт в расчёте и заказе)
  * - Категории / Услуги / Страница услуги
@@ -9,7 +9,7 @@
  * - Скрытие таббара при открытой клавиатуре
  */
 (function () {
-  console.log('app.js ready (promos + profile + roulette bar)');
+  console.log('app.js ready (promos + profile + roulette with autospin)');
 
   // ====== Telegram WebApp ======
   const tg = window.Telegram?.WebApp || null;
@@ -30,7 +30,7 @@
   } catch (_) {}
 
   // Версия (для кэша картинок)
-  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-02';
+  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-03';
 
   // Добавляем ?v=... на <img src="static/...">, где ещё нет
   (function bumpStaticImages() {
@@ -55,6 +55,8 @@
     SPIN_MS: 3400,
     IMG_DIR: 'static/img/tickets'
   };
+  const ROULETTE_COST_RUB = 10;
+
   let rouletteState = {
     spinning: false,
     strip: null,
@@ -347,9 +349,7 @@
     }
   }
 
-  // ===== Roulette mini-tabbar =====
-  const ROULETTE_COST_RUB = 10;
-
+  // ===== Стили рулетки и авто-спина =====
   function ensureRouletteStyles() {
     if (document.getElementById('rouletteStyles')) return;
     const st = document.createElement('style');
@@ -374,10 +374,7 @@
         box-shadow: 0 12px 28px rgba(0,0,0,.28);
         padding: 16px;
       }
-      #page-roulette .rbar__top{
-        display:flex; align-items:center; gap:12px;
-        margin-bottom:12px;
-      }
+      #page-roulette .rbar__top{ display:flex; align-items:center; gap:12px; margin-bottom:12px; }
       #page-roulette .rbar__ico{
         width:44px; height:44px; border-radius:12px; flex:0 0 auto;
         display:grid; place-items:center; overflow:hidden;
@@ -391,8 +388,7 @@
       #page-roulette .rbar__bal-sub{ color:var(--muted); font-size:12px; }
 
       #page-roulette .rbar__actions{
-        display:grid; grid-template-columns:1fr 1fr; gap:12px;
-        margin-top:6px;
+        display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:6px;
       }
       #page-roulette .rbtn{
         appearance:none; border:1px solid var(--stroke);
@@ -428,7 +424,6 @@
         will-change: transform;
         padding: 12px 0;
       }
-      /* чистая картинка билета фиксированной высоты (без scale/подсветок) */
       #page-roulette .ticket{ flex:0 0 auto; }
       #page-roulette .ticket img{
         display:block;
@@ -437,17 +432,56 @@
         border-radius: 14px;
         box-shadow: 0 6px 16px rgba(0,0,0,.22);
       }
-      /* тонкая линия-маркер по центру */
       #page-roulette .marker{
         position:absolute; left:8%; right:8%; top:50%;
         height:2px; transform:translateY(-1px);
         background: rgba(255,255,255,.35);
         pointer-events:none;
       }
+
+      /* ===== Авто-спин (модалка) ===== */
+      #appModal .asm{
+        width:min(520px, 92vw);
+        margin:10vh auto 0;
+        background:linear-gradient(180deg,#14171c,#101318);
+        border:1px solid var(--stroke);
+        border-radius:28px;
+        padding:24px;
+        box-shadow:0 22px 48px rgba(0,0,0,.4);
+        color:#fff;
+      }
+      #appModal .asm h3{ margin:0 0 8px 0; font-size:28px; font-weight:800; text-align:center; }
+      #appModal .asm .sub{ text-align:center; color:var(--muted); margin-bottom:18px; }
+      #appModal .asm .row{ margin-top:12px; }
+      #appModal .asm .label{ font-size:12px; color:var(--muted); margin-bottom:6px; }
+      #appModal .asm .inp{
+        display:flex; align-items:center; gap:12px; border:1px solid var(--stroke);
+        border-radius:12px; padding:12px 14px; background:#0f1217;
+      }
+      #appModal .asm .inp input{
+        appearance:textfield; -moz-appearance:textfield; -webkit-appearance:textfield;
+        flex:1 1 auto; border:0; outline:0; background:transparent; color:#fff; font-size:22px; font-weight:700;
+      }
+      #appModal .asm .inp .max{
+        color:#ff8f8f; font-weight:700; cursor:pointer; user-select:none;
+      }
+      #appModal .asm .slider{ margin:14px 2px 4px; width:100%; }
+      #appModal .asm .actions{
+        margin-top:18px; display:grid; grid-template-columns:1fr 1fr; gap:12px;
+      }
+      #appModal .asm .btnx{
+        border:1px solid var(--stroke); border-radius:16px; padding:14px 16px; font-weight:700; cursor:pointer;
+        background:var(--surface-2); color:#c9d2e2; text-align:center;
+      }
+      #appModal .asm .btnp{
+        border:0; border-radius:16px; padding:14px 16px; font-weight:800; cursor:pointer; text-align:center;
+        background:linear-gradient(180deg,#ff6b6b,#ff4242); color:#fff;
+      }
     `;
     document.head.appendChild(st);
   }
 
+  // ===== Рулетка: страница и построение =====
   function ensureRoulettePage() {
     let p = document.getElementById('page-roulette');
     if (p) return p;
@@ -477,7 +511,7 @@
         </div>
 
         <div class="rbar__actions">
-          <button class="rbtn" id="rbAuto" disabled>Авто-спин</button>
+          <button class="rbtn" id="rbAuto">Авто-спин</button>
           <button class="rbtn rbtn--primary" id="rbSpin">Крутить за ${ROULETTE_COST_RUB}₽</button>
         </div>
       </div>
@@ -489,7 +523,8 @@
 
     // handlers
     p.querySelector('#rbTopup')?.addEventListener('click', onTopupClick);
-    p.querySelector('#rbSpin')?.addEventListener('click', spinRoulette);
+    p.querySelector('#rbSpin')?.addEventListener('click', ()=> spinRoulette());
+    p.querySelector('#rbAuto')?.addEventListener('click', openAutospinModal);
 
     return p;
   }
@@ -531,7 +566,8 @@
        </div>`;
 
     const oneCol = ROULETTE.VALUES.map(card).join('');
-    strip.innerHTML = new Array(8).fill(oneCol).join(''); // много повторов
+    // Большой запас, чтобы лента «не заканчивалась»
+    strip.innerHTML = new Array(40).fill(oneCol).join('');
 
     // читаем фикс-размеры из CSS
     const cs = getComputedStyle(root);
@@ -541,7 +577,7 @@
 
     rouletteState.cardStep     = TICKET_H + GAP;             // строгий шаг по вертикали
     rouletteState.centerOffset = (WHEEL_H/2) - (TICKET_H/2); // центр контейнера к центру билета
-    rouletteState.indexBase    = ROULETTE.VALUES.length * 2; // старт где-то посередине
+    rouletteState.indexBase    = ROULETTE.VALUES.length * 20; // старт глубоко в середине
     rouletteState.currentIndex = rouletteState.indexBase;
 
     const y0 = - (rouletteState.indexBase * rouletteState.cardStep - rouletteState.centerOffset);
@@ -549,38 +585,36 @@
   }
 
   // Переставить ленту в середину на такой же билет (без анимации)
-function recenterToValue(val) {
-  const s = rouletteState.strip;
-  if (!s) return;
-  const idxInCycle = ROULETTE.VALUES.indexOf(Number(val));
-  if (idxInCycle < 0) return;
+  function recenterToValue(val) {
+    const s = rouletteState.strip;
+    if (!s) return;
+    const idxInCycle = ROULETTE.VALUES.indexOf(Number(val));
+    if (idxInCycle < 0) return;
 
-  const newIdx = rouletteState.indexBase + idxInCycle; // середина
-  const y = - (newIdx * rouletteState.cardStep - rouletteState.centerOffset);
+    const newIdx = rouletteState.indexBase + idxInCycle; // середина
+    const y = - (newIdx * rouletteState.cardStep - rouletteState.centerOffset);
 
-  s.style.transition = 'none';
-  s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`;
-  // форс-рефлоу, чтобы убрать transition корректно
-  // eslint-disable-next-line no-unused-expressions
-  s.offsetHeight;
-  s.style.transition = '';
-  rouletteState.currentIndex = newIdx;
-}
-
-// Проверить, что впереди достаточно карточек для спина; иначе — перецентровать
-function ensureHeadroom() {
-  const s = rouletteState.strip;
-  if (!s) return;
-  const total = s.children.length;
-  const cur   = getCurrentIndex();
-  const needAhead = ROULETTE.VALUES.length * 4; // минимум 4 круга запас
-
-  if (total - cur < needAhead) {
-    const curVal = Number(s.children[cur]?.dataset?.win || ROULETTE.VALUES[0]);
-    recenterToValue(curVal);
+    s.style.transition = 'none';
+    s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`;
+    // eslint-disable-next-line no-unused-expressions
+    s.offsetHeight; // форс-рефлоу
+    s.style.transition = '';
+    rouletteState.currentIndex = newIdx;
   }
-}
 
+  // Проверить, что впереди достаточно карточек для спина; иначе — перецентровать
+  function ensureHeadroom() {
+    const s = rouletteState.strip;
+    if (!s) return;
+    const total = s.children.length;
+    const cur   = getCurrentIndex();
+    const needAhead = ROULETTE.VALUES.length * 6; // минимум 6 кругов запас
+
+    if (total - cur < needAhead) {
+      const curVal = Number(s.children[cur]?.dataset?.win || ROULETTE.VALUES[0]);
+      recenterToValue(curVal);
+    }
+  }
 
   function getCurrentIndex(){
     return typeof rouletteState.currentIndex === 'number'
@@ -615,9 +649,11 @@ function ensureHeadroom() {
       rouletteState.currentIndex = targetIdx;
       rouletteState.spinning = false;
       const btn = document.getElementById('rbSpin'); if (btn) btn.disabled = false;
-      if (typeof done === 'function') done();
+      done && done();
     };
     s.addEventListener('transitionend', onEnd);
+    // страховка от пропуска события
+    setTimeout(onEnd, duration + 120);
   }
 
   function updateRouletteBar() { setBalanceUI(lastBalance); }
@@ -644,57 +680,192 @@ function ensureHeadroom() {
     } catch (_) {}
   }
 
-  // ====== SPIN: мгновенное списание + точная посадка на win ======
-  async function spinRoulette(){
+  // ====== ОДИНОЧНЫЙ СПИН
+  async function spinRoulette(opts = {}){
     if (rouletteState.spinning) return;
 
-    const cost = ROULETTE_COST_RUB;
-    if (lastBalance + 1e-9 < cost){
-      alert('Недостаточно средств');
-      return;
-    }
+    const {
+      forceWin = null,   // если задано — анимируем локально без запроса
+      localOnly = false, // true при автоспине с предоплатой
+      onFinish  = null,
+    } = opts;
 
     const btn = document.getElementById('rbSpin');
-    if (btn) btn.disabled = true;
+    btn && (btn.disabled = true);
     rouletteState.spinning = true;
 
-    // 1) МГНОВЕННОЕ списание на UI (оптимистично)
-    const balanceBefore = lastBalance;
-    setBalanceUI(balanceBefore - cost);
-
-    // 2) Запрос к бэку за результатом
-    let result;
     try {
-      const r = await fetch('/api/v1/roulette/spin', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: userId || seq, cost_rub: cost })
+      let winVal, finalBalance = null;
+
+      if (localOnly && forceWin != null) {
+        // Предоплата уже произведена (autospin) — просто крутимся к нужной карточке
+        winVal = Number(forceWin);
+      } else if (forceWin != null) {
+        // Принудительный результат (редкий случай)
+        winVal = Number(forceWin);
+      } else {
+        // Обычный режим: мгновенное списание на UI (оптимистично) + запрос к бэку
+        const cost = ROULETTE_COST_RUB;
+        if (lastBalance + 1e-9 < cost){
+          rouletteState.spinning = false;
+          btn && (btn.disabled = false);
+          alert('Недостаточно средств');
+          return;
+        }
+        const balanceBefore = lastBalance;
+        setBalanceUI(balanceBefore - cost);
+
+        const r = await fetch('/api/v1/roulette/spin', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ user_id: userId || seq, cost_rub: cost })
+        });
+        if (!r.ok) {
+          // откат
+          setBalanceUI(balanceBefore);
+          throw new Error(await r.text());
+        }
+        const result = await r.json();
+        winVal = Number(result.win);
+        finalBalance = Number(result.balance);
+      }
+
+      ensureHeadroom();
+
+      const targetIdx = findNextIndexOfValue(winVal);
+      animateToIndex(targetIdx, ROULETTE.SPIN_MS, () => {
+        if (finalBalance != null) setBalanceUI(finalBalance);
+        // тихо переносим ленту в середину на такой же win-билет,
+        // чтобы след. спин всегда имел большой запас
+        recenterToValue(winVal);
+        try { tg?.HapticFeedback?.impactOccurred?.('medium'); } catch(_){}
+        onFinish && onFinish();
       });
-      if (!r.ok) throw new Error(await r.text());
-      result = await r.json();
-    } catch (e){
-      // откат списания, разблокировка
-      setBalanceUI(balanceBefore);
+    } catch (e) {
       rouletteState.spinning = false;
-      if (btn) btn.disabled = false;
+      btn && (btn.disabled = false);
       alert('Не удалось выполнить спин: ' + (e?.message || e));
+    }
+  }
+
+  // ====== АВТО-СПИН ======
+  const AUTOSPIN_MAX = 500;
+  let autoSpinState = { active:false, remaining:0, plan:null };
+
+  function openAutospinModal(){
+    const curDefault = 25;
+    openModal(`
+      <div class="asm">
+        <h3>Авто-спин</h3>
+        <div class="sub">Рулетка крутится автоматически</div>
+        <div class="row">
+          <div class="label">Количество спинов</div>
+          <div class="inp">
+            <input id="asCount" type="number" min="1" max="${AUTOSPIN_MAX}" step="1" value="${curDefault}">
+            <div class="max" id="asMax">Макс</div>
+          </div>
+        </div>
+        <input id="asSlider" class="slider" type="range" min="25" max="${AUTOSPIN_MAX}" step="25" value="${curDefault}">
+        <div class="actions">
+          <button id="asCancel" class="btnx">Закрыть</button>
+          <button id="asRun" class="btnp">Запустить</button>
+        </div>
+      </div>
+    `);
+
+    const inp = document.getElementById('asCount');
+    const sld = document.getElementById('asSlider');
+    const btnMax = document.getElementById('asMax');
+    const btnRun = document.getElementById('asRun');
+    const btnCancel = document.getElementById('asCancel');
+
+    function clamp(n){
+      n = Math.floor(Number(n||0));
+      if (!Number.isFinite(n)) n = 1;
+      return Math.max(1, Math.min(AUTOSPIN_MAX, n));
+    }
+    function nearest25(n){ return Math.max(25, Math.min(AUTOSPIN_MAX, Math.round(n/25)*25)); }
+    function syncFromInput(){ const c = clamp(inp.value); inp.value = c; sld.value = nearest25(c); }
+    function syncFromSlider(){ const c = clamp(sld.value); sld.value = nearest25(c); inp.value = c; }
+
+    inp.addEventListener('input', syncFromInput);
+    sld.addEventListener('input', syncFromSlider);
+    btnMax.addEventListener('click', ()=>{ inp.value = AUTOSPIN_MAX; syncFromInput(); });
+    btnCancel.addEventListener('click', closeModal);
+    inp.addEventListener('keydown', e=>{ if(e.key==='Enter') btnRun.click(); });
+
+    btnRun.addEventListener('click', async ()=>{
+      const count = clamp(inp.value);
+      await startAutoSpin(count);
+    });
+  }
+
+  async function tryPrepayAutoSpin(count){
+    // Предоплата серии на бэке: /api/v1/roulette/autospin
+    try{
+      const total = count * ROULETTE_COST_RUB;
+      const r = await fetch(`${API_BASE}/roulette/autospin`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: userId || seq, count, cost_rub: total })
+      });
+      if (r.status === 404) {
+        // эндпоинта нет — сообщим пользователю и прервём (лучше, чем двойное списание)
+        const msg = 'На сервере не настроена предоплата авто-спина. Обновите бэкенд (endpoint /api/v1/roulette/autospin).';
+        alert(msg);
+        return null;
+      }
+      if (!r.ok) throw new Error(await r.text());
+      const js = await r.json();
+      if (js.balance != null) setBalanceUI(js.balance);
+      return { plan: Array.isArray(js.plan) ? js.plan.map(Number) : null };
+    }catch(e){
+      console.warn('autospin prepay error:', e);
+      alert('Не удалось выполнить предоплату авто-спина: ' + (e?.message||e));
+      return null;
+    }
+  }
+
+  async function startAutoSpin(count){
+    if (autoSpinState.active || rouletteState.spinning) return;
+    if (count < 1) { alert('Укажите количество спинов'); return; }
+
+    const total = count * ROULETTE_COST_RUB;
+    if (lastBalance + 1e-9 < total){
+      alert(`Недостаточно средств. Требуется ${fmt(total)} ₽, на балансе ${fmt(lastBalance)} ₽.`);
       return;
     }
 
-    const winVal = Number(result.win);
-    const finalBalance = Number(result.balance);
-    ensureHeadroom();
+    // Предоплата на бэке (и, возможно, план выигрышей)
+    const pre = await tryPrepayAutoSpin(count);
+    if (!pre) return;
 
-    // 3) Крутимся ТОЧНО к билету с winVal
-    const targetIdx = findNextIndexOfValue(winVal);
-    animateToIndex(targetIdx, ROULETTE.SPIN_MS, () => {
-  setBalanceUI(finalBalance);
-  // тихо переносим ленту в середину на такой же win-билет,
-  // чтобы на следующий спин снова был большой запас
-  recenterToValue(winVal);
-  try { tg?.HapticFeedback?.impactOccurred?.('medium'); } catch(_){}
-});
+    autoSpinState = { active:true, remaining:count, plan: pre.plan || [] };
 
+    document.getElementById('rbSpin')?.setAttribute('disabled','true');
+    document.getElementById('rbAuto')?.setAttribute('disabled','true');
+    closeModal();
+    runNextAutoSpin();
+  }
+
+  function runNextAutoSpin(){
+    if (!autoSpinState.active) return;
+    if (autoSpinState.remaining <= 0){
+      autoSpinState.active = false;
+      document.getElementById('rbSpin')?.removeAttribute('disabled');
+      document.getElementById('rbAuto')?.removeAttribute('disabled');
+      // запросим профиль, чтобы синхронить баланс/бонусы и т.п.
+      fetchProfile();
+      return;
+    }
+    const forced = (autoSpinState.plan && autoSpinState.plan.length) ? autoSpinState.plan.shift() : null;
+    spinRoulette({
+      forceWin: forced,
+      localOnly: true,           // анимируем без доп. списаний
+      onFinish: () => {
+        autoSpinState.remaining -= 1;
+        if (autoSpinState.active) setTimeout(runNextAutoSpin, 350);
+      }
+    });
   }
 
   // ====== Tabs / Pages ======
