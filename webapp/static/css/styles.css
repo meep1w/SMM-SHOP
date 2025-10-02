@@ -661,3 +661,15 @@ body.no-chrome .app-main {
   padding-top: 16px;
   padding-bottom: 16px;
 }
+
+body.roulette-open .app-header{ display:none !important; }
+body.roulette-open .tabbar{ display:none !important; }
+body.roulette-open .subheader,
+body.roulette-open .details-head{ display:none !important; }
+body.roulette-open .app-main{
+  padding: 16px 16px calc(env(safe-area-inset-bottom) + 140px);
+  min-height: 100dvh;
+}
+
+/* Панель рулетки */
+#page-roulette .rbar{ /* см. значения в ensureRouletteStyles() */ }

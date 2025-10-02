@@ -315,19 +315,27 @@ window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
 
 
   function updateProfilePageView() {
-    const p = pages.profile || document.getElementById('page-profile');
-    if (!p) return;
-    // основной хедер
-    const a = document.getElementById('profAvatar');
+  // обновим верхний баланс в хедере (на всякий случай)
+  if (typeof fmt === 'function' && typeof curSign === 'function') {
+    if (typeof lastBalance !== 'undefined' && balanceEl) {
+      balanceEl.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
+    }
+  }
+
+  // карточка профиля (если уже создана)
+  const p = pages.profile || document.getElementById('page-profile');
+  if (p) {
+    const a  = p.querySelector('#profAvatar')  || document.getElementById('profAvatar');
+    const nk = p.querySelector('#profNick')    || document.getElementById('profNick');
+    const ps = p.querySelector('#profSeq')     || document.getElementById('profSeq');
+    const pb = p.querySelector('#profBalance') || document.getElementById('profBalance');
+    const pm = p.querySelector('#profMarkup')  || document.getElementById('profMarkup');
+
     if (a && avatarEl?.src) a.src = avatarEl.src;
-    const nick = document.getElementById('profNick');
-    if (nick) nick.textContent = nicknameEl?.textContent || '—';
-    const ps = document.getElementById('profSeq');
+    if (nk) nk.textContent = nicknameEl?.textContent || '—';
     if (ps) ps.textContent = `#${seq}`;
-    const pb = document.getElementById('profBalance');
     if (pb) pb.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
 
-    const pm = document.getElementById('profMarkup');
     if (pm) {
       const hasPersonal = (typeof userMarkup === 'number') && (userMarkup > 0.01);
       pm.textContent = hasPersonal
@@ -335,6 +343,20 @@ window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
         : 'По умолчанию';
     }
   }
+
+  // мини-табар рулетки (если страница уже создана)
+  try {
+    if (document.getElementById('page-roulette')) {
+      if (typeof updateRouletteBar === 'function') {
+        updateRouletteBar();
+      } else {
+        const rb = document.getElementById('rbBalance');
+        if (rb) rb.textContent = `${fmt(lastBalance)} RUB`;
+      }
+    }
+  } catch (_) {}
+}
+
 
   async function onProfilePromoApply(){
     const input = document.getElementById('profilePromoInput');
@@ -416,35 +438,202 @@ function exitFullPage() {
   if (tabbar) tabbar.style.display = 'grid';
 }
 
- function ensureRoulettePage() {
+ // ===== Roulette mini-tabbar =====
+const ROULETTE_COST_RUB = 10;
+
+function ensureRouletteStyles() {
+  if (document.getElementById('rouletteStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'rouletteStyles';
+  st.textContent = `
+    /* прячем глобальные шапку/табар, когда открыта рулетка */
+    body.roulette-open .app-header{ display:none !important; }
+    body.roulette-open .tabbar{ display:none !important; }
+    body.roulette-open .subheader,
+    body.roulette-open .details-head{ display:none !important; }
+
+    /* чуть другой паддинг контента без шапки/табаров */
+    body.roulette-open .app-main{
+      padding: 16px 16px calc(env(safe-area-inset-bottom) + 140px);
+      min-height: 100dvh;
+    }
+
+    /* нижняя панель рулетки */
+    #page-roulette .rbar{
+      position: fixed; left: 16px; right: 16px;
+      bottom: calc(env(safe-area-inset-bottom) + 16px);
+      background: linear-gradient(180deg,#15181d,#111419);
+      border: 1px solid var(--stroke);
+      border-radius: 16px;
+      box-shadow: 0 12px 28px rgba(0,0,0,.28);
+      padding: 16px;
+    }
+    #page-roulette .rbar__top{
+      display:flex; align-items:center; gap:12px;
+      margin-bottom:12px;
+    }
+    #page-roulette .rbar__ico{
+      width:44px; height:44px; border-radius:12px; flex:0 0 auto;
+      display:grid; place-items:center; overflow:hidden;
+      background: linear-gradient(180deg,#1a1e24,#14181e);
+      border:1px solid var(--stroke);
+    }
+    #page-roulette .rbar__ico img{ width:100%; height:100%; object-fit:cover; display:block; }
+    #page-roulette .rbar__title{ font-weight:700; font-size:15px; }
+    #page-roulette .rbar__subbtn{
+      display:inline-block; margin-top:2px; font-size:12px; color:#ff7f7f; cursor:pointer;
+    }
+    #page-roulette .rbar__right{ margin-left:auto; text-align:right; }
+    #page-roulette .rbar__bal{ font-weight:700; font-size:15px; }
+    #page-roulette .rbar__bal-sub{ color:var(--muted); font-size:12px; }
+
+    #page-roulette .rbar__actions{
+      display:grid; grid-template-columns:1fr 1fr; gap:12px;
+      margin-top:6px;
+    }
+    #page-roulette .rbtn{
+      appearance:none; border:1px solid var(--stroke);
+      border-radius:14px; padding:14px 16px; cursor:pointer; font-weight:700;
+      background: var(--surface-2); color: var(--text);
+    }
+    #page-roulette .rbtn--primary{
+      border:0;
+      background: linear-gradient(180deg,#ff6b6b 0%, #ff3e3e 100%); color:#fff;
+    }
+
+    /* заглушка-поле под «колесо» на будущее */
+    #page-roulette .wheel-pad{
+      height: 55vh; min-height: 320px; border:1px dashed rgba(255,255,255,.1);
+      border-radius: 16px; display:grid; place-items:center; color:var(--muted);
+      margin-bottom: 12px;
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+function ensureRoulettePage() {
   let p = document.getElementById('page-roulette');
   if (p) return p;
+
   p = document.createElement('section');
   p.id = 'page-roulette';
   p.className = 'page';
-  p.innerHTML = ''; // полностью пусто
+  p.innerHTML = `
+    <div class="wheel-pad">Здесь будет колесо рулетки</div>
+
+    <div class="rbar">
+      <div class="rbar__top">
+        <div class="rbar__ico"><img src="static/img/iconrub.svg" alt=""></div>
+        <div class="rbar__titlewrap">
+          <div class="rbar__title">Рубль</div>
+          <div class="rbar__subbtn" id="rbTopup">Пополнить &gt;</div>
+        </div>
+        <div class="rbar__right">
+          <div class="rbar__bal" id="rbBalance">0.00 RUB</div>
+          <div class="rbar__bal-sub">ваш баланс</div>
+        </div>
+      </div>
+
+      <div class="rbar__actions">
+        <button class="rbtn" id="rbAuto" disabled>Авто-спин</button>
+        <button class="rbtn rbtn--primary" id="rbSpin">Крутить за ${ROULETTE_COST_RUB}₽</button>
+      </div>
+    </div>
+  `;
   document.getElementById('appMain')?.appendChild(p);
+
+  // handlers
+  p.querySelector('#rbTopup')?.addEventListener('click', async () => {
+    // тот же флоу, что и плюс в хедере
+    try {
+      const s = prompt('Сумма пополнения, USDT (мин. 0.10):', '1.00');
+      if (!s) return;
+      const amount = parseFloat(s);
+      if (isNaN(amount) || amount < 0.10) { alert('Минимальная сумма — 0.10 USDT'); return; }
+
+      const r = await fetch(`${API_BASE}/pay/invoice`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId || seq, amount_usd: amount }),
+      });
+      if (r.status === 501) { alert('Оплата через CryptoBot ещё не настроена.'); return; }
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      const url = j.mini_app_url || j.pay_url;
+      if (!url) { alert('Не удалось получить ссылку на оплату'); return; }
+      if (tg?.openTelegramLink) tg.openTelegramLink(url);
+      else if (tg?.openLink)    tg.openLink(url);
+      else                      location.href = url;
+    } catch (e) {
+      alert('Ошибка создания счёта: ' + (e?.message||e));
+    }
+  });
+
+  p.querySelector('#rbSpin')?.addEventListener('click', async () => {
+    if (String(currentCurrency).toUpperCase() !== 'RUB') {
+      alert('Спин пока доступен только при валюте RUB'); return;
+    }
+    if (Number(lastBalance) < ROULETTE_COST_RUB) {
+      alert('Недостаточно средств'); return;
+    }
+
+    // мгновенное локальное списание + обновление UI
+    lastBalance = Math.max(0, Number(lastBalance) - ROULETTE_COST_RUB);
+    updateRouletteBar();
+
+    // фейковая «анимация» на время — потом заменим на колесо
+    const spinBtn = document.getElementById('rbSpin');
+    const oldTxt = spinBtn.textContent;
+    spinBtn.disabled = true; spinBtn.textContent = 'Крутим…';
+    setTimeout(() => { spinBtn.disabled = false; spinBtn.textContent = oldTxt; }, 900);
+
+    // БЭК: если есть эндпоинт — попробуем списать «по-настоящему»
+    try {
+      const r = await fetch(`${API_BASE}/roulette/spin`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: userId || seq, cost_rub: ROULETTE_COST_RUB })
+      });
+      // После ответа подстрахуемся актуализацией
+      await fetchProfile();
+    } catch(_) {
+      // если что-то пошло не так — подтянем фактический баланс
+      await fetchProfile();
+    }
+  });
+
   return p;
 }
 
+function updateRouletteBar() {
+  const bal = document.getElementById('rbBalance');
+  if (bal) bal.textContent = `${fmt(lastBalance)} RUB`;
+}
+
 function openRoulette() {
+  ensureRouletteStyles();
   ensureRoulettePage();
-  document.body.classList.add('no-chrome'); // спрятать хедер и таббар
+  updateRouletteBar();
+
+  // показать страницу
   showPage('page-roulette');
+
+  // помечаем, что открыта рулетка (CSS сам спрячет хедер/табар)
+  document.body.classList.add('roulette-open');
+
+  // системная «Назад»
   try {
     tg?.BackButton?.show?.();
     tg?.BackButton?.offClick?.(closeRoulette);
     tg?.BackButton?.onClick?.(closeRoulette);
-  } catch(_) {}
+  } catch (_) {}
 }
 
 function closeRoulette() {
-  document.body.classList.remove('no-chrome'); // вернуть хедер и таббар
+  document.body.classList.remove('roulette-open');
   showPage('page-profile');
   try {
     tg?.BackButton?.offClick?.(closeRoulette);
     tg?.BackButton?.hide?.();
-  } catch(_) {}
+  } catch (_) {}
 }
 
 
@@ -1426,38 +1615,38 @@ btnTopup?.addEventListener('click', async () => {
 
 
 
- // ====== Keyboard inset -> hide tabbar ======
+// ====== Keyboard inset -> hide tabbar ======
 (function keyboardLift(){
-  const root = document.documentElement;
+  const root=document.documentElement;
+  const tabbar = document.querySelector('.tabbar');
 
   function applyKbInset(px){
-    const v = px > 40 ? px : 0;
-    root.style.setProperty('--kb', v + 'px');
-    document.body.classList.toggle('kb-open', v > 40);
-    // ВАЖНО: не менять tabbar.style.display здесь.
+    // Если открыта рулетка — глобальный таббар всегда скрыт CSS-классом,
+    // и этот код его не трогает.
+    if (document.body.classList.contains('roulette-open')) return;
+
+    const v = px>40 ? px : 0;
+    root.style.setProperty('--kb', v+'px');
+    const open = v > 40;
+    document.body.classList.toggle('kb-open', open);
+    if (tabbar) tabbar.style.display = open ? 'none' : 'grid';
   }
 
   if (window.visualViewport){
-    const vv = window.visualViewport;
-    const handler = () => {
-      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      applyKbInset(inset);
-    };
+    const vv=window.visualViewport;
+    const handler=()=>{ const inset=Math.max(0, window.innerHeight - vv.height - vv.offsetTop); applyKbInset(inset); };
     vv.addEventListener('resize', handler);
     vv.addEventListener('scroll', handler);
     handler();
   }
-
   try{
-    const tg = window.Telegram?.WebApp;
-    tg?.onEvent?.('viewportChanged', (e) => {
-      const vh = (e && (e.height || e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
-      if (!vh) return;
-      const inset = Math.max(0, window.innerHeight - vh);
-      applyKbInset(inset);
+    tg?.onEvent?.('viewportChanged', (e)=>{
+      const vh=(e&&(e.height||e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
+      if (!vh) return; const inset=Math.max(0, window.innerHeight - vh); applyKbInset(inset);
     });
-  } catch(_) {}
+  }catch(_){}
 })();
+
 
 
   // Глобальный лог ошибок
