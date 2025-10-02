@@ -651,3 +651,13 @@ body::-webkit-scrollbar, .page::-webkit-scrollbar, .app-main::-webkit-scrollbar,
   /* без места под таббар, только безопасная зона и небольшой зазор */
   padding-bottom: calc(env(safe-area-inset-bottom) + 16px) !important;
 }
+
+/* Рулетка/страницы без хедера и таббара */
+body.no-chrome .app-header,
+body.no-chrome .tabbar { display:none !important; }
+
+/* Чтобы не было пустых отступов под спрятанный хедер/таббар */
+body.no-chrome .app-main {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}

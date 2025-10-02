@@ -429,17 +429,8 @@ function exitFullPage() {
 
 function openRoulette() {
   ensureRoulettePage();
-
-  // спрятать свой хедер и таббар
-  const header = document.getElementById('appHeader');
-  const tabbar = document.getElementById('tabbar');
-  if (header) header.style.display = 'none';
-  if (tabbar) tabbar.style.display = 'none';
-
-  // переключить на пустую страницу
+  document.body.classList.add('no-chrome'); // спрятать хедер и таббар
   showPage('page-roulette');
-
-  // системная «Назад» от Telegram
   try {
     tg?.BackButton?.show?.();
     tg?.BackButton?.offClick?.(closeRoulette);
@@ -448,20 +439,14 @@ function openRoulette() {
 }
 
 function closeRoulette() {
-  // вернуться (например) в профиль
+  document.body.classList.remove('no-chrome'); // вернуть хедер и таббар
   showPage('page-profile');
-
-  // вернуть хедер и таббар
-  const header = document.getElementById('appHeader');
-  const tabbar = document.getElementById('tabbar');
-  if (header) header.style.display = '';
-  if (tabbar) tabbar.style.display = '';
-
   try {
     tg?.BackButton?.offClick?.(closeRoulette);
     tg?.BackButton?.hide?.();
   } catch(_) {}
 }
+
 
 
   // ====== Tabs / Pages ======
@@ -1446,13 +1431,13 @@ btnTopup?.addEventListener('click', async () => {
     const root=document.documentElement;
     const tabbar = document.querySelector('.tabbar');
 
-    function applyKbInset(px){
-  // В полноэкранных страницах (рулетка) UI скрыт принудительно
-  if (document.body.classList.contains('fullpage')) {
-    const tabbar = document.querySelector('.tabbar');
-    if (tabbar) tabbar.style.display = 'none';
-    return;
-  }
+   function applyKbInset(px){
+  const v = px > 40 ? px : 0;
+  document.documentElement.style.setProperty('--kb', v + 'px');
+  document.body.classList.toggle('kb-open', v > 40);
+  // ВАЖНО: здесь не менять tabbar.style.display!
+}
+
   const v = px>40 ? px : 0;
   root.style.setProperty('--kb', v+'px');
   const open = v > 40;
