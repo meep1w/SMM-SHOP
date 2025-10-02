@@ -298,7 +298,7 @@ window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-01-01';
           <button id="openRoulette"
               class="btn btn-primary"
                 style="display:flex; gap:8px; align-items:center">
-                <img src="static/img/roulette.svg" alt="" style="width:18px;height:18px">
+                <img src="static/img/roulette1.svg" alt="" style="width:18px;height:18px">
               <span>Открыть рулетку</span>
           </button>
       </div>`;
