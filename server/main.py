@@ -9,6 +9,7 @@ from pydantic import BaseModel
 import httpx
 from sqlalchemy.orm import Session
 from sqlalchemy import func, distinct
+from server.routers import roulette
 
 from .db import (
     Base, engine, SessionLocal,
@@ -72,6 +73,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ⬇️ Подключаем эндпоинты рулетки под /api/v1/*
+app.include_router(roulette.router, prefix="/api/v1")
+
 
 # --- no-cache middleware (отключаем кэш для всех /api/*) ---
 @app.middleware("http")
