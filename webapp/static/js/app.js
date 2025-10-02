@@ -400,19 +400,23 @@
         margin-bottom: 12px;
       }
       #page-roulette .wheel{ position:relative; width:100%; height:100%; overflow:hidden; }
-      #page-roulette .strip{
-        position:absolute; top:50%; left:0;
-        display:flex; gap:10px;
-        transform:translateY(-50%) translateX(0);
-        will-change:transform;
-      }
-      #page-roulette .ticket{
-        width:84px; height:84px; flex:0 0 84px;
-        display:grid; place-items:center;
-        border-radius:12px;
-        background:linear-gradient(180deg,#1a1e24,#14181e);
-        border:1px solid var(--stroke);
-      }
+      /* было: flex-row по X и вертикальный маркер */
+#page-roulette .strip{
+  /* top:50%; left:0; transform:translateY(-50%) translateX(0); */
+  position:absolute; left:50%; top:0;
+  display:flex; flex-direction:column; gap:10px;
+  transform:translateX(-50%) translateY(0); /* двигаем по Y */
+  will-change:transform;
+}
+
+/* маркер — теперь горизонтальная линия по центру */
+#page-roulette .marker{
+  position:absolute; left:0; right:0; top:50%;
+  height:2px; transform:translateY(-1px);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.38),transparent);
+  pointer-events:none;
+}
+
       #page-roulette .ticket img{ width:64px; height:64px; display:block; }
       #page-roulette .marker{
         position:absolute; top:0; bottom:0; left:50%;
@@ -494,28 +498,31 @@
   }
 
   function initRouletteUI(root){
-    const wheel = root.querySelector('#rouletteWheel');
-    const strip = root.querySelector('#rouletteStrip');
-    rouletteState.wheel = wheel;
-    rouletteState.strip = strip;
+  const wheel = root.querySelector('#rouletteWheel');
+  const strip = root.querySelector('#rouletteStrip');
+  rouletteState.wheel = wheel;
+  rouletteState.strip = strip;
 
-    const dir = ROULETTE.IMG_DIR.replace(/\/$/,'');
-    const vq  = window.WEBAPP_VERSION ? `?v=${encodeURIComponent(window.WEBAPP_VERSION)}` : '';
-    const card = val => `<div class="ticket"><img src="${dir}/ticket-${val}.svg${vq}" alt="${val}" draggable="false"></div>`;
-    const oneRow = ROULETTE.VALUES.map(card).join('');
-    strip.innerHTML = new Array(8).fill(oneRow).join('');
+  const vq = window.WEBAPP_VERSION ? `?v=${encodeURIComponent(window.WEBAPP_VERSION)}` : '';
+  const card = val => `<div class="ticket"><img src="${ROULETTE.IMG_DIR}/ticket-${val}.svg${vq}" alt="${val}"></div>`;
+  const oneCol = ROULETTE.VALUES.map(card).join('');
+  strip.innerHTML = new Array(8).fill(oneCol).join(''); // длинная вертикальная колонка
 
-    requestAnimationFrame(() => {
-      const any = strip.querySelector('.ticket');
-      const w   = wheel.getBoundingClientRect().width;
-      const cardW = any ? any.getBoundingClientRect().width : 84;
-      rouletteState.cardW = cardW + 10;               // ширина + gap 10px
-      rouletteState.centerOffset = (w/2) - (cardW/2); // центрировать карточку
-      rouletteState.indexBase = ROULETTE.VALUES.length * 2;
-      strip.style.transform =
-        `translateY(-50%) translateX(${-(rouletteState.indexBase * rouletteState.cardW - rouletteState.centerOffset)}px)`;
-    });
-  }
+  requestAnimationFrame(() => {
+    const any = strip.querySelector('.ticket');
+    const h = wheel.getBoundingClientRect().height;
+    const cardH = any ? any.getBoundingClientRect().height : 84;
+
+    rouletteState.cardH = cardH + 10;               // высота карточки + gap
+    rouletteState.centerOffset = (h/2) - (cardH/2); // центр экрана по Y
+    rouletteState.indexBase = ROULETTE.VALUES.length * 2;
+
+    // ставим базовую позицию так, чтобы карточка стояла по центру горизонтального маркера
+    strip.style.transform =
+      `translateX(-50%) translateY(${-(rouletteState.indexBase * rouletteState.cardH - rouletteState.centerOffset)}px)`;
+  });
+}
+
 
   function weightedIndex(weights){
     let x=Math.random(), acc=0;
@@ -524,49 +531,43 @@
   }
 
   function spinRoulette(){
-    if (rouletteState.spinning) return;
-    if (String(currentCurrency).toUpperCase() !== 'RUB'){ alert('Рулетка работает только в RUB'); return; }
-    if (Number(lastBalance) < ROULETTE_COST_RUB){ alert('Недостаточно средств'); return; }
+  if (rouletteState.spinning) return;
+  if (String(currentCurrency).toUpperCase() !== 'RUB'){ alert('Рулетка работает только в RUB'); return; }
+  if (Number(lastBalance) < ROULETTE_COST_RUB){ alert('Недостаточно средств'); return; }
 
-    // моментально списываем 10₽ локально и обновляем UI
-    lastBalance = Math.max(0, Number(lastBalance) - ROULETTE_COST_RUB);
+  lastBalance = Math.max(0, Number(lastBalance) - ROULETTE_COST_RUB);
+  updateRouletteBar(); updateProfilePageView?.();
+
+  const strip = rouletteState.strip;
+  const { cardH, centerOffset } = rouletteState;
+
+  const winIdx = weightedIndex(ROULETTE.WEIGHTS);
+  const cycles = 5;
+  const absoluteIdx = rouletteState.indexBase + cycles*ROULETTE.VALUES.length + winIdx;
+  const toY = -(absoluteIdx * cardH - centerOffset);
+
+  rouletteState.spinning = true;
+  strip.style.transition = `transform ${ROULETTE.SPIN_MS}ms cubic-bezier(.12,.75,.13,1)`;
+  void strip.offsetHeight; // reflow
+  strip.style.transform = `translateX(-50%) translateY(${toY}px)`;
+
+  const onEnd = () => {
+    strip.removeEventListener('transitionend', onEnd);
+    rouletteState.spinning = false;
+
+    rouletteState.indexBase = absoluteIdx % (ROULETTE.VALUES.length*2);
+    strip.style.transition = 'none';
+    strip.style.transform =
+      `translateX(-50%) translateY(${-(rouletteState.indexBase * cardH - centerOffset)}px)`;
+
+    const win = Number(ROULETTE.VALUES[winIdx] || 0);
+    if (win > 0) lastBalance = Number(lastBalance) + win;
+    try { tg?.HapticFeedback?.notificationOccurred?.(win>0?'success':'error'); } catch(_){}
     updateRouletteBar(); updateProfilePageView?.();
+  };
+  strip.addEventListener('transitionend', onEnd);
+}
 
-    const strip = rouletteState.strip;
-    const { cardW, centerOffset } = rouletteState;
-
-    const winIdx = weightedIndex(ROULETTE.WEIGHTS);
-    const cycles = 5; // сколько «рядов» пролистать до финиша
-    const absoluteIdx = rouletteState.indexBase + cycles*ROULETTE.VALUES.length + winIdx;
-
-    const toX = -(absoluteIdx * cardW - centerOffset);
-
-    rouletteState.spinning = true;
-    strip.style.transition = `transform ${ROULETTE.SPIN_MS}ms cubic-bezier(.12,.75,.13,1)`;
-    strip.getBoundingClientRect(); // force reflow
-    strip.style.transform = `translateY(-50%) translateX(${toX}px)`;
-
-    const onEnd = () => {
-      strip.removeEventListener('transitionend', onEnd);
-      rouletteState.spinning = false;
-
-      // Нормализуем позицию
-      rouletteState.indexBase = absoluteIdx % (ROULETTE.VALUES.length*2);
-      strip.style.transition = 'none';
-      strip.style.transform =
-        `translateY(-50%) translateX(${-(rouletteState.indexBase * cardW - centerOffset)}px)`;
-
-      // Начислим выигрыш локально
-      const win = Number(ROULETTE.VALUES[winIdx] || 0);
-      if (win > 0){ lastBalance = Number(lastBalance) + win; }
-      try { tg?.HapticFeedback?.notificationOccurred?.(win>0?'success':'error'); } catch(_){}
-      updateRouletteBar(); updateProfilePageView?.();
-
-      // Здесь же можно синкнуть на бэке (когда будет готов эндпоинт):
-      // fetch(`${API_BASE}/roulette/spin`, { ... }).then(fetchProfile).catch(fetchProfile);
-    };
-    strip.addEventListener('transitionend', onEnd);
-  }
 
   function updateRouletteBar() {
     const bal = document.getElementById('rbBalance');
