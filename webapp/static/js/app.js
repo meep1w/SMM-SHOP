@@ -417,7 +417,7 @@
   pointer-events:none;
 }
 
-      #page-roulette .ticket img{ width:64px; height:64px; display:block; }
+      #page-roulette .ticket img{ width:320px; height:160px; display:block; }
       #page-roulette .marker{
         position:absolute; top:0; bottom:0; left:50%;
         width:2px; transform:translateX(-1px);
