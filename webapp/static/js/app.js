@@ -478,7 +478,7 @@ function ensureRouletteStyles() {
       background: linear-gradient(180deg,#1a1e24,#14181e);
       border:1px solid var(--stroke);
     }
-    #page-roulette .rbar__ico img{ width:100%; height:100%; object-fit:cover; display:block; }
+    #page-roulette .rbar__ico img{ width:100%; height:100%; object-fit:cover; display:block; border-radius: 50%; }
     #page-roulette .rbar__title{ font-weight:700; font-size:15px; }
     #page-roulette .rbar__subbtn{
       display:inline-block; margin-top:2px; font-size:12px; color:#ff7f7f; cursor:pointer;
