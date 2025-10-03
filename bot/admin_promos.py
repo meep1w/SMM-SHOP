@@ -3,7 +3,7 @@
 import os
 import asyncio
 import datetime as dt
-from typing import Optional, Tuple
+from typing import Optional
 
 import httpx
 from aiogram import Router, types, F
@@ -51,7 +51,7 @@ def kb_back_admin() -> types.InlineKeyboardMarkup:
         inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:menu")]]
     )
 
-# ===== Промокоды (взято из твоего файла и слегка отрефакторено) =====
+# ===== Промокоды =====
 class PromoWizard(StatesGroup):
     type = State()
     code = State()
@@ -130,7 +130,7 @@ async def _fetch_admin_users() -> list[dict]:
             return []
         return js
 
-# ===== Статистика =====
+# ===== helpers (stats) =====
 def _fmt_ts(ts: int | None) -> str:
     if not ts:
         return "-"
@@ -139,17 +139,66 @@ def _fmt_ts(ts: int | None) -> str:
     except Exception:
         return str(ts)
 
+def _sorted_users(users: list[dict]) -> list[dict]:
+    return sorted(users, key=lambda x: int(x.get("last_seen_at") or 0), reverse=True)
+
+def _stats_header(users: list[dict]) -> str:
+    total = len(users)
+    with_nick = sum(1 for x in users if x.get("nick"))
+    paid_topups_users = sum(1 for x in users if int(x.get("topups_paid") or 0) > 0)
+    orders_users = sum(1 for x in users if int(x.get("orders") or 0) > 0)
+    return (
+        "<b>Статистика</b>\n"
+        f"Всего пользователей: <b>{total}</b>\n"
+        f"С ником: <b>{with_nick}</b>\n"
+        f"Депозиты (≥1): <b>{paid_topups_users}</b>\n"
+        f"Заказы (≥1): <b>{orders_users}</b>"
+    )
+
+def _kb_stats_list(users: list[dict], page: int, per_page: int = 10) -> types.InlineKeyboardMarkup:
+    """Кнопки пользователей (по 2 в ряд) + стрелки навигации."""
+    total = len(users)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, pages))
+    start = (page - 1) * per_page
+    chunk = users[start:start + per_page]
+
+    rows: list[list[types.InlineKeyboardButton]] = []
+    row: list[types.InlineKeyboardButton] = []
+
+    for u in chunk:
+        label = u.get("nick") or str(u.get("tg_id"))
+        tg_id = u.get("tg_id")
+        btn = types.InlineKeyboardButton(text=label, callback_data=f"stats:user:{tg_id}:{page}")
+        row.append(btn)
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+
+    nav: list[types.InlineKeyboardButton] = []
+    if page > 1:
+        nav.append(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"stats:page:{page-1}"))
+    if page < pages:
+        nav.append(types.InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"stats:page:{page+1}"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([types.InlineKeyboardButton(text="🏠 В админку", callback_data="admin:menu")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+async def _show_stats_page(cmsg: types.Message, page: int = 1):
+    users = _sorted_users(await _fetch_admin_users())
+    text = _stats_header(users)
+    await cmsg.edit_text(text, reply_markup=_kb_stats_list(users, page), disable_web_page_preview=True)
+
 # ================== ENTRY ==================
 @router.message(Command("admin"))
 async def cmd_admin(m: types.Message, state: FSMContext):
     if not _admin_only(m):
         return
     await state.clear()
-    text = (
-        "<b>Админ-панель</b>\n\n"
-        "Выбери раздел:"
-    )
-    await m.answer(text, reply_markup=kb_admin_main())
+    await m.answer("<b>Админ-панель</b>\n\nВыбери раздел:", reply_markup=kb_admin_main())
 
 @router.callback_query(F.data == "admin:menu")
 async def cb_admin_menu(c: types.CallbackQuery, state: FSMContext):
@@ -365,7 +414,6 @@ async def bc_run(c: types.CallbackQuery, state: FSMContext):
         await c.answer("Сначала пришли текст.", show_alert=True)
         return
 
-    # подтянем список пользователей
     try:
         users = await _fetch_admin_users()
     except Exception as e:
@@ -396,8 +444,7 @@ async def bc_run(c: types.CallbackQuery, state: FSMContext):
             sent += 1
         except Exception:
             failed += 1
-        # без кд, как просил; если захочешь щадящий режим — раскомментируй:
-        # await asyncio.sleep(0.03)
+        # без кд, как просил
 
     await state.clear()
     await c.message.edit_text(
@@ -409,50 +456,55 @@ async def bc_run(c: types.CallbackQuery, state: FSMContext):
     )
     await c.answer()
 
-# ====== Статистика ======
+# ====== Статистика: список с пагинацией ======
 @router.callback_query(F.data == "admin:stats")
-async def admin_stats(c: types.CallbackQuery, state: FSMContext):
+async def admin_stats_root(c: types.CallbackQuery, state: FSMContext):
+    if not _admin_only(c):
+        return await c.answer()
+    await state.clear()
+    await _show_stats_page(c.message, page=1)
+    await c.answer()
+
+@router.callback_query(F.data.startswith("stats:page:"))
+async def stats_page(c: types.CallbackQuery):
     if not _admin_only(c):
         return await c.answer()
     try:
-        users = await _fetch_admin_users()
-    except Exception as e:
-        await c.message.edit_text(f"Не удалось получить пользователей: {e}", reply_markup=kb_back_admin())
+        page = int(c.data.split(":", 2)[2])
+    except Exception:
+        page = 1
+    await _show_stats_page(c.message, page=page)
+    await c.answer()
+
+@router.callback_query(F.data.startswith("stats:user:"))
+async def stats_user_card(c: types.CallbackQuery):
+    if not _admin_only(c):
         return await c.answer()
+    parts = c.data.split(":")
+    # stats:user:<tg_id>[:<page>]
+    tg_id = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 1
 
-    total = len(users)
-    with_nick = sum(1 for x in users if x.get("nick"))
-    paid_topups_users = sum(1 for x in users if int(x.get("topups_paid") or 0) > 0)
-    orders_users = sum(1 for x in users if int(x.get("orders") or 0) > 0)
+    users = _sorted_users(await _fetch_admin_users())
+    u = next((x for x in users if int(x.get("tg_id") or 0) == tg_id), None)
+    if not u:
+        await _show_stats_page(c.message, page=page)
+        return await c.answer("Пользователь не найден")
 
-    head = (
-        f"<b>Статистика</b>\n"
-        f"Всего пользователей: <b>{total}</b>\n"
-        f"С ником: <b>{with_nick}</b>\n"
-        f"Депозиты (≥1): <b>{paid_topups_users}</b>\n"
-        f"Заказы (≥1): <b>{orders_users}</b>\n\n"
-        f"Последние 20 пользователей:\n"
-        "<code>tg_id      | nick         | bal   | cur | orders | topups_paid | refs | last_seen</code>\n"
+    text = (
+        "<b>Пользователь</b>\n"
+        f"ID: <code>{u.get('tg_id')}</code>\n"
+        f"SEQ: <code>{u.get('seq')}</code>\n"
+        f"Ник: <b>{u.get('nick') or '—'}</b>\n"
+        f"Баланс: <b>{round(float(u.get('balance') or 0.0), 2)} {u.get('currency') or 'RUB'}</b>\n"
+        f"Заказы: <b>{u.get('orders') or 0}</b>\n"
+        f"Пополнений: всего <b>{u.get('topups_total') or 0}</b>, оплачено <b>{u.get('topups_paid') or 0}</b>\n"
+        f"Рефералов: <b>{u.get('refs') or 0}</b>\n"
+        f"Последний визит: <code>{_fmt_ts(u.get('last_seen_at'))}</code>"
     )
-
-    # отсортируем по last_seen_at убыв.
-    users_sorted = sorted(users, key=lambda x: int(x.get("last_seen_at") or 0), reverse=True)[:20]
-    lines = []
-    for u in users_sorted:
-        line = (
-            f"<code>"
-            f"{str(u.get('tg_id')).ljust(10)}| "
-            f"{(u.get('nick') or '-').ljust(12)[:12]} | "
-            f"{str(round(float(u.get('balance') or 0.0), 2)).rjust(6)} | "
-            f"{(u.get('currency') or 'RUB')[:3].ljust(3)} | "
-            f"{str(u.get('orders') or 0).rjust(6)} | "
-            f"{str(u.get('topups_paid') or 0).rjust(11)} | "
-            f"{str(u.get('refs') or 0).rjust(4)} | "
-            f"{_fmt_ts(u.get('last_seen_at'))}"
-            f"</code>"
-        )
-        lines.append(line)
-
-    text = head + ("\n".join(lines) if lines else "— нет данных —")
-    await c.message.edit_text(text, reply_markup=kb_back_admin(), disable_web_page_preview=True)
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="⬅️ Назад к списку", callback_data=f"stats:page:{page}")],
+        [types.InlineKeyboardButton(text="🏠 В админку", callback_data="admin:menu")],
+    ])
+    await c.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
     await c.answer()
