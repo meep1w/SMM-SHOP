@@ -1,5 +1,5 @@
 /* Slovekiza Mini-App — промокоды + профиль + персональная наценка
- * + Рулетка (фикс-колесо + АВТО-СПИН с предоплатой и ПО-СПИНОВЫМ начислением)
+ * + Рулетка (фикс-колесо + СПИСАНИЕ ПО КАЖДОМУ СПИНУ + авто-спин без предоплаты)
  * - Профиль: отображение ника/SEQ/баланса/наценки, ввод промокодов (навсегда/баланс)
  * - Скидочный промокод на странице услуги (check + учёт в расчёте и заказе)
  * - Категории / Услуги / Страница услуги
@@ -9,7 +9,7 @@
  * - Скрытие таббара при открытой клавиатуре
  */
 (function () {
-  console.log('app.js ready (promos + profile + roulette autospin per-spin credit)');
+  console.log('app.js ready (per-spin charge + autospin sequential)');
 
   // ====== Telegram WebApp ======
   const tg = window.Telegram?.WebApp || null;
@@ -29,8 +29,8 @@
     });
   } catch (_) {}
 
-  // Версия (для кэша картинок/стилей)
-  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-06';
+  // Версия (для кэша картинок)
+  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-04';
 
   // Добавляем ?v=... на <img src="static/...">, где ещё нет
   (function bumpStaticImages() {
@@ -55,7 +55,7 @@
     SPIN_MS: 3400,
     IMG_DIR: 'static/img/tickets'
   };
-  const ROULETTE_COST_RUB = 10; // инфо для UI; сервер знает свою цену
+  const ROULETTE_COST_RUB = 10;
 
   let rouletteState = {
     spinning: false,
@@ -148,20 +148,18 @@
     return m;
   }
   function openModal(html){
-  const m = ensureModal();
-  const card = m.querySelector('.modal-card');
-  card.classList.remove('modal-card--plain');   // по умолчанию обычная модалка
-  m.querySelector('.modal-content').innerHTML = html;
-  m.setAttribute('aria-hidden','false');
-}
-
-function closeModal(){
-  const m = document.getElementById('appModal');
-  if (!m) return;
-  m.setAttribute('aria-hidden','true');
-  m.querySelector('.modal-card')?.classList.remove('modal-card--plain'); // очистка
-}
-
+    const m = ensureModal();
+    const card = m.querySelector('.modal-card');
+    card.classList.remove('modal-card--plain');   // по умолчанию обычная
+    m.querySelector('.modal-content').innerHTML = html;
+    m.setAttribute('aria-hidden','false');
+  }
+  function closeModal(){
+    const m = document.getElementById('appModal');
+    if (!m) return;
+    m.setAttribute('aria-hidden','true');
+    m.querySelector('.modal-card')?.classList.remove('modal-card--plain');
+  }
 
   // ====== Topup overlay ======
   function ensureOverlay(){
@@ -199,7 +197,8 @@ function closeModal(){
   function urlNick(){ try{ const p=new URLSearchParams(location.search); const v=p.get('n'); return v?decodeURIComponent(v):null; }catch(_){ return null; } }
   const nickFromUrl = urlNick();
 
-  if (nicknameEl) nicknameEl.textContent = nickFromUrl || "Гость";
+  const nicknameElInit = nicknameEl;
+  if (nicknameElInit) nicknameElInit.textContent = nickFromUrl || "Гость";
   try { const photo = tg?.initDataUnsafe?.user?.photo_url; if (photo && avatarEl) avatarEl.src = photo; } catch (_) {}
   if (avatarEl && !avatarEl.getAttribute("src")){
     avatarEl.src='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect fill="#1b1e24" width="80" height="80" rx="40"/><circle cx="40" cy="33" r="15" fill="#2a2f36"/><path d="M15 66c5-12 18-18 25-18s20 6 25 18" fill="#2a2f36"/></svg>');
@@ -452,82 +451,83 @@ function closeModal(){
         pointer-events:none;
       }
 
-      /* ===== Авто-спин (модалка) — стили восстановлены ===== */
-      #appModal .asm{
-        width:min(520px, 92vw);
-        margin:10vh auto 0;
-        background:linear-gradient(180deg,#14171c,#101318);
-        border:1px solid var(--stroke);
-        border-radius:28px;
-        padding:24px;
-        box-shadow:0 22px 48px rgba(0,0,0,.4);
-        color:#fff;
-      }
-      #appModal .asm h3{ margin:0 0 8px 0; font-size:28px; font-weight:800; text-align:center; }
-      #appModal .asm .sub{ text-align:center; color:var(--muted); margin-bottom:18px; }
-      #appModal .asm .row{ margin-top:12px; }
-      #appModal .asm .label{ font-size:12px; color:var(--muted); margin-bottom:6px; }
-      #appModal .asm .inp{
-        display:flex; align-items:center; gap:12px; border:1px solid var(--stroke);
-        border-radius:12px; padding:12px 14px; background:#0f1217;
-      }
-      #appModal .asm .inp input{
-        appearance:textfield; -moz-appearance:textfield; -webkit-appearance:textfield;
-        flex:1 1 auto; border:0; outline:0; background:transparent; color:#fff; font-size:22px; font-weight:700;
-      }
-      #appModal .asm .inp .max{
-        color:#ff8f8f; font-weight:700; cursor:pointer; user-select:none;
+      /* ===== Авто-спин (модалка) ===== */
+      /* Плоская модалка только для авто-спина */
+      #appModal .modal-card.modal-card--plain{
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        padding: 0 !important;
       }
 
-      #appModal .asm .slider{
-        -webkit-appearance:none; appearance:none;
-        width:100%;
-        height:12px;
-        border-radius:999px;
-        background:transparent;
-        outline:none;
-        margin:14px 2px 4px;
-      }
-      #appModal .asm .slider::-webkit-slider-runnable-track{
-        height:12px; border-radius:999px;
-        background:linear-gradient(90deg,#ff6b6b var(--as-fill,0%), rgba(255,255,255,.16) var(--as-fill,0%));
-      }
-      #appModal .asm .slider::-webkit-slider-thumb{
-        -webkit-appearance:none; appearance:none;
-        width:20px; height:20px; border-radius:50%;
-        background:#fff; border:0;
-        box-shadow:0 2px 6px rgba(0,0,0,.35);
-        margin-top:-4px;
-      }
-      #appModal .asm .slider::-moz-range-track{
-        height:12px; border-radius:999px;
-        background:linear-gradient(90deg,#ff6b6b var(--as-fill,0%), rgba(255,255,255,.16) var(--as-fill,0%));
-      }
-      #appModal .asm .slider::-moz-range-thumb{
-        width:20px; height:20px; border-radius:50%;
-        background:#fff; border:0;
-        box-shadow:0 2px 6px rgba(0,0,0,.35);
-      }
-
-      #appModal .asm .actions{
-        margin-top:18px; display:grid; grid-template-columns:1fr 1fr; gap:12px;
-      }
-      #appModal .asm .btnx{
-        border:1px solid var(--stroke); border-radius:16px; padding:14px 16px; font-weight:700; cursor:pointer;
-        background:var(--surface-2); color:#c9d2e2; text-align:center;
-      }
-      #appModal .asm .btnp{
-        border:0; border-radius:16px; padding:14px 16px; font-weight:800; cursor:pointer; text-align:center;
-        background:linear-gradient(180deg,#ff6b6b,#ff4242); color:#fff;
-      }
-      /* Плоская модалка: фон/рамка/тень убраны только когда добавлен класс */
-#appModal .modal-card.modal-card--plain{
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  padding: 0 !important;
+#appModal .asm{
+  width:min(520px, 92vw);
+  margin:10vh auto 0;
+  background:linear-gradient(180deg,#14171c,#101318);
+  border:1px solid var(--stroke);
+  border-radius:28px;
+  padding:24px;
+  box-shadow:0 22px 48px rgba(0,0,0,.4);
+  color:#fff;
+}
+#appModal .asm h3{ margin:0 0 8px 0; font-size:28px; font-weight:800; text-align:center; }
+#appModal .asm .sub{ text-align:center; color:var(--muted); margin-bottom:18px; }
+#appModal .asm .row{ margin-top:12px; }
+#appModal .asm .label{ font-size:12px; color:var(--muted); margin-bottom:6px; }
+#appModal .asm .inp{
+  display:flex; align-items:center; gap:12px; border:1px solid var(--stroke);
+  border-radius:12px; padding:12px 14px; background:#0f1217;
+}
+#appModal .asm .inp input{
+  appearance:textfield; -moz-appearance:textfield; -webkit-appearance:textfield;
+  flex:1 1 auto; border:0; outline:0; background:transparent; color:#fff; font-size:22px; font-weight:700;
+}
+#appModal .asm .inp .max{
+  color:#ff8f8f; font-weight:700; cursor:pointer; user-select:none;
 }
 
+/* Толстый трек, белый кружок, заливка – акцент */
+#appModal .asm .slider{
+  -webkit-appearance:none; appearance:none;
+  width:100%;
+  height:12px;
+  border-radius:999px;
+  background:transparent;
+  outline:none;
+  margin:14px 2px 4px;
+}
+#appModal .asm .slider::-webkit-slider-runnable-track{
+  height:12px; border-radius:999px;
+  background:linear-gradient(90deg,#ff6b6b var(--as-fill,0%), rgba(255,255,255,.16) var(--as-fill,0%));
+}
+#appModal .asm .slider::-webkit-slider-thumb{
+  -webkit-appearance:none; appearance:none;
+  width:20px; height:20px; border-radius:50%;
+  background:#fff; border:0;
+  box-shadow:0 2px 6px rgba(0,0,0,.35);
+  margin-top:-4px;
+}
+#appModal .asm .slider::-moz-range-track{
+  height:12px; border-radius:999px;
+  background:linear-gradient(90deg,#ff6b6b var(--as-fill,0%), rgba(255,255,255,.16) var(--as-fill,0%));
+}
+#appModal .asm .slider::-moz-range-thumb{
+  width:20px; height:20px; border-radius:50%;
+  background:#fff; border:0;
+  box-shadow:0 2px 6px rgba(0,0,0,.35);
+}
+
+#appModal .asm .actions{
+  margin-top:18px; display:grid; grid-template-columns:1fr 1fr; gap:12px;
+}
+#appModal .asm .btnx{
+  border:1px solid var(--stroke); border-radius:16px; padding:14px 16px; font-weight:700; cursor:pointer;
+  background:var(--surface-2); color:#c9d2e2; text-align:center;
+}
+#appModal .asm .btnp{
+  border:0; border-radius:16px; padding:14px 16px; font-weight:800; cursor:pointer; text-align:center;
+  background:linear-gradient(180deg,#ff6b6b,#ff4242); color:#fff;
+}
     `;
     document.head.appendChild(st);
   }
@@ -617,18 +617,16 @@ function closeModal(){
        </div>`;
 
     const oneCol = ROULETTE.VALUES.map(card).join('');
-    // Большой запас, чтобы лента «не заканчивалась»
     strip.innerHTML = new Array(40).fill(oneCol).join('');
 
-    // читаем фикс-размеры из CSS
     const cs = getComputedStyle(root);
     const TICKET_H = parseFloat(cs.getPropertyValue('--ticket-h')) || 150;
     const GAP      = parseFloat(cs.getPropertyValue('--ticket-gap')) || 18;
     const WHEEL_H  = parseFloat(cs.getPropertyValue('--wheel-h')) || wheel.getBoundingClientRect().height;
 
-    rouletteState.cardStep     = TICKET_H + GAP;             // строгий шаг по вертикали
-    rouletteState.centerOffset = (WHEEL_H/2) - (TICKET_H/2); // центр контейнера к центру билета
-    rouletteState.indexBase    = ROULETTE.VALUES.length * 20; // старт глубоко в середине
+    rouletteState.cardStep     = TICKET_H + GAP;
+    rouletteState.centerOffset = (WHEEL_H/2) - (TICKET_H/2);
+    rouletteState.indexBase    = ROULETTE.VALUES.length * 20;
     rouletteState.currentIndex = rouletteState.indexBase;
 
     const y0 = - (rouletteState.indexBase * rouletteState.cardStep - rouletteState.centerOffset);
@@ -731,14 +729,14 @@ function closeModal(){
     } catch (_) {}
   }
 
-  // ====== ОДИНОЧНЫЙ СПИН
+  // ====== ОДИНОЧНЫЙ СПИН (списание ПО КАЖДОМУ спину)
   async function spinRoulette(opts = {}){
-    if (rouletteState.spinning) return;
+    if (rouletteState.spinning) return false;
 
     const {
-      forceWin = null,   // если задано — анимируем локально без запроса
-      localOnly = false, // true при автоспине с предоплатой
-      onFinish  = null,
+      forceWin = null,     // не используется теперь, но оставим для совместимости (debug)
+      localOnly = false,   // не используется
+      onFinish  = null,    // callback(ok:boolean)
     } = opts;
 
     const btn = document.getElementById('rbSpin');
@@ -748,19 +746,32 @@ function closeModal(){
     try {
       let winVal, finalBalance = null;
 
-      if (localOnly && forceWin != null) {
-        // Предоплата уже произведена (autospin) — просто крутимся к нужной карточке
-        winVal = Number(forceWin);
-      } else if (forceWin != null) {
+      if (forceWin != null) {
         winVal = Number(forceWin);
       } else {
-        // Обычный режим: сервер сам списывает и начисляет
+        // Пер-спиновое списание (оптимистично)
+        const cost = ROULETTE_COST_RUB;
+        if (lastBalance + 1e-9 < cost){
+          rouletteState.spinning = false;
+          btn && (btn.disabled = false);
+          alert('Недостаточно средств');
+          onFinish && onFinish(false);
+          return false;
+        }
+        const balanceBefore = lastBalance;
+        setBalanceUI(balanceBefore - cost);
+
         const r = await fetch('/api/v1/roulette/spin', {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ user_id: userId || seq })
+          body: JSON.stringify({ user_id: userId || seq, cost_rub: cost })
         });
-        if (!r.ok) throw new Error(await r.text());
+        if (!r.ok) {
+          // откат
+          setBalanceUI(balanceBefore);
+          const txt = await r.text().catch(()=> 'Ошибка');
+          throw new Error(txt || 'spin failed');
+        }
         const result = await r.json();
         winVal = Number(result.win);
         finalBalance = Number(result.balance);
@@ -771,21 +782,23 @@ function closeModal(){
       const targetIdx = findNextIndexOfValue(winVal);
       animateToIndex(targetIdx, ROULETTE.SPIN_MS, () => {
         if (finalBalance != null) setBalanceUI(finalBalance);
-        // тихо переносим ленту в середину на такой же win-билет
-        recenterToValue(winVal);
+        recenterToValue(winVal); // перецентруем для запаса
         try { tg?.HapticFeedback?.impactOccurred?.('medium'); } catch(_){}
-        onFinish && onFinish();
+        onFinish && onFinish(true);
       });
+      return true;
     } catch (e) {
       rouletteState.spinning = false;
       btn && (btn.disabled = false);
       alert('Не удалось выполнить спин: ' + (e?.message || e));
+      onFinish && onFinish(false);
+      return false;
     }
   }
 
-  // ====== АВТО-СПИН (предоплата + ПОСПИНОВОЕ начисление с сервера) ======
+  // ====== АВТО-СПИН (без предоплаты — N последовательных обычных спинов)
   const AUTOSPIN_MAX = 500;
-  let autoSpinState = { active:false, sessionId:null, serverRemaining:0 };
+  let autoSpinState = { active:false, remaining:0 };
 
   function openAutospinModal(){
     const curDefault = 25;
@@ -808,8 +821,10 @@ function closeModal(){
       </div>
     `);
 
+    // Сделать модалку «плоской» (без заднего квадрата)
     const modal = ensureModal();
     modal.querySelector('.modal-card')?.classList.add('modal-card--plain');
+
     const inp = document.getElementById('asCount');
     const sld = document.getElementById('asSlider');
     const btnMax = document.getElementById('asMax');
@@ -828,13 +843,12 @@ function closeModal(){
 
     function parsedCountFromInput(){
       const raw = inp.value.trim();
-      if (raw === '') return null;                  // позволяем очистить поле
+      if (raw === '') return null;
       const n = Math.floor(Number(raw));
       if (!Number.isFinite(n)) return null;
       return clamp(n);
     }
 
-    // связь инпут ↔ ползунок
     inp.addEventListener('input', ()=>{
       const c = parsedCountFromInput();
       if (c == null) { setFill(Number(sld.min)); return; }
@@ -864,95 +878,36 @@ function closeModal(){
     });
   }
 
-  async function tryPrepayAutoSpin(count){
-    // Предоплата серии на бэке: /api/v1/roulette/autospin — возвращает session_id
-    try{
-      const r = await fetch(`${API_BASE}/roulette/autospin`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: userId || seq, count })
-      });
-      if (r.status === 404) {
-        alert('На сервере не настроен автоспин. Обновите бэкенд (/api/v1/roulette/autospin).');
-        return null;
-      }
-      if (!r.ok) throw new Error(await r.text());
-      const js = await r.json();
-      if (js.balance_after_charge != null) setBalanceUI(js.balance_after_charge);
-      return { sessionId: js.session_id, count: js.count };
-    }catch(e){
-      console.warn('autospin prepay error:', e);
-      alert('Не удалось выполнить предоплату авто-спина: ' + (e?.message||e));
-      return null;
-    }
-  }
-
   async function startAutoSpin(count){
     if (autoSpinState.active || rouletteState.spinning) return;
     if (count < 1) { alert('Укажите количество спинов'); return; }
 
-    const total = count * ROULETTE_COST_RUB;
-    if (lastBalance + 1e-9 < total){
-      alert(`Недостаточно средств. Требуется ${fmt(total)} ₽, на балансе ${fmt(lastBalance)} ₽.`);
-      return;
-    }
-
-    const pre = await tryPrepayAutoSpin(count);
-    if (!pre) return;
-
-    autoSpinState = { active:true, sessionId: pre.sessionId, serverRemaining: pre.count };
-
+    autoSpinState = { active:true, remaining:count };
     document.getElementById('rbSpin')?.setAttribute('disabled','true');
     document.getElementById('rbAuto')?.setAttribute('disabled','true');
     closeModal();
     runNextAutoSpin();
   }
 
-  async function runNextAutoSpin(){
+  function stopAutoSpin(){
+    autoSpinState.active = false;
+    document.getElementById('rbSpin')?.removeAttribute('disabled');
+    document.getElementById('rbAuto')?.removeAttribute('disabled');
+  }
+
+  function runNextAutoSpin(){
     if (!autoSpinState.active) return;
-    if (autoSpinState.serverRemaining <= 0){
-      autoSpinState.active = false;
-      document.getElementById('rbSpin')?.removeAttribute('disabled');
-      document.getElementById('rbAuto')?.removeAttribute('disabled');
-      fetchProfile();
+    if (autoSpinState.remaining <= 0){
+      stopAutoSpin();
+      fetchProfile(); // синк на всякий случай
       return;
     }
-
-    let next;
-    try{
-      const r = await fetch(`${API_BASE}/roulette/autospin/next`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ user_id: userId || seq, session_id: autoSpinState.sessionId })
-      });
-      if (!r.ok) throw new Error(await r.text());
-      next = await r.json();
-    } catch (e){
-      console.warn('autospin next error:', e);
-      autoSpinState.active = false;
-      document.getElementById('rbSpin')?.removeAttribute('disabled');
-      document.getElementById('rbAuto')?.removeAttribute('disabled');
-      await fetchProfile();
-      alert('Авто-спин прерван: ' + (e?.message||e));
-      return;
-    }
-
-    const win = Number(next.win);
-    const balanceAfter = Number(next.balance);
-    const remainingServer = Number(next.remaining);
 
     spinRoulette({
-      forceWin: win,
-      localOnly: true,           // анимируем без доп. списаний
-      onFinish: () => {
-        setBalanceUI(balanceAfter);
-        autoSpinState.serverRemaining = remainingServer;
-        if (autoSpinState.active && autoSpinState.serverRemaining > 0) {
-          setTimeout(runNextAutoSpin, 350);
-        } else {
-          autoSpinState.active = false;
-          document.getElementById('rbSpin')?.removeAttribute('disabled');
-          document.getElementById('rbAuto')?.removeAttribute('disabled');
-          fetchProfile();
-        }
+      onFinish: (ok) => {
+        if (!ok) { stopAutoSpin(); return; }
+        autoSpinState.remaining -= 1;
+        if (autoSpinState.active) setTimeout(runNextAutoSpin, 350);
       }
     });
   }
@@ -1440,7 +1395,7 @@ function closeModal(){
       page.innerHTML = `
         <div class="ref">
           <div class="card ref-hero">
-            <div class="ref-ico"><img src="static/img/tab-referrals.svg?v=${encodeURIComponent(window.WEBAPP_VERSION)}" alt="" class="ref-ico-img"></div>
+            <div class="ref-ico"><img src="static/img/tab-referrals.svg?v=2025-09-30-1" alt="" class="ref-ico-img"></div>
             <div class="ref-h1">Приглашайте пользователей <br> и получайте <span class="accent">10%</span> от их платежей</div>
             <div class="ref-h2">Средства автоматически поступают на ваш баланс. Полученные деньги вы можете тратить на <br> продвижение и испытывать удачу в рулетке.</div>
           </div>
