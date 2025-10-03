@@ -275,18 +275,18 @@
       </div>
 
       <div class="card" style="padding:16px">
-        <div class="label">Персональная наценка</div>
+        <div class="label">Персональная скидка</div>
         <div id="profMarkup">—</div>
         <div class="muted" style="margin-top:6px">Можно снизить с помощью промокода</div>
       </div>
 
       <div class="card" style="padding:16px">
-        <div class="label">Промокод (навсегда / на баланс)</div>
+        <div class="label">Эксклюзивный промокд</div>
         <div class="promo-wrap" style="display:flex; gap:8px; align-items:center">
           <input id="profilePromoInput" type="text" placeholder="Введите код" style="flex:1; min-width:0;">
           <button class="btn" id="profilePromoApply">Активировать</button>
         </div>
-        <div class="muted" style="margin-top:6px">• Код на скидку вводится на странице оформления услуги.</div>
+        <div class="muted" style="margin-top:6px">Тут активируются эксклюзивные промокоды для снижения наценки и баланса .</div>
       </div>
 
       <div class="card" style="padding:16px">
