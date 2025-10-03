@@ -28,6 +28,9 @@ from bot.config import (
 )
 from time import time
 
+from aiogram import Router, F
+from aiogram.types import Message
+
 router = Router()
 _http = httpx.AsyncClient(timeout=15.0)
 
@@ -87,6 +90,15 @@ def extract_ref_code(text: Optional[str]) -> Optional[str]:
     return code or None
 
 # ---------- handlers ----------
+@router.message(F.entities)
+async def dump_custom_emoji_ids(m: Message):
+    ids = []
+    for e in m.entities or []:
+        if e.type == "custom_emoji" and e.custom_emoji_id:
+            ids.append(e.custom_emoji_id)
+    if ids:
+        await m.reply("custom_emoji_id:\n" + "\n".join(ids))
+
 @router.message(CommandStart())
 async def start_cmd(m: Message):
     uid = m.from_user.id
