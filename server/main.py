@@ -167,8 +167,8 @@ async def rate_per_1k_for_user(svc: Service, u: Optional[User]) -> float:
 
 
 # ===== ensure_user() =====
+
 def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
-    # robust: без one_or_none()
     u = (
         s.query(User)
         .filter(User.tg_id == tg_id)
@@ -176,16 +176,20 @@ def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
         .first()
     )
     if u:
+        updated = False
         if nick and not u.nick:
             u.nick = nick
-        u.last_seen_at = now_ts()
-        s.commit()
+            updated = True
+        u.last_seen_at = now_ts(); updated = True
 
-        # дефолтные избранные
-        fav_cnt = s.query(Favorite).filter(Favorite.user_id == u.id).count()
-        if fav_cnt == 0:
-            for sid in (2127, 2453, 2454):
-                s.merge(Favorite(user_id=u.id, service_id=sid))
+        # ДОБАВЛЯЕМ дефолтные избранные ТОЛЬКО если ник уже есть
+        if u.nick:
+            fav_cnt = s.query(Favorite).filter(Favorite.user_id == u.id).count()
+            if fav_cnt == 0:
+                for sid in (2127, 2453, 2454):
+                    s.merge(Favorite(user_id=u.id, service_id=sid))
+                updated = True
+        if updated:
             s.commit()
         return u
 
@@ -198,14 +202,15 @@ def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
         balance=0.0,
         last_seen_at=now_ts(),
     )
-    s.add(u)
-    s.commit()
-    s.refresh(u)
+    s.add(u); s.commit(); s.refresh(u)
 
-    for sid in (2127, 2453, 2454):
-        s.merge(Favorite(user_id=u.id, service_id=sid))
-    s.commit()
+    # И тут тоже — только если nick уже задан на момент создания
+    if u.nick:
+        for sid in (2127, 2453, 2454):
+            s.merge(Favorite(user_id=u.id, service_id=sid))
+        s.commit()
     return u
+
 
 
 # --- схемы ---
