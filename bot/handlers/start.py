@@ -38,15 +38,18 @@ def kb_welcome() -> InlineKeyboardMarkup:
     ])
 
 def kb_main() -> InlineKeyboardMarkup:
-    force_ver = int(time())  # уникальный параметр
-    open_url = f"{WEBAPP_URL}?v={force_ver}"
+    force_ver = int(time())  # уникальный параметр, чтобы не кэшировалось
+    open_url      = f"{WEBAPP_URL}?v={force_ver}"
+    roulette_url  = f"{WEBAPP_URL}?p=roulette&v={force_ver}"  # <— сразу на экран рулетки
+
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛍 Открыть магазин", web_app=WebAppInfo(url=open_url))],
         [InlineKeyboardButton(text="👥 Реф система", callback_data="menu:refs"),
-         InlineKeyboardButton(text="🎰 Рулетка",     callback_data="menu:roulette")],
+         InlineKeyboardButton(text="🎰 Рулетка",     web_app=WebAppInfo(url=roulette_url))],  # <-- было callback_data
         [InlineKeyboardButton(text="ℹ️ О магазине", callback_data="menu:about"),
          InlineKeyboardButton(text="💬 Отзывы",     url=REVIEWS_URL or PUBLIC_CHAT_URL or GROUP_URL)],
     ])
+
 
 # ---------- API helpers ----------
 async def api_fetch_user(user_id: int, autocreate: int = 1) -> Optional[dict]:

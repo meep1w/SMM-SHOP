@@ -1367,6 +1367,35 @@
   loadCategories();
   syncFavsFromServer().then(renderFavs);
 
+  // === Автозапуск рулетки по параметру старта / ссылке ===
+(function autoOpenRouletteOnLaunch(){
+  function getLaunchIntent(){
+    // 1) deep-link Mini App: ?startapp=roulette
+    let sp = '';
+    try {
+      sp = (tg?.initDataUnsafe?.start_param || tg?.initDataUnsafe?.startParam || '').toLowerCase();
+    } catch(_) {}
+
+    // 2) web_app.url с параметром: ?p=roulette или ?page=roulette
+    const qp = new URLSearchParams(location.search);
+    const p  = (qp.get('p') || qp.get('page') || '').toLowerCase();
+
+    // 3) hash: #roulette
+    const h  = (location.hash || '').replace(/^#/, '').toLowerCase();
+
+    const v = sp || p || (h.includes('roulette') ? 'roulette' : '');
+    if (['roulette','r','wheel'].includes(v)) return 'roulette';
+    return '';
+  }
+
+  if (getLaunchIntent() === 'roulette') {
+    // Страница рулетки сама создастся/стилизуется при вызове
+    ensureProfilePage();
+    openRoulette();
+  }
+})();
+
+
   // === Рефералка ===
   async function loadRefs() {
     const page = document.getElementById("page-refs");
