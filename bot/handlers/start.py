@@ -6,7 +6,6 @@ from typing import Optional
 
 from aiogram import Router
 from aiogram.filters import CommandStart
-from aiogram.enums import ParseMode
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -32,18 +31,6 @@ from bot.config import (
 router = Router()
 _http = httpx.AsyncClient(timeout=15.0)
 
-# ===== Premium emoji =====
-# Твой ID премиум-эмодзи (из бота-логгера)
-PREMIUM_EMOJI_ID = "5474185790143623422"
-
-def tg_emoji(emoji_id: str, fallback: str = "") -> str:
-    """
-    Формирует HTML-тег кастомного эмодзи.
-    fallback оставляем пустым, чтобы не показывалась «корона», если ID не подтянулся.
-    """
-    return f'<tg-emoji emoji-id="{html.escape(str(emoji_id))}">{fallback}</tg-emoji>'
-
-
 # ---------- UI ----------
 def kb_welcome() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -51,25 +38,47 @@ def kb_welcome() -> InlineKeyboardMarkup:
     ])
 
 def kb_main() -> InlineKeyboardMarkup:
-    force_ver = int(time())  # чтобы не кэшировалось
+    force_ver = int(time())  # уникальный параметр, чтобы не кэшировалось
     open_url     = f"{WEBAPP_URL}?v={force_ver}"
-    roulette_url = f"{WEBAPP_URL}?p=roulette&v={force_ver}"  # сразу на рулетку
-
+    roulette_url = f"{WEBAPP_URL}?p=roulette&v={force_ver}"  # сразу на экран рулетки
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛍 Открыть магазин", web_app=WebAppInfo(url=open_url))],
-        [
-            InlineKeyboardButton(text="👥 Реф система", callback_data="menu:refs"),
-            InlineKeyboardButton(text="🎰 Рулетка", web_app=WebAppInfo(url=roulette_url)),
-        ],
-        [
-            InlineKeyboardButton(text="ℹ️ О магазине", callback_data="menu:about"),
-            InlineKeyboardButton(text="💬 Отзывы", url=REVIEWS_URL or PUBLIC_CHAT_URL or GROUP_URL),
-        ],
+        [InlineKeyboardButton(text="👥 Реф система", callback_data="menu:refs"),
+         InlineKeyboardButton(text="🎰 Рулетка",     web_app=WebAppInfo(url=roulette_url))],
+        [InlineKeyboardButton(text="ℹ️ О магазине", callback_data="menu:about"),
+         InlineKeyboardButton(text="💬 Отзывы",     url=REVIEWS_URL or PUBLIC_CHAT_URL or GROUP_URL)],
     ])
 
+def kb_back_to_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="menu:home")]
+    ])
+
+# Тексты инфо-окон
+REFS_TEXT = (
+    "<b>Реферальная система</b>\n\n"
+    "• Делись личной ссылкой — её можно взять в мини-апп во вкладке <b>«Рефералы»</b>.\n"
+    "• <b>Базовая ставка:</b> 10% от каждого депозита приглашённых.\n"
+    "• <b>Повышенная ставка:</b> 20% — когда у тебя ≥ 20 рефералов с депозитом.\n"
+    "• Бонусы начисляются <b>автоматически</b> в валюте магазина и доступны сразу.\n\n"
+    "В карточке «Рефералы» видно: ссылку, текущую ставку, статистику и последние бонусы."
+)
+
+ABOUT_TEXT = (
+    "<b>О магазине</b>\n\n"
+    "SlovekinzShop — сервис продвижения соцсетей по честной цене.\n"
+    "• Telegram / TikTok / Instagram / YouTube — подписчики, просмотры, лайки и т.д.\n"
+    "• Автосинхронизация каталога, прозрачные цены.\n"
+    "• Пополнение через CryptoBot, мгновённый зачёт на баланс.\n"
+    "• Промокоды: скидка, бонус на баланс, персональная наценка.\n"
+    "• Реферальная программа 10–20%.\n\n"
+    f"Полезно: <a href=\"{html.escape(PUBLIC_CHAT_URL or GROUP_URL or '#')}\">открытый чат</a>, "
+    f"<a href=\"{html.escape(SCHOOL_URL or '#')}\">школа траффика</a>."
+)
 
 # ---------- API helpers ----------
 async def api_fetch_user(user_id: int, autocreate: int = 1) -> Optional[dict]:
+    """Пробуем получить профиль (по возможности создаём)."""
     try:
         r = await _http.get(f"{API_BASE}/user", params={"user_id": user_id, "autocreate": autocreate})
         return r.json() if r.status_code == 200 else None
@@ -89,7 +98,6 @@ async def bind_ref_silently(user_id: int, code: str) -> None:
     except Exception:
         pass
 
-
 # ---------- utils ----------
 def extract_ref_code(text: Optional[str]) -> Optional[str]:
     if not text:
@@ -100,9 +108,9 @@ def extract_ref_code(text: Optional[str]) -> Optional[str]:
     payload = parts[1].strip().lower()
     if not payload.startswith("ref_"):
         return None
-    code = re.sub(r"[^a-z0-9_-]", "", payload[4:])
+    import re as _re
+    code = _re.sub(r"[^a-z0-9_-]", "", payload[4:])
     return code or None
-
 
 # ---------- handlers ----------
 @router.message(CommandStart())
@@ -114,7 +122,7 @@ async def start_cmd(m: Message):
     if code:
         await bind_ref_silently(uid, code)
 
-    # 1) пробуем получить/создать профиль
+    # 1) основной путь — пробуем получить/создать профиль
     u = await api_fetch_user(uid, autocreate=1)
 
     # 2) если профиль есть и ник задан — сразу в меню
@@ -131,17 +139,17 @@ async def start_cmd(m: Message):
         )
         photo = FSInputFile(WELCOME_IMG) if WELCOME_IMG.exists() else None
         if photo:
-            await m.answer_photo(photo, caption=caption, parse_mode=ParseMode.HTML, reply_markup=kb_welcome())
+            await m.answer_photo(photo, caption=caption, reply_markup=kb_welcome())
         else:
-            await m.answer(caption, parse_mode=ParseMode.HTML, reply_markup=kb_welcome())
+            await m.answer(caption, reply_markup=kb_welcome())
         return
 
-    # 4) если API не ответил, но пользователь уже есть — не ломаем UX
+    # 4) запасной путь — API не ответил: проверим exists и не будем ломать UX
     if await api_user_exists(uid):
         await send_main_menu(m)
         return
 
-    # 5) совсем новый пользователь — привет и регистрация
+    # 5) совсем новый пользователь — показываем привет и регистрацию
     caption = (
         "<b>Добро пожаловать в магазин "
         f"<a href=\"{html.escape(GROUP_URL or PUBLIC_CHAT_URL or '#')}\">Slovekiza</a>!</b>\n\n"
@@ -151,16 +159,12 @@ async def start_cmd(m: Message):
     )
     photo = FSInputFile(WELCOME_IMG) if WELCOME_IMG.exists() else None
     if photo:
-        await m.answer_photo(photo, caption=caption, parse_mode=ParseMode.HTML, reply_markup=kb_welcome())
+        await m.answer_photo(photo, caption=caption, reply_markup=kb_welcome())
     else:
-        await m.answer(caption, parse_mode=ParseMode.HTML, reply_markup=kb_welcome())
-
+        await m.answer(caption, reply_markup=kb_welcome())
 
 async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
-    premium = tg_emoji(PREMIUM_EMOJI_ID)  # без фолбэка
-
     text = (
-        f"{premium} "
         f"Привет{',' if nick else ''} <b>{html.escape(nick) if nick else m.from_user.full_name}</b>!\n\n"
         f"Это магазин <a href=\"{html.escape(GROUP_URL or '#')}\">Slovekizna</a>.\n"
         "Продвигайте свои соц.сети, каналы и воронки по лучшим ценам в любое время.\n"
@@ -168,15 +172,30 @@ async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
         f"или ознакомиться с моей <a href=\"{html.escape(SCHOOL_URL or '#')}\">школой траффика</a>."
     )
     photo = FSInputFile(MENU_IMG) if MENU_IMG.exists() else None
-
     if isinstance(m, CallbackQuery):
         if photo:
-            await m.message.answer_photo(photo, caption=text, parse_mode=ParseMode.HTML, reply_markup=kb_main())
+            await m.message.answer_photo(photo, caption=text, reply_markup=kb_main())
         else:
-            await m.message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb_main())
+            await m.message.answer(text, reply_markup=kb_main())
         await m.answer()
     else:
         if photo:
-            await m.answer_photo(photo, caption=text, parse_mode=ParseMode.HTML, reply_markup=kb_main())
+            await m.answer_photo(photo, caption=text, reply_markup=kb_main())
         else:
-            await m.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb_main())
+            await m.answer(text, reply_markup=kb_main())
+
+# ---------- info windows ----------
+@router.callback_query(lambda c: c.data == "menu:refs")
+async def cb_show_refs(c: CallbackQuery):
+    await c.answer()
+    await c.message.answer(REFS_TEXT, reply_markup=kb_back_to_menu(), disable_web_page_preview=True)
+
+@router.callback_query(lambda c: c.data == "menu:about")
+async def cb_show_about(c: CallbackQuery):
+    await c.answer()
+    await c.message.answer(ABOUT_TEXT, reply_markup=kb_back_to_menu(), disable_web_page_preview=True)
+
+@router.callback_query(lambda c: c.data == "menu:home")
+async def cb_back_home(c: CallbackQuery):
+    await c.answer()
+    await send_main_menu(c)
