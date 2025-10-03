@@ -585,88 +585,48 @@ async def promo_admin_create(
         s.refresh(pc)
         return {"ok": True, "id": pc.id, "code": pc.code, "type": pc.type}
 
-    # ===== Admin: users list for broadcast/stats =====
-    class AdminUserOut(BaseModel):
-        tg_id: int
-        seq: int
-        nick: Optional[str] = None
-        balance: float = 0.0
-        currency: str = CURRENCY
-        invited_total: int = 0
-        invited_with_deposit: int = 0
-        deposits_count: int = 0
-        created_at: Optional[int] = None
-        last_seen_at: Optional[int] = None
 
-    @app.get("/api/v1/admin/users")
-    async def admin_users(
-            limit: int = Query(200, ge=1, le=1000),
-            offset: int = Query(0, ge=0),
-            authorization: Optional[str] = Header(None),
-    ):
-        if not ADMIN_TOKEN:
-            raise HTTPException(403, "admin_token_not_set")
-        if not authorization or not authorization.lower().startswith("bearer "):
-            raise HTTPException(401, "missing_bearer")
-        token = authorization.split(" ", 1)[1].strip()
-        if token != ADMIN_TOKEN:
-            raise HTTPException(403, "forbidden")
+# ---- Admin helpers & endpoints ----
+def _require_admin(authorization: Optional[str] = Header(None)) -> None:
+    if not ADMIN_TOKEN:
+        raise HTTPException(403, "admin_token_not_set")
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "missing_bearer")
+    token = authorization.split(" ", 1)[1].strip()
+    if token != ADMIN_TOKEN:
+        raise HTTPException(403, "forbidden")
 
-        with db() as s:
-            total = s.query(func.count(User.id)).scalar() or 0
+@app.get("/api/v1/admin/users")
+async def admin_users(authorization: Optional[str] = Header(None)):
+    """
+    Отдаёт список пользователей для рассылки/статистики.
+    Формат: [{tg_id, seq, nick, balance, currency, orders, topups_total, topups_paid, refs, created_at, last_seen_at}, ...]
+    """
+    _require_admin(authorization)
 
-            users = (
-                s.query(User)
-                .order_by(User.id.desc())
-                .limit(int(limit))
-                .offset(int(offset))
-                .all()
-            )
-            user_ids = [u.id for u in users]
+    with db() as s:
+        users = s.query(User).order_by(User.id.asc()).all()
+        out = []
+        for u in users:
+            orders_cnt = s.query(func.count(Order.id)).filter(Order.user_id == u.id).scalar() or 0
+            topups_total = s.query(func.count(Topup.id)).filter(Topup.user_id == u.id).scalar() or 0
+            topups_paid  = s.query(func.count(Topup.id)).filter(Topup.user_id == u.id, Topup.status == "paid").scalar() or 0
+            refs_cnt     = s.query(func.count(RefBind.id)).filter(RefBind.ref_owner_user_id == u.id).scalar() or 0
 
-            # paid deposits count
-            dep_counts = dict(
-                s.query(Topup.user_id, func.count(Topup.id))
-                .filter(Topup.user_id.in_(user_ids), Topup.status == "paid")
-                .group_by(Topup.user_id)
-                .all()
-            )
-
-            # invited_total
-            invited_total = dict(
-                s.query(RefBind.ref_owner_user_id, func.count(RefBind.id))
-                .filter(RefBind.ref_owner_user_id.in_(user_ids))
-                .group_by(RefBind.ref_owner_user_id)
-                .all()
-            )
-
-            # invited_with_deposit (distinct)
-            sub = (
-                s.query(distinct(Topup.user_id).label("uid"), RefBind.ref_owner_user_id.label("owner"))
-                .join(RefBind, RefBind.user_id == Topup.user_id)
-                .filter(RefBind.ref_owner_user_id.in_(user_ids), Topup.status == "paid")
-                .subquery()
-            )
-            invited_with_dep = dict(
-                s.query(sub.c.owner, func.count(sub.c.uid)).group_by(sub.c.owner).all()
-            )
-
-            items = []
-            for u in users:
-                items.append(AdminUserOut(
-                    tg_id=int(u.tg_id or 0),
-                    seq=int(u.seq or 0),
-                    nick=u.nick,
-                    balance=float(u.balance or 0.0),
-                    currency=u.currency or CURRENCY,
-                    invited_total=int(invited_total.get(u.id, 0)),
-                    invited_with_deposit=int(invited_with_dep.get(u.id, 0)),
-                    deposits_count=int(dep_counts.get(u.id, 0)),
-                    created_at=int(getattr(u, "created_at", 0) or 0) if hasattr(u, "created_at") else None,
-                    last_seen_at=int(getattr(u, "last_seen_at", 0) or 0) if hasattr(u, "last_seen_at") else None,
-                ).model_dump())
-
-            return {"total": int(total), "items": items}
+            out.append({
+                "tg_id": int(u.tg_id or 0),
+                "seq": int(u.seq or 0),
+                "nick": u.nick,
+                "balance": float(u.balance or 0.0),
+                "currency": u.currency or CURRENCY,
+                "orders": int(orders_cnt),
+                "topups_total": int(topups_total),
+                "topups_paid": int(topups_paid),
+                "refs": int(refs_cnt),
+                "created_at": int(getattr(u, "created_at", 0) or 0),
+                "last_seen_at": int(getattr(u, "last_seen_at", 0) or 0),
+            })
+        return out
 
 
 # --- endpoints ---
