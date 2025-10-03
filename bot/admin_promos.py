@@ -1,8 +1,9 @@
+# bot/handlers/admin.py
 # -*- coding: utf-8 -*-
 import os
-import math
 import asyncio
-from typing import Optional, List, Dict, Any
+import datetime as dt
+from typing import Optional, Tuple
 
 import httpx
 from aiogram import Router, types, F
@@ -12,38 +13,45 @@ from aiogram.fsm.context import FSMContext
 
 router = Router(name="admin")
 
-# ===== ENV =====
+# ===== ENV / API =====
 ADMIN_IDS = {
     int(x) for x in (os.getenv("ADMIN_IDS", "").replace(" ", "").split(","))
     if x.isdigit()
 }
-API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8011").rstrip("/")
+API_BASE = (os.getenv("API_BASE", "http://127.0.0.1:8011") or "").rstrip("/")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 
 if not ADMIN_IDS:
     print("[admin] WARNING: ADMIN_IDS is empty – /admin будет недоступна")
 
-# ===== helpers common =====
-def _admin_only(m: types.Message | types.CallbackQuery) -> bool:
-    user = m.from_user if isinstance(m, (types.Message, types.CallbackQuery)) else None
-    return bool(user and user.id in ADMIN_IDS)
-
 def api_url(path: str) -> str:
+    """Собирает URL так, чтобы /api/v1 был ровно один раз."""
     base = API_BASE.rstrip("/")
     p = path.lstrip("/")
     if not base.endswith("/api/v1"):
         p = "api/v1/" + p
     return f"{base}/{p}"
 
-def _auth_headers() -> Dict[str, str]:
-    return {
-        "Authorization": f"Bearer {ADMIN_TOKEN}",
-        "Content-Type": "application/json",
-    }
+# ===== ACCESS =====
+def _admin_only(m: types.Message | types.CallbackQuery) -> bool:
+    user = m.from_user if isinstance(m, (types.Message, types.CallbackQuery)) else None
+    return bool(user and user.id in ADMIN_IDS)
 
-# =========================
-# ====== ПРОМОКОДЫ ========
-# =========================
+# ====== UI ======
+def kb_admin_main() -> types.InlineKeyboardMarkup:
+    kb = [
+        [types.InlineKeyboardButton(text="📣 Рассылка",   callback_data="admin:bc")],
+        [types.InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats")],
+        [types.InlineKeyboardButton(text="🏷 Промокоды",  callback_data="admin:promo")],
+    ]
+    return types.InlineKeyboardMarkup(inline_keyboard=kb)
+
+def kb_back_admin() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:menu")]]
+    )
+
+# ===== Промокоды (взято из твоего файла и слегка отрефакторено) =====
 class PromoWizard(StatesGroup):
     type = State()
     code = State()
@@ -54,7 +62,7 @@ class PromoWizard(StatesGroup):
 def _kb_promo_types():
     kb = [
         [types.InlineKeyboardButton(text="Скидка % (на заказ)", callback_data="promo:discount")],
-        [types.InlineKeyboardButton(text="+Баланс (USD-экв.)", callback_data="promo:balance")],
+        [types.InlineKeyboardButton(text="+Баланс (USD-экв.)",   callback_data="promo:balance")],
         [types.InlineKeyboardButton(text="Наценка (персональная)", callback_data="promo:markup")],
         [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:menu")],
     ]
@@ -67,9 +75,11 @@ async def _create_promo(payload: dict) -> tuple[bool, str]:
         return False, "ADMIN_TOKEN выглядит подозрительно (слишком короткий)"
 
     url = api_url("promo/admin/create")
+    headers = {"Authorization": f"Bearer {ADMIN_TOKEN}", "Content-Type": "application/json"}
+
     try:
         async with httpx.AsyncClient(timeout=20.0) as c:
-            r = await c.post(url, headers=_auth_headers(), json=payload)
+            r = await c.post(url, headers=headers, json=payload)
         try:
             js = r.json()
         except Exception:
@@ -79,21 +89,84 @@ async def _create_promo(payload: dict) -> tuple[bool, str]:
             return True, f"✅ Готово: {js}"
 
         if r.status_code == 403:
-            return False, "❌ 403 Forbidden — проверь ADMIN_TOKEN у бота (и перезапусти)"
+            return False, "❌ 403 Forbidden — проверь ADMIN_TOKEN у бота (и перезапусти бота)"
         if r.status_code == 404:
-            return False, f"❌ 404 Not Found — проверь API_BASE. URL: {url}"
+            return False, f"❌ 404 Not Found — проверь API_BASE и путь. URL: {url}"
 
         return False, f"❌ Ошибка API: {r.status_code} {r.text}"
     except Exception as e:
         return False, f"❌ Сеть/исключение: {e}"
 
-@router.callback_query(F.data == "admin:promos")
-async def open_promos(c: types.CallbackQuery, state: FSMContext):
+# ===== Рассылка =====
+class Broadcast(StatesGroup):
+    waiting_text = State()
+    pick_media    = State()
+    waiting_photo = State()
+    confirm       = State()
+
+def kb_bc_options(has_photo: bool) -> types.InlineKeyboardMarkup:
+    row1 = []
+    if not has_photo:
+        row1.append(types.InlineKeyboardButton(text="🖼 Добавить картинку", callback_data="bc:addphoto"))
+    row1.append(types.InlineKeyboardButton(text="🚫 Не нужно", callback_data="bc:nophoto"))
+    kb = [
+        row1,
+        [
+            types.InlineKeyboardButton(text="✅ Запустить", callback_data="bc:run"),
+            types.InlineKeyboardButton(text="✖ Отмена",    callback_data="bc:cancel"),
+        ],
+        [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:menu")],
+    ]
+    return types.InlineKeyboardMarkup(inline_keyboard=kb)
+
+async def _fetch_admin_users() -> list[dict]:
+    url = api_url("admin/users")
+    headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"} if ADMIN_TOKEN else {}
+    async with httpx.AsyncClient(timeout=30.0) as c:
+        r = await c.get(url, headers=headers)
+        r.raise_for_status()
+        js = r.json()
+        if not isinstance(js, list):
+            return []
+        return js
+
+# ===== Статистика =====
+def _fmt_ts(ts: int | None) -> str:
+    if not ts:
+        return "-"
+    try:
+        return dt.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(ts)
+
+# ================== ENTRY ==================
+@router.message(Command("admin"))
+async def cmd_admin(m: types.Message, state: FSMContext):
+    if not _admin_only(m):
+        return
+    await state.clear()
+    text = (
+        "<b>Админ-панель</b>\n\n"
+        "Выбери раздел:"
+    )
+    await m.answer(text, reply_markup=kb_admin_main())
+
+@router.callback_query(F.data == "admin:menu")
+async def cb_admin_menu(c: types.CallbackQuery, state: FSMContext):
+    if not _admin_only(c):
+        return await c.answer()
+    await state.clear()
+    await c.message.edit_text("<b>Админ-панель</b>\n\nВыбери раздел:", reply_markup=kb_admin_main())
+    await c.answer()
+
+# ====== Промокоды ======
+@router.callback_query(F.data == "admin:promo")
+async def cb_admin_promo(c: types.CallbackQuery, state: FSMContext):
     if not _admin_only(c):
         return await c.answer()
     await state.clear()
     text = (
-        "Админ панель → Промокоды\n\n"
+        "Раздел <b>Промокоды</b>\n\n"
         "• Скидка % — вводится на странице заказа\n"
         "• +Баланс — активируется в профиле, сразу начисляет баланс\n"
         "• Наценка — фиксирует персональную наценку пользователю\n\n"
@@ -110,7 +183,10 @@ async def cb_pick_type(c: types.CallbackQuery, state: FSMContext):
     await state.set_state(PromoWizard.type)
     await state.update_data(type=ptype)
     await state.set_state(PromoWizard.code)
-    await c.message.edit_text(f"Тип: <b>{ptype}</b>\n\nВведи код (пример: <code>WELCOME15</code>)")
+    await c.message.edit_text(
+        f"Тип: <b>{ptype}</b>\n\nВведи код (пример: <code>WELCOME15</code>)",
+        reply_markup=kb_back_admin()
+    )
     await c.answer()
 
 @router.message(PromoWizard.code)
@@ -174,9 +250,7 @@ async def step_max(m: types.Message, state: FSMContext):
     if not _admin_only(m):
         return
     try:
-        max_act = int((m.text or "0").strip())
-        if max_act < 0:
-            raise ValueError
+        max_act = int((m.text or "0").strip());  assert max_act >= 0
     except Exception:
         return await m.reply("Нужно неотрицательное целое. Повтори.")
     await state.update_data(max_activations=max_act)
@@ -188,9 +262,7 @@ async def step_per_user(m: types.Message, state: FSMContext):
     if not _admin_only(m):
         return
     try:
-        per_user = int((m.text or "1").strip())
-        if per_user <= 0:
-            raise ValueError
+        per_user = int((m.text or "1").strip());  assert per_user > 0
     except Exception:
         return await m.reply("Нужно целое ≥ 1. Повтори.")
 
@@ -215,248 +287,172 @@ async def step_per_user(m: types.Message, state: FSMContext):
         payload["markup_value"] = float(value)
 
     ok, msg = await _create_promo(payload)
-    await m.reply(msg, disable_web_page_preview=True)
+    await m.reply(msg, disable_web_page_preview=True, reply_markup=kb_back_admin())
     await state.clear()
 
-# =========================
-# ====== РАССЫЛКА =========
-# =========================
-class BroadcastWizard(StatesGroup):
-    text = State()
-    choose_media = State()
-    photo = State()
-    confirm = State()
-
-def _kb_broadcast_menu():
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="📣 Рассылка", callback_data="admin:broadcast:start")],
-        [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:menu")],
-    ])
-
-def _kb_broadcast_choose():
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🖼 Добавить картинку", callback_data="bc:add_photo")],
-        [types.InlineKeyboardButton(text="🚀 Нет, запуск", callback_data="bc:no_photo")],
-        [types.InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin:menu")],
-    ])
-
-def _kb_broadcast_confirm():
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="✅ Запустить", callback_data="bc:go")],
-        [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:menu")],
-    ])
-
-async def _fetch_all_user_ids() -> List[int]:
-    """
-    Тянем из API список пользователей по страницам.
-    Требуется эндпоинт /api/v1/admin/users (см. ниже в пункте 2).
-    """
-    out: List[int] = []
-    limit = 500
-    offset = 0
-    async with httpx.AsyncClient(timeout=30.0) as c:
-        while True:
-            r = await c.get(api_url("admin/users"), headers=_auth_headers(), params={"limit": limit, "offset": offset})
-            if r.status_code != 200:
-                break
-            js = r.json() or {}
-            items = js.get("items") or []
-            for it in items:
-                uid = int(it.get("tg_id") or 0)
-                if uid > 0:
-                    out.append(uid)
-            total = int(js.get("total") or 0)
-            offset += limit
-            if offset >= total or not items:
-                break
-    return out
-
-@router.callback_query(F.data == "admin:broadcast")
-async def open_broadcast(c: types.CallbackQuery, state: FSMContext):
-    if not _admin_only(c):
-        return await c.answer()
-    await state.clear()
-    await c.message.edit_text(
-        "Админ панель → Рассылка\n\nНажми «Рассылка», затем отправь текст.",
-        reply_markup=_kb_broadcast_menu()
-    )
-    await c.answer()
-
-@router.callback_query(F.data == "admin:broadcast:start")
+# ====== Рассылка ======
+@router.callback_query(F.data == "admin:bc")
 async def bc_start(c: types.CallbackQuery, state: FSMContext):
     if not _admin_only(c):
         return await c.answer()
-    await state.set_state(BroadcastWizard.text)
-    await c.message.edit_text("Отправь текст рассылки одним сообщением (HTML поддерживается).")
+    await state.clear()
+    await state.set_state(Broadcast.waiting_text)
+    await c.message.edit_text(
+        "Отправь <b>текст рассылки</b> одним сообщением (HTML поддерживается).",
+        reply_markup=kb_back_admin()
+    )
     await c.answer()
 
-@router.message(BroadcastWizard.text)
-async def bc_text(m: types.Message, state: FSMContext):
+@router.message(Broadcast.waiting_text)
+async def bc_got_text(m: types.Message, state: FSMContext):
     if not _admin_only(m):
         return
-    text = (m.html_text or m.text or "").strip()
-    if not text:
-        return await m.reply("Пусто. Пришли текст ещё раз.")
+    text = m.html_text or m.text or ""
+    if not text.strip():
+        return await m.reply("Сообщение пустое. Пришли текст ещё раз.")
     await state.update_data(text=text, photo_id=None)
-    await state.set_state(BroadcastWizard.choose_media)
-    await m.reply("Добавить медиа к рассылке?", reply_markup=_kb_broadcast_choose())
+    await state.set_state(Broadcast.pick_media)
+    await m.reply(
+        "Добавить картинку к рассылке?",
+        reply_markup=kb_bc_options(has_photo=False)
+    )
 
-@router.callback_query(F.data == "bc:add_photo")
-async def bc_need_photo(c: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "bc:addphoto")
+async def bc_add_photo(c: types.CallbackQuery, state: FSMContext):
     if not _admin_only(c):
         return await c.answer()
-    await state.set_state(BroadcastWizard.photo)
-    await c.message.edit_text("Пришли фотографию (одно изображение).")
+    await state.set_state(Broadcast.waiting_photo)
+    await c.message.edit_text("Пришли <b>фото</b> одним сообщением (как изображение).", reply_markup=kb_back_admin())
     await c.answer()
 
-@router.message(BroadcastWizard.photo, F.photo)
+@router.message(Broadcast.waiting_photo, F.photo)
 async def bc_got_photo(m: types.Message, state: FSMContext):
     if not _admin_only(m):
         return
     file_id = m.photo[-1].file_id
     await state.update_data(photo_id=file_id)
-    await state.set_state(BroadcastWizard.confirm)
-    await m.reply("Готово. Запускаем?", reply_markup=_kb_broadcast_confirm())
+    await state.set_state(Broadcast.confirm)
+    await m.reply("Фото добавлено. Запускаем?", reply_markup=kb_bc_options(has_photo=True))
 
-@router.callback_query(F.data == "bc:no_photo")
+@router.callback_query(F.data == "bc:nophoto")
 async def bc_no_photo(c: types.CallbackQuery, state: FSMContext):
     if not _admin_only(c):
         return await c.answer()
-    await state.set_state(BroadcastWizard.confirm)
-    await c.message.edit_text("Ок, без медиа. Запускаем?", reply_markup=_kb_broadcast_confirm())
+    data = await state.get_data()
+    if not data.get("text"):
+        await c.answer("Нет текста — пришли текст рассылки.", show_alert=True)
+        return
+    await state.set_state(Broadcast.confirm)
+    await c.message.edit_text("Окей, без картинки. Запускаем?", reply_markup=kb_bc_options(has_photo=False))
     await c.answer()
 
-@router.callback_query(F.data == "bc:go")
-async def bc_go(c: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "bc:cancel")
+async def bc_cancel(c: types.CallbackQuery, state: FSMContext):
+    if not _admin_only(c):
+        return await c.answer()
+    await state.clear()
+    await c.message.edit_text("Рассылка отменена.", reply_markup=kb_back_admin())
+    await c.answer()
+
+@router.callback_query(F.data == "bc:run")
+async def bc_run(c: types.CallbackQuery, state: FSMContext):
     if not _admin_only(c):
         return await c.answer()
     data = await state.get_data()
-    text = data.get("text") or ""
+    text = (data.get("text") or "").strip()
     photo_id = data.get("photo_id")
+    if not text:
+        await c.answer("Сначала пришли текст.", show_alert=True)
+        return
 
-    users = await _fetch_all_user_ids()
+    # подтянем список пользователей
+    try:
+        users = await _fetch_admin_users()
+    except Exception as e:
+        await c.message.edit_text(f"Не удалось получить список пользователей: {e}", reply_markup=kb_back_admin())
+        return await c.answer()
+
     total = len(users)
     if total == 0:
-        await c.message.edit_text("Похоже, база пуста (эндпоинт admin/users вернул 0).")
+        await c.message.edit_text("Похоже, база пуста (эндпоинт admin/users вернул 0).", reply_markup=kb_back_admin())
         return await c.answer()
 
-    ok = 0
-    fail = 0
+    await c.message.edit_text(f"Запускаю рассылку по {total} пользователям…")
 
-    await c.message.edit_text(f"Старт рассылки: {total} пользователей…")
+    sent = 0
+    failed = 0
+    bot = c.bot
 
-    # Внимание: у Telegram есть лимиты. Отправляем «пакетами», но без искусственного КД.
-    for uid in users:
+    for u in users:
+        uid = u.get("tg_id")
+        if not uid:
+            failed += 1
+            continue
         try:
             if photo_id:
-                await c.bot.send_photo(uid, photo=photo_id, caption=text, parse_mode="HTML")
+                await bot.send_photo(uid, photo_id, caption=text, parse_mode="HTML")
             else:
-                await c.bot.send_message(uid, text, parse_mode="HTML", disable_web_page_preview=True)
-            ok += 1
+                await bot.send_message(uid, text, parse_mode="HTML", disable_web_page_preview=True)
+            sent += 1
         except Exception:
-            fail += 1
+            failed += 1
+        # без кд, как просил; если захочешь щадящий режим — раскомментируй:
+        # await asyncio.sleep(0.03)
 
-    await state.clear()
-    await c.message.edit_text(f"Готово.\nУспешно: {ok}\nОшибок: {fail}")
-    await c.answer()
-
-# =========================
-# ====== СТАТИСТИКА ======
-# =========================
-class StatsWizard(StatesGroup):
-    user_id = State()
-
-def _kb_stats():
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🔎 Посмотреть пользователя", callback_data="stats:request")],
-        [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:menu")],
-    ])
-
-@router.callback_query(F.data == "admin:stats")
-async def open_stats(c: types.CallbackQuery, state: FSMContext):
-    if not _admin_only(c):
-        return await c.answer()
     await state.clear()
     await c.message.edit_text(
-        "Админ панель → Статистика\n\nНажми «Посмотреть пользователя», затем отправь TG ID (или seq).",
-        reply_markup=_kb_stats()
+        f"Рассылка завершена.\n\n"
+        f"✅ Успешно: <b>{sent}</b>\n"
+        f"❌ Ошибок: <b>{failed}</b>\n"
+        f"📬 Всего: <b>{total}</b>",
+        reply_markup=kb_back_admin()
     )
     await c.answer()
 
-@router.callback_query(F.data == "stats:request")
-async def stats_request(c: types.CallbackQuery, state: FSMContext):
+# ====== Статистика ======
+@router.callback_query(F.data == "admin:stats")
+async def admin_stats(c: types.CallbackQuery, state: FSMContext):
     if not _admin_only(c):
         return await c.answer()
-    await state.set_state(StatsWizard.user_id)
-    await c.message.edit_text("Пришли <b>TG ID</b> (или seq) пользователя. Автосоздания не будет.")
-    await c.answer()
-
-async def _api_get(path: str, params: dict | None = None) -> Optional[dict]:
     try:
-        async with httpx.AsyncClient(timeout=20.0) as c:
-            r = await c.get(api_url(path), params=params)
-        return r.json() if r.status_code == 200 else None
-    except Exception:
-        return None
+        users = await _fetch_admin_users()
+    except Exception as e:
+        await c.message.edit_text(f"Не удалось получить пользователей: {e}", reply_markup=kb_back_admin())
+        return await c.answer()
 
-@router.message(StatsWizard.user_id)
-async def stats_user(m: types.Message, state: FSMContext):
-    if not _admin_only(m):
-        return
-    try:
-        uid = int((m.text or "").strip())
-    except Exception:
-        return await m.reply("Нужно число — TG ID или seq.")
+    total = len(users)
+    with_nick = sum(1 for x in users if x.get("nick"))
+    paid_topups_users = sum(1 for x in users if int(x.get("topups_paid") or 0) > 0)
+    orders_users = sum(1 for x in users if int(x.get("orders") or 0) > 0)
 
-    # профиль
-    u = await _api_get("user", {"user_id": uid, "autocreate": 0})
-    if not u:
-        return await m.reply("Не найден (или API недоступно).")
-
-    # реф. статистика
-    ref = await _api_get("referrals/stats", {"user_id": uid}) or {}
-    # платежи — считаем оплаченные депозиты
-    pays = await _api_get("payments", {"user_id": uid, "status": "completed"}) or []
-    deposits = [p for p in pays if (p.get("method") != "ref" and p.get("status") == "completed")]
-    dep_cnt = len(deposits)
-    dep_sum = sum(float(p.get("amount_usd") or 0.0) for p in deposits)
-
-    text = (
-        "<b>Карточка пользователя</b>\n"
-        "────────────────────\n"
-        f"TG ID / seq: <code>{uid}</code> / <code>{u.get('seq')}</code>\n"
-        f"Ник: <b>{u.get('nick') or '—'}</b>\n"
-        f"Баланс: <b>{u.get('balance')} {u.get('currency')}</b>\n"
-        f"Депозитов (paid): <b>{dep_cnt}</b> на <b>{round(dep_sum, 2)} USD</b>\n"
-        f"Рефералов всего: <b>{ref.get('invited_total', 0)}</b>\n"
-        f"Рефералов с депозитом: <b>{ref.get('invited_with_deposit', 0)}</b>\n"
-        f"Текущая ставка: <b>{ref.get('rate_percent', 10)}%</b>\n"
-        f"Сумма реф. бонусов: <b>{ref.get('earned_total', 0)} {ref.get('earned_currency', u.get('currency'))}</b>\n"
+    head = (
+        f"<b>Статистика</b>\n"
+        f"Всего пользователей: <b>{total}</b>\n"
+        f"С ником: <b>{with_nick}</b>\n"
+        f"Депозиты (≥1): <b>{paid_topups_users}</b>\n"
+        f"Заказы (≥1): <b>{orders_users}</b>\n\n"
+        f"Последние 20 пользователей:\n"
+        "<code>tg_id      | nick         | bal   | cur | orders | topups_paid | refs | last_seen</code>\n"
     )
-    await m.reply(text, disable_web_page_preview=True)
-    await state.clear()
 
-# =========================
-# ====== МЕНЮ /admin ======
-# =========================
-def _kb_admin_menu():
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🎟 Промокоды", callback_data="admin:promos")],
-        [types.InlineKeyboardButton(text="📣 Рассылка",  callback_data="admin:broadcast")],
-        [types.InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats")],
-    ])
+    # отсортируем по last_seen_at убыв.
+    users_sorted = sorted(users, key=lambda x: int(x.get("last_seen_at") or 0), reverse=True)[:20]
+    lines = []
+    for u in users_sorted:
+        line = (
+            f"<code>"
+            f"{str(u.get('tg_id')).ljust(10)}| "
+            f"{(u.get('nick') or '-').ljust(12)[:12]} | "
+            f"{str(round(float(u.get('balance') or 0.0), 2)).rjust(6)} | "
+            f"{(u.get('currency') or 'RUB')[:3].ljust(3)} | "
+            f"{str(u.get('orders') or 0).rjust(6)} | "
+            f"{str(u.get('topups_paid') or 0).rjust(11)} | "
+            f"{str(u.get('refs') or 0).rjust(4)} | "
+            f"{_fmt_ts(u.get('last_seen_at'))}"
+            f"</code>"
+        )
+        lines.append(line)
 
-@router.message(Command("admin"))
-async def cmd_admin(m: types.Message, state: FSMContext):
-    if not _admin_only(m):
-        return
-    await state.clear()
-    await m.answer("Админ панель", reply_markup=_kb_admin_menu())
-
-@router.callback_query(F.data == "admin:menu")
-async def back_to_menu(c: types.CallbackQuery, state: FSMContext):
-    if not _admin_only(c):
-        return await c.answer()
-    await state.clear()
-    await c.message.edit_text("Админ панель", reply_markup=_kb_admin_menu())
+    text = head + ("\n".join(lines) if lines else "— нет данных —")
+    await c.message.edit_text(text, reply_markup=kb_back_admin(), disable_web_page_preview=True)
     await c.answer()
