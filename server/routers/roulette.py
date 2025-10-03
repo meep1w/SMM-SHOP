@@ -95,7 +95,7 @@ def _get_user_locked(s, user_id: int) -> User:
 # ===== Схемы =====
 class SpinRequest(BaseModel):
     user_id: int
-    # Игнорируем входящее значение стоимости — цена фиксирована сервером
+    # Игнорируем входящую стоимость — цена фиксирована сервером
     cost_rub: Decimal | None = None
 
 class SpinResponse(BaseModel):
@@ -109,7 +109,7 @@ class SpinResponse(BaseModel):
 class AutoSpinRequest(BaseModel):
     user_id: int
     count: int = Field(25, ge=1, le=AUTOSPIN_MAX)
-    # Игнорируем входящую стоимость, чтобы не было манипуляций
+    # Игнорируем входящую стоимость
     cost_rub: Decimal | None = None
 
 class AutoSpinResponse(BaseModel):
@@ -150,9 +150,7 @@ async def roulette_config() -> ConfigResponse:
 
 @router.post("/roulette/spin", response_model=SpinResponse)
 async def roulette_spin(payload: SpinRequest) -> SpinResponse:
-    # Цена за спин — всегда фикс из константы
-    cost = MIN_COST_RUB
-
+    cost = MIN_COST_RUB  # фикс
     win_val, win_idx = _weighted_choice(VALUES, WEIGHTS)
 
     s = SessionLocal()
@@ -160,7 +158,6 @@ async def roulette_spin(payload: SpinRequest) -> SpinResponse:
         try:
             u = _get_user_locked(s, payload.user_id)
         except Exception:
-            # фолбэк для sqlite (без блокировки)
             u = (
                 s.query(User)
                 .filter((User.tg_id == payload.user_id) | (User.seq == payload.user_id))
@@ -203,7 +200,6 @@ async def roulette_autospin(payload: AutoSpinRequest) -> AutoSpinResponse:
     if count < 1 or count > AUTOSPIN_MAX:
         raise HTTPException(400, f"count_must_be_1..{AUTOSPIN_MAX}")
 
-    # фиксированная цена
     cost = MIN_COST_RUB
     total_cost = money(cost * count)
 
@@ -228,10 +224,10 @@ async def roulette_autospin(payload: AutoSpinRequest) -> AutoSpinResponse:
         # 1) Списание всей суммы сразу (предоплата)
         bal_after_charge = money(bal_before - total_cost)
 
-        # 2) Генерируем список выигрышей (план)
+        # 2) План выигрышей
         wins: List[int] = [int(_weighted_choice(VALUES, WEIGHTS)[0]) for _ in range(count)]
 
-        # 3) Баланс пока НЕ пополняем на сумму выигрышей — это будет по одному спину через /autospin/next
+        # 3) Баланс пока не пополняем — начисляем по одному спину в /autospin/next
         u.balance = float(bal_after_charge)
         if hasattr(u, "last_seen_at"):
             u.last_seen_at = now_ts()
@@ -239,11 +235,7 @@ async def roulette_autospin(payload: AutoSpinRequest) -> AutoSpinResponse:
 
         # 4) Регистрируем сессию
         sess_id = secrets.token_urlsafe(10)
-        _save_session(sess_id, {
-            "user_id": int(payload.user_id),
-            "wins": wins,
-            "idx": 0,  # следующий к выдаче
-        })
+        _save_session(sess_id, {"user_id": int(payload.user_id), "wins": wins, "idx": 0})
 
         return AutoSpinResponse(
             ok=True,
@@ -280,7 +272,6 @@ async def roulette_autospin_next(payload: AutoSpinNextRequest) -> AutoSpinNextRe
     sess["idx"] = idx + 1
     _save_session(payload.session_id, sess)
 
-    # Начисляем выигрыш за ЭТОТ спин
     s = SessionLocal()
     try:
         try:
