@@ -139,9 +139,9 @@ async def start_cmd(m: Message):
 
 async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
     text = (
-        f"Привет{',' if nick else ''} <b>{html.escape(nick) if nick else m.from_user.full_name}</b>!\n"
+        f"Привет{',' if nick else ''} <b>{html.escape(nick) if nick else m.from_user.full_name}</b>!\n\n"
         f"Это магазин <a href=\"{html.escape(GROUP_URL or '#')}\">Slovekizna</a>.\n"
-        "Продвигайте свои соц.сети, каналы и воронки по лучшим ценам — в любое время.\n\n"
+        "Продвигайте свои соц.сети, каналы и воронки по лучшим ценам в любое время.\n"
         f"Можете посетить мой <a href=\"{html.escape(PUBLIC_CHAT_URL or GROUP_URL or '#')}\">открытый чат</a> "
         f"или ознакомиться с моей <a href=\"{html.escape(SCHOOL_URL or '#')}\">школой траффика</a>."
     )
