@@ -684,26 +684,34 @@
     return minIdx; // fallback
   }
   function animateToIndex(targetIdx, duration, done){
-    const s = rouletteState.strip;
-    const y = - (targetIdx * rouletteState.cardStep - rouletteState.centerOffset);
+  const s = rouletteState.strip;
+  const y = -(targetIdx * rouletteState.cardStep - rouletteState.centerOffset);
+  s.style.transition = `transform ${duration}ms cubic-bezier(.15,.9,.25,1)`;
+  requestAnimationFrame(()=>{ s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`; });
 
-    s.style.transition = `transform ${duration}ms cubic-bezier(.15,.9,.25,1)`;
-    requestAnimationFrame(()=> {
-      s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`;
-    });
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(fallback);
+    s.removeEventListener('transitionend', onEnd);
+    s.style.transition = '';
+    rouletteState.currentIndex = targetIdx;
+    rouletteState.spinning = false;
+    document.getElementById('rbSpin')?.removeAttribute('disabled');
+    done && done();
+  };
 
-    const onEnd = () => {
-      s.removeEventListener('transitionend', onEnd);
-      s.style.transition = '';
-      rouletteState.currentIndex = targetIdx;
-      rouletteState.spinning = false;
-      const btn = document.getElementById('rbSpin'); if (btn) btn.disabled = false;
-      done && done();
-    };
-    s.addEventListener('transitionend', onEnd);
-    // страховка от пропуска события
-    setTimeout(onEnd, duration + 120);
-  }
+  const onEnd = (e) => {
+    if (e && e.target !== s) return;
+    if (e && e.propertyName && e.propertyName !== 'transform') return;
+    finish();
+  };
+
+  const fallback = setTimeout(finish, duration + 300);
+  s.addEventListener('transitionend', onEnd, { once: true });
+}
+
 
   function updateRouletteBar() { setBalanceUI(lastBalance); }
 
