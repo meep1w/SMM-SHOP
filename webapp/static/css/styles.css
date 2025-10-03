@@ -416,7 +416,7 @@ body{
 .modal{position:fixed; inset:0; display:none}
 .modal[aria-hidden="false"]{display:block}
 .modal-backdrop{position:absolute; inset:0; background:rgba(0,0,0,.5)}
-.modal-card{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(520px,92vw); border-radius:16px; box-shadow:var(--shadow);}
+.modal-card{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(520px,92vw); background:linear-gradient(180deg,#16191e,#12151a); border:1px solid var(--stroke); border-radius:16px; box-shadow:var(--shadow); padding:16px;}
 .modal-card h3{margin:0 0 12px}
 .modal-row{display:flex; flex-direction:column; gap:6px; margin-bottom:10px}
 .modal-row input{background:var(--elev); border:1px solid var(--stroke); color:var(--text); border-radius:10px; padding:10px}
