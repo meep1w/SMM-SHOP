@@ -360,11 +360,15 @@ def _ensure_ref_link(s: Session, u: User) -> RefLink:
 
 
 def _current_rate_for_owner(s: Session, owner_user_id: int) -> float:
-    # сколько рефералов с депозитом у владельца
+    # сколько рефералов с депозитом у владельца (исключаем промо-пополнения)
     sub = (
         s.query(distinct(Topup.user_id))
         .join(RefBind, RefBind.user_id == Topup.user_id)
-        .filter(RefBind.ref_owner_user_id == owner_user_id, Topup.status == "paid")
+        .filter(
+            RefBind.ref_owner_user_id == owner_user_id,
+            Topup.status == "paid",
+            Topup.provider != "promo",   # ⬅️ исключили промо
+        )
         .subquery()
     )
     cnt = s.query(func.count()).select_from(sub).scalar() or 0
@@ -768,10 +772,15 @@ async def api_referrals_stats(user_id: int = Query(...)):
         invited_total = s.query(func.count(RefBind.id)).filter(RefBind.ref_owner_user_id == u.id).scalar() or 0
 
         # рефералов с депозитом (distinct по user_id в paid topups)
+        # рефералов с депозитом (distinct по user_id в paid topups), промо не считаем
         sub = (
             s.query(distinct(Topup.user_id))
             .join(RefBind, RefBind.user_id == Topup.user_id)
-            .filter(RefBind.ref_owner_user_id == u.id, Topup.status == "paid")
+            .filter(
+                RefBind.ref_owner_user_id == u.id,
+                Topup.status == "paid",
+                Topup.provider != "promo",  # ⬅️ исключили промо
+            )
             .subquery()
         )
         invited_with_deposit = s.query(func.count()).select_from(sub).scalar() or 0
