@@ -16,6 +16,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 import httpx
+from time import time
 
 from bot.config import (
     API_BASE,
@@ -27,14 +28,20 @@ from bot.config import (
     WELCOME_IMG,
     MENU_IMG,
 )
-from time import time
 
 router = Router()
 _http = httpx.AsyncClient(timeout=15.0)
 
-# --- Premium emoji (custom_emoji_id) ---
-# Подставь свой ID при желании
-PREMIUM_EMOJI_ID = "5474185790143623422"  # 👑 как фолбэк внутри тега
+# ===== Premium emoji =====
+# Твой ID премиум-эмодзи (из бота-логгера)
+PREMIUM_EMOJI_ID = "5474185790143623422"
+
+def tg_emoji(emoji_id: str, fallback: str = "") -> str:
+    """
+    Формирует HTML-тег кастомного эмодзи.
+    fallback оставляем пустым, чтобы не показывалась «корона», если ID не подтянулся.
+    """
+    return f'<tg-emoji emoji-id="{html.escape(str(emoji_id))}">{fallback}</tg-emoji>'
 
 
 # ---------- UI ----------
@@ -43,12 +50,10 @@ def kb_welcome() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Зарегистрироваться", callback_data="reg:start")]
     ])
 
-
 def kb_main() -> InlineKeyboardMarkup:
-    # уникальные параметры, чтобы не кэшировалось в клиенте
-    force_ver = int(time())
-    open_url = f"{WEBAPP_URL}?v={force_ver}"
-    roulette_url = f"{WEBAPP_URL}?p=roulette&v={force_ver}"  # сразу на экран рулетки
+    force_ver = int(time())  # чтобы не кэшировалось
+    open_url     = f"{WEBAPP_URL}?v={force_ver}"
+    roulette_url = f"{WEBAPP_URL}?p=roulette&v={force_ver}"  # сразу на рулетку
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛍 Открыть магазин", web_app=WebAppInfo(url=open_url))],
@@ -65,13 +70,11 @@ def kb_main() -> InlineKeyboardMarkup:
 
 # ---------- API helpers ----------
 async def api_fetch_user(user_id: int, autocreate: int = 1) -> Optional[dict]:
-    """Пробуем получить профиль (по возможности создаём)."""
     try:
         r = await _http.get(f"{API_BASE}/user", params={"user_id": user_id, "autocreate": autocreate})
         return r.json() if r.status_code == 200 else None
     except Exception:
         return None
-
 
 async def api_user_exists(user_id: int) -> bool:
     try:
@@ -79,7 +82,6 @@ async def api_user_exists(user_id: int) -> bool:
         return bool(r.status_code == 200 and r.json().get("exists"))
     except Exception:
         return False
-
 
 async def bind_ref_silently(user_id: int, code: str) -> None:
     try:
@@ -112,7 +114,7 @@ async def start_cmd(m: Message):
     if code:
         await bind_ref_silently(uid, code)
 
-    # 1) основной путь — пробуем получить/создать профиль
+    # 1) пробуем получить/создать профиль
     u = await api_fetch_user(uid, autocreate=1)
 
     # 2) если профиль есть и ник задан — сразу в меню
@@ -134,12 +136,12 @@ async def start_cmd(m: Message):
             await m.answer(caption, parse_mode=ParseMode.HTML, reply_markup=kb_welcome())
         return
 
-    # 4) запасной путь — API не ответил: проверим exists и не будем ломать UX
+    # 4) если API не ответил, но пользователь уже есть — не ломаем UX
     if await api_user_exists(uid):
         await send_main_menu(m)
         return
 
-    # 5) совсем новый пользователь — показываем привет и регистрацию
+    # 5) совсем новый пользователь — привет и регистрация
     caption = (
         "<b>Добро пожаловать в магазин "
         f"<a href=\"{html.escape(GROUP_URL or PUBLIC_CHAT_URL or '#')}\">Slovekiza</a>!</b>\n\n"
@@ -155,11 +157,10 @@ async def start_cmd(m: Message):
 
 
 async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
-    # Премиум-эмодзи перед "Привет"
-    premium_emoji = f'<tg-emoji emoji-id="{PREMIUM_EMOJI_ID}"></tg-emoji>'
+    premium = tg_emoji(PREMIUM_EMOJI_ID)  # без фолбэка
 
     text = (
-        f"{premium_emoji} "
+        f"{premium} "
         f"Привет{',' if nick else ''} <b>{html.escape(nick) if nick else m.from_user.full_name}</b>!\n\n"
         f"Это магазин <a href=\"{html.escape(GROUP_URL or '#')}\">Slovekizna</a>.\n"
         "Продвигайте свои соц.сети, каналы и воронки по лучшим ценам в любое время.\n"
