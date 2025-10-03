@@ -156,7 +156,7 @@ async def start_cmd(m: Message):
 
 async def send_main_menu(m: Message | CallbackQuery, nick: str | None = None):
     # Премиум-эмодзи перед "Привет"
-    premium_emoji = f'<tg-emoji emoji-id="{PREMIUM_EMOJI_ID}">👑</tg-emoji>'
+    premium_emoji = f'<tg-emoji emoji-id="{PREMIUM_EMOJI_ID}">🔞</tg-emoji>'
 
     text = (
         f"{premium_emoji} "
