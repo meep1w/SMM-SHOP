@@ -147,8 +147,21 @@
     m.querySelector('.modal-backdrop').addEventListener('click', closeModal);
     return m;
   }
-  function openModal(html){ const m = ensureModal(); m.querySelector('.modal-content').innerHTML = html; m.setAttribute('aria-hidden','false'); }
-  function closeModal(){ const m = document.getElementById('appModal'); if (m) m.setAttribute('aria-hidden','true'); }
+  function openModal(html){
+  const m = ensureModal();
+  const card = m.querySelector('.modal-card');
+  card.classList.remove('modal-card--plain');   // по умолчанию обычная модалка
+  m.querySelector('.modal-content').innerHTML = html;
+  m.setAttribute('aria-hidden','false');
+}
+
+function closeModal(){
+  const m = document.getElementById('appModal');
+  if (!m) return;
+  m.setAttribute('aria-hidden','true');
+  m.querySelector('.modal-card')?.classList.remove('modal-card--plain'); // очистка
+}
+
 
   // ====== Topup overlay ======
   function ensureOverlay(){
@@ -507,6 +520,14 @@
         border:0; border-radius:16px; padding:14px 16px; font-weight:800; cursor:pointer; text-align:center;
         background:linear-gradient(180deg,#ff6b6b,#ff4242); color:#fff;
       }
+      /* Плоская модалка: фон/рамка/тень убраны только когда добавлен класс */
+#appModal .modal-card.modal-card--plain{
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
     `;
     document.head.appendChild(st);
   }
@@ -787,6 +808,8 @@
       </div>
     `);
 
+    const modal = ensureModal();
+    modal.querySelector('.modal-card')?.classList.add('modal-card--plain');
     const inp = document.getElementById('asCount');
     const sld = document.getElementById('asSlider');
     const btnMax = document.getElementById('asMax');
