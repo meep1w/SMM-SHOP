@@ -588,15 +588,19 @@ async def ping():
     return {"ok": True}
 
 
-# Проверка наличия пользователя (без автосоздания)
+# Проверка наличия пользователя (ищем по tg_id ИЛИ по seq)
 @app.get("/api/v1/user/exists")
 async def api_user_exists(user_id: int = Query(...)):
     with db() as s:
-        exists = s.query(User.id).filter(User.tg_id == user_id).first() is not None
+        exists = (
+            s.query(User.id).filter(User.tg_id == user_id).first()
+            or s.query(User.id).filter(User.seq == user_id).first()
+        ) is not None
         return {"exists": exists}
 
 
-# Профиль: можно выключить автосоздание
+
+# Профиль: робастный поиск tg_id -> seq + склейка, чтобы не было «Гость»
 @app.get("/api/v1/user", response_model=UserOut)
 async def api_user(
     user_id: int = Query(...),
@@ -605,22 +609,42 @@ async def api_user(
     autocreate: int = 1,  # 1 — как раньше; 0 — без создания (вернёт 404)
 ):
     with db() as s:
-        # robust lookup: tg_id -> seq
+        # 1) пробуем по tg_id
         u = (
             s.query(User)
             .filter(User.tg_id == user_id)
             .order_by(User.id.desc())
             .first()
         )
+
+        # 2) если не нашли — ищем по seq и привязываем к tg_id
+        if not u:
+            by_seq = (
+                s.query(User)
+                .filter(User.seq == user_id)
+                .order_by(User.id.desc())
+                .first()
+            )
+            if by_seq:
+                # если записи с таким tg_id ещё нет — привязываем
+                dupl = s.query(User.id).filter(User.tg_id == user_id).first()
+                if not dupl:
+                    by_seq.tg_id = user_id
+                    s.commit()
+                u = by_seq
+
+        # 3) если всё ещё нет — создаём (или 404 при autocreate=0)
         if not u:
             if not autocreate:
                 raise HTTPException(404, "user_not_found")
             u = ensure_user(s, user_id, nick=nick)
         else:
+            # проставим ник, если пусто
             if nick and not u.nick:
                 u.nick = nick
                 s.commit()
 
+        # ===== ваша логика consume_topup без изменений =====
         delta = 0.0
         if consume_topup:
             pays = (
@@ -629,7 +653,6 @@ async def api_user(
                 .all()
             )
             if pays:
-                # курс для конвертации в валюту магазина
                 fx = await fx_usd_rub()
                 for t in pays:
                     usd = float(t.amount_usd or 0.0)
@@ -639,7 +662,6 @@ async def api_user(
                     t.applied = True
                     u.balance = float(u.balance or 0.0) + add
 
-                    # реферальная награда (если есть привязка)
                     rb = s.query(RefBind).filter(RefBind.user_id == u.id).one_or_none()
                     if rb:
                         owner = s.get(User, rb.ref_owner_user_id)
@@ -647,8 +669,6 @@ async def api_user(
                             rate = _current_rate_for_owner(s, owner.id)
                             reward_amount = usd if CURRENCY == "USD" else (usd * fx)
                             reward_amount = round(reward_amount * rate, 2)
-
-                            # защита от дублей на тот же topup
                             exists = s.query(RefReward.id).filter(RefReward.topup_id == t.id).first()
                             if not exists and reward_amount > 0:
                                 owner.balance = float(owner.balance or 0.0) + reward_amount
@@ -673,7 +693,6 @@ async def api_user(
             topup_currency="USD",
             markup=float(u.markup_override) if u.markup_override else None,
         )
-
 
 # Регистрация (ник должен быть уникальным)
 @app.post("/api/v1/register")
