@@ -7,10 +7,9 @@
  * - Рефералка (линк, прогресс, статы)
  * - Детализация (Заказы / Платежи)
  * - Скрытие таббара при открытой клавиатуре
- * - Отмена заказа с частичным/полным возвратом
  */
 (function () {
-  console.log('app.js ready (per-spin charge + autospin sequential + cancel + live repricing)');
+  console.log('app.js ready (per-spin charge + autospin sequential)');
 
   // ====== Telegram WebApp ======
   const tg = window.Telegram?.WebApp || null;
@@ -31,7 +30,7 @@
   } catch (_) {}
 
   // Версия (для кэша картинок)
-  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-04';
+  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-06';
 
   // Добавляем ?v=... на <img src="static/...">, где ещё нет
   (function bumpStaticImages() {
@@ -50,11 +49,6 @@
 
   const API_BASE = "/api/v1";
 
-  // ===== Глобальные трекеры текущей услуги (для переприсовки после промо/приватки) =====
-  window.__CUR_SERVICE_ID__   = null;
-  window.__CUR_SERVICE_NET__  = null;
-  window.__CUR_SVC_CONTEXT__  = { qty:null, link:"" };
-
   // ===== Roulette config/state =====
   const ROULETTE = {
     VALUES:  [0,2,4,5,6,8,10,12,15,20,30,40,60,100],
@@ -68,7 +62,7 @@
     strip: null,
     wheel: null,
     centerOffset: 0,
-    cardStep: 0,
+    cardStep: 0,   // шаг по вертикали (высота билета + gap)
     indexBase: 0,
     currentIndex: 0
   };
@@ -88,7 +82,7 @@
     favs:     document.getElementById("page-favs"),
     refs:     document.getElementById("page-refs"),
     details:  document.getElementById("page-details"),
-    profile:  null,
+    profile:  null, // создадим динамически
   };
 
   const catsListEl       = document.getElementById("catsList");
@@ -156,7 +150,7 @@
   function openModal(html){
     const m = ensureModal();
     const card = m.querySelector('.modal-card');
-    card.classList.remove('modal-card--plain');
+    card.classList.remove('modal-card--plain');   // по умолчанию обычная
     m.querySelector('.modal-content').innerHTML = html;
     m.setAttribute('aria-hidden','false');
   }
@@ -324,38 +318,15 @@
       if (ps) ps.textContent = `#${seq}`;
       if (pb) pb.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
       if (pm) {
-        const hasPersonal = (typeof userMarkup === 'number') && (userMarkup > 0.01);
+        const hasPersonal = Number.isFinite(userMarkup) && userMarkup > 0.01;
         pm.textContent = hasPersonal ? 'Приватка' : 'По умолчанию';
-        pm.title = '';
-      }
+        pm.removeAttribute('title'); // чтобы нигде не всплывали числа
+    }
+
     }
     try {
       if (document.getElementById('page-roulette')) updateRouletteBar();
     } catch (_) {}
-  }
-
-  // --- после изменения персональной наценки — перезагрузить текущую услугу и перерисовать страницу
-  async function refreshAfterMarkupChange(){
-    const sid = Number(window.__CUR_SERVICE_ID__ || 0);
-    const net = String(window.__CUR_SERVICE_NET__ || '');
-    if (!sid || !net) return;
-
-    // подгрузим актуальные цены сети для пользователя
-    try {
-      const uid = userId || seq;
-      const r = await fetch(bust(`${API_BASE}/services/${encodeURIComponent(net)}?user_id=${encodeURIComponent(uid)}`));
-      if (!r.ok) throw 0;
-      const arr = await r.json();
-      if (Array.isArray(arr)) {
-        servicesAll = arr.slice(); // обновим общий кэш
-        const svc = arr.find(x => Number(x.service) === sid);
-        if (svc) {
-          // сохраним текущий контекст (qty/link), если был
-          const ctx = window.__CUR_SVC_CONTEXT__ || {};
-          openServicePage(svc, { qty: ctx.qty || undefined, link: ctx.link || '' });
-        }
-      }
-    } catch(_){}
   }
 
   async function onProfilePromoApply(){
@@ -377,7 +348,6 @@
         userMarkup = Number(js.markup || userMarkup);
         alert('Персональная наценка обновлена!');
         await fetchProfile();
-        await refreshAfterMarkupChange(); // ⬅️ перерисуем текущую услугу
       } else if (js.kind === 'balance'){
         alert(`Начисление по промокоду: +${js.added} ${js.currency || ''}`);
         await fetchProfile();
@@ -446,9 +416,9 @@
 
       /* ===== рулетка: фикс-высота и фикс-размер билетов ===== */
       #page-roulette{
-        --wheel-h: 520px;
-        --ticket-h: 150px;
-        --ticket-gap: 18px;
+        --wheel-h: 520px;      /* фиксированная высота поля */
+        --ticket-h: 150px;     /* фиксированная высота билета */
+        --ticket-gap: 18px;    /* вертикальный зазор между билетами */
       }
 
       #page-roulette .wheel-pad{
@@ -635,7 +605,7 @@
     }
   }
 
-  // ===== ИНИЦИАЛИЗАЦИЯ РУЛЕТКИ =====
+  // ===== ИНИЦИАЛИЗАЦИЯ РУЛЕТКИ (фикс-геометрия + базовый индекс) =====
   function initRouletteUI(root){
     const wheel = root.querySelector('#rouletteWheel');
     const strip = root.querySelector('#rouletteStrip');
@@ -716,33 +686,33 @@
     return minIdx; // fallback
   }
   function animateToIndex(targetIdx, duration, done){
-    const s = rouletteState.strip;
-    const y = -(targetIdx * rouletteState.cardStep - rouletteState.centerOffset);
-    s.style.transition = `transform ${duration}ms cubic-bezier(.15,.9,.25,1)`;
-    requestAnimationFrame(()=>{ s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`; });
+  const s = rouletteState.strip;
+  const y = -(targetIdx * rouletteState.cardStep - rouletteState.centerOffset);
+  s.style.transition = `transform ${duration}ms cubic-bezier(.15,.9,.25,1)`;
+  requestAnimationFrame(()=>{ s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`; });
 
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(fallback);
-      s.removeEventListener('transitionend', onEnd);
-      s.style.transition = '';
-      rouletteState.currentIndex = targetIdx;
-      rouletteState.spinning = false;
-      document.getElementById('rbSpin')?.removeAttribute('disabled');
-      done && done();
-    };
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(fallback);
+    s.removeEventListener('transitionend', onEnd);
+    s.style.transition = '';
+    rouletteState.currentIndex = targetIdx;
+    rouletteState.spinning = false;
+    document.getElementById('rbSpin')?.removeAttribute('disabled');
+    done && done();
+  };
 
-    const onEnd = (e) => {
-      if (e && e.target !== s) return;
-      if (e && e.propertyName && e.propertyName !== 'transform') return;
-      finish();
-    };
+  const onEnd = (e) => {
+    if (e && e.target !== s) return;
+    if (e && e.propertyName && e.propertyName !== 'transform') return;
+    finish();
+  };
 
-    const fallback = setTimeout(finish, duration + 300);
-    s.addEventListener('transitionend', onEnd, { once: true });
-  }
+  const fallback = setTimeout(finish, duration + 300);
+  s.addEventListener('transitionend', onEnd, { once: true });
+}
 
 
   function updateRouletteBar() { setBalanceUI(lastBalance); }
@@ -769,14 +739,14 @@
     } catch (_) {}
   }
 
-  // ====== ОДИНОЧНЫЙ СПИН ======
+  // ====== ОДИНОЧНЫЙ СПИН (списание ПО КАЖДОМУ спину)
   async function spinRoulette(opts = {}){
     if (rouletteState.spinning) return false;
 
     const {
-      forceWin = null,
-      localOnly = false,
-      onFinish  = null,
+      forceWin = null,     // не используется теперь, но оставим для совместимости (debug)
+      localOnly = false,   // не используется
+      onFinish  = null,    // callback(ok:boolean)
     } = opts;
 
     const btn = document.getElementById('rbSpin');
@@ -789,6 +759,7 @@
       if (forceWin != null) {
         winVal = Number(forceWin);
       } else {
+        // Пер-спиновое списание (оптимистично)
         const cost = ROULETTE_COST_RUB;
         if (lastBalance + 1e-9 < cost){
           rouletteState.spinning = false;
@@ -806,6 +777,7 @@
           body: JSON.stringify({ user_id: userId || seq, cost_rub: cost })
         });
         if (!r.ok) {
+          // откат
           setBalanceUI(balanceBefore);
           const txt = await r.text().catch(()=> 'Ошибка');
           throw new Error(txt || 'spin failed');
@@ -820,7 +792,7 @@
       const targetIdx = findNextIndexOfValue(winVal);
       animateToIndex(targetIdx, ROULETTE.SPIN_MS, () => {
         if (finalBalance != null) setBalanceUI(finalBalance);
-        recenterToValue(winVal);
+        recenterToValue(winVal); // перецентруем для запаса
         try { tg?.HapticFeedback?.impactOccurred?.('medium'); } catch(_){}
         onFinish && onFinish(true);
       });
@@ -834,7 +806,7 @@
     }
   }
 
-  // ====== АВТО-СПИН ======
+  // ====== АВТО-СПИН (без предоплаты — N последовательных обычных спинов)
   const AUTOSPIN_MAX = 500;
   let autoSpinState = { active:false, remaining:0 };
 
@@ -859,6 +831,7 @@
       </div>
     `);
 
+    // Сделать модалку «плоской» (без заднего квадрата)
     const modal = ensureModal();
     modal.querySelector('.modal-card')?.classList.add('modal-card--plain');
 
@@ -936,7 +909,7 @@
     if (!autoSpinState.active) return;
     if (autoSpinState.remaining <= 0){
       stopAutoSpin();
-      fetchProfile();
+      fetchProfile(); // синк на всякий случай
       return;
     }
 
@@ -1180,15 +1153,10 @@
 
     let discountCode = '';
     let discountPct  = 0;
-    let qtyCurrent   = Math.max(min, Math.min((opts.qty ? Number(opts.qty) : (presets[0]||min)), max));
+    let qtyCurrent   = Math.max(min, Math.min(presets[0]||min, max));
     const rate1000   = Number(s.rate_client_1000 || 0);
 
     if (serviceTitleEl) serviceTitleEl.textContent = s.name || 'Услуга';
-
-    // запомним контекст текущей услуги — чтобы перерисовать после «Приватки»
-    window.__CUR_SERVICE_ID__  = Number(s.service);
-    window.__CUR_SERVICE_NET__ = s.network || currentNetwork || netFromText(s.name, s.category) || 'telegram';
-    window.__CUR_SVC_CONTEXT__ = { qty: qtyCurrent, link: '' };
 
     serviceDetailsEl.innerHTML = `
       <div class="svc">
@@ -1258,18 +1226,12 @@
     const promoApply  = document.getElementById('promoApply');
     const promoHint   = document.getElementById('promoHint');
 
-    // если был задан линк из opts — проставим и запомним в контексте
-    if (opts.link) { linkEl.value = String(opts.link); }
-    window.__CUR_SVC_CONTEXT__.link = linkEl.value || '';
-
     function recalc(){
       const base = priceFor(qtyCurrent, rate1000);
       const disc = Math.round(base * discountPct * 100) / 100;
       const total = Math.max(0, Math.round((base - disc) * 100) / 100);
       sumQty.textContent = qtyCurrent;
       sumPrice.textContent = `${total.toFixed(4)}${curSign(currency)}${disc>0 ? ` (−${disc.toFixed(2)})` : ''}`;
-      // обновим контекст qty
-      window.__CUR_SVC_CONTEXT__.qty = qtyCurrent;
     }
 
     qtyGrid.innerHTML = '';
@@ -1307,10 +1269,6 @@
       recalc();
     });
 
-    linkEl?.addEventListener('input', ()=>{
-      window.__CUR_SVC_CONTEXT__.link = linkEl.value || '';
-    });
-
     const presetQty  = Number(opts.qty || 0);
     const presetLink = String(opts.link || '');
     if (presetLink && linkEl) linkEl.value = presetLink;
@@ -1322,7 +1280,6 @@
         const num = parseInt(bt.querySelector('.num')?.textContent.replace(/\s/g,'')||'0',10);
         bt.classList.toggle('active', num === q);
       });
-      window.__CUR_SVC_CONTEXT__.qty = qtyCurrent;
     }
 
     let promoOpen = false;
@@ -1387,42 +1344,514 @@
       try{
         const body = { user_id:userId||seq, service:s.service, link, quantity:qtyCurrent };
         if (discountCode) body.promo_code = discountCode;
-                const r = await fetch(`${API_BASE}/order/create`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-
-        // обработка ошибок сервера с понятными сообщениями
-        if (!r.ok) {
-          let msg = 'Не удалось создать заказ';
-          try {
-            const txt = await r.text();
-            try {
-              const j = JSON.parse(txt);
-              if (j && j.detail) msg = j.detail;
-              else if (txt) msg = txt;
-            } catch {
-              if (txt) msg = txt;
-            }
-          } catch (_) {}
-          throw new Error(msg);
-        }
-
+        const r = await fetch(`${API_BASE}/order/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error(await r.text());
         const j = await r.json();
         alert(`Заказ создан!\nНомер: ${j.order_id}\nСумма: ${j.cost} ${j.currency}`);
-
-        // обновим баланс/профиль
         await fetchProfile();
-
-        // (опционально) сбросим поле ссылки и промокод
-        if (linkEl) linkEl.value = '';
-        if (promoInput) promoInput.value = '';
-      } catch (e) {
-        alert('Ошибка оформления: ' + (e?.message || e));
-      } finally {
-        btnCreate.disabled = false;
-        btnCreate.textContent = 'Создать заказ';
+      }catch(e){
+        alert('Не удалось создать заказ: ' + (e?.message||e));
+      }finally{
+        btnCreate.disabled = false; btnCreate.textContent = 'Создать заказ';
       }
     });
 
+    showPage("page-service");
+    recalc();
+    setPromoUI();
+    try { history.replaceState(null, '', `#service-${s.service}`); } catch(_) {}
+  }
+
+  btnBackToCats?.addEventListener('click', ()=> showPage("page-categories"));
+  btnBackToServices?.addEventListener('click', ()=> showPage("page-services"));
+
+  // стартовая загрузка
+  loadCategories();
+  syncFavsFromServer().then(renderFavs);
+
+  // === Автозапуск рулетки по параметру старта / ссылке ===
+(function autoOpenRouletteOnLaunch(){
+  function getLaunchIntent(){
+    // 1) deep-link Mini App: ?startapp=roulette
+    let sp = '';
+    try {
+      sp = (tg?.initDataUnsafe?.start_param || tg?.initDataUnsafe?.startParam || '').toLowerCase();
+    } catch(_) {}
+
+    // 2) web_app.url с параметром: ?p=roulette или ?page=roulette
+    const qp = new URLSearchParams(location.search);
+    const p  = (qp.get('p') || qp.get('page') || '').toLowerCase();
+
+    // 3) hash: #roulette
+    const h  = (location.hash || '').replace(/^#/, '').toLowerCase();
+
+    const v = sp || p || (h.includes('roulette') ? 'roulette' : '');
+    if (['roulette','r','wheel'].includes(v)) return 'roulette';
+    return '';
+  }
+
+  if (getLaunchIntent() === 'roulette') {
+    // Страница рулетки сама создастся/стилизуется при вызове
+    ensureProfilePage();
+    openRoulette();
+  }
+})();
+
+
+  // === Рефералка ===
+  async function loadRefs() {
+    const page = document.getElementById("page-refs");
+    if (!page) return;
+
+    page.innerHTML = `
+      <div class="card" style="padding:16px">
+        <div class="skeleton-line" style="width:60%"></div>
+        <div class="skeleton-line" style="width:90%;margin-top:10px"></div>
+      </div>
+    `;
+
+    try {
+      const API_BASE_L = (typeof window.API_BASE === "string" && window.API_BASE) ? window.API_BASE : "/api/v1";
+      let uid = null; try { uid = tg?.initDataUnsafe?.user?.id; } catch (_) {}
+      if (!uid && window.USER_ID) uid = window.USER_ID;
+
+      const url = API_BASE_L + "/referrals/stats" + (uid ? ("?user_id=" + encodeURIComponent(uid)) : "");
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+
+      const inviteLink = String(data.invite_link || data.link || "");
+      const threshold = Number(data.threshold != null ? data.threshold : 50);
+      const invited   = Number(data.invited_total != null ? data.invited_total : 0);
+      const withDep   = Number(data.invited_with_deposit != null ? data.invited_with_deposit : 0);
+      const earnedRaw = (data.earned_total != null ? data.earned_total : 0);
+      const earned    = typeof earnedRaw === "number" ? earnedRaw.toFixed(2) : String(earnedRaw);
+      const currency  = String(data.earned_currency || data.currency || "₽");
+
+      const denom = threshold > 0 ? threshold : 50;
+      const prog = Math.max(0, Math.min(100, Math.round((withDep / denom) * 100)));
+
+      page.innerHTML = `
+        <div class="ref">
+          <div class="card ref-hero">
+            <div class="ref-ico"><img src="static/img/tab-referrals.svg?v=2025-09-30-1" alt="" class="ref-ico-img"></div>
+            <div class="ref-h1">Приглашайте пользователей <br> и получайте <span class="accent">10%</span> от их платежей</div>
+            <div class="ref-h2">Средства автоматически поступают на ваш баланс. Полученные деньги вы можете тратить на <br> продвижение и испытывать удачу в рулетке.</div>
+          </div>
+
+          <div class="label">Ваша ссылка</div>
+          <div class="card ref-linkbar" id="refLinkBar">
+            <input id="refLinkInput" type="text" readonly aria-label="Ваша ссылка" />
+            <button class="ref-copy" id="refCopyBtn" aria-label="Копировать">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M9 9.5A2.5 2.5 0 0 1 11.5 7H17a2 2 0 0 1 2 2v5.5A2.5 2.5 0 0 1 16.5 17H11a2 2 0 0 1-2-2V9.5Z" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M7 14.5A2.5 2.5 0 0 1 4.5 12V6a2 2 0 0 1 2-2H12.5A2.5 2.5 0 0 1 15 6.5" stroke="currentColor" stroke-width="1.6"/>
+              </svg>
+            </button>
+          </div>
+          <div class="ref-note">Пригласите 50 человек с депозитом — процент вырастет до <span class="accent">20%</span></div>
+
+          <div class="card ref-progress-card">
+            <div class="row between"><div class="muted">Прогресс до 20%</div></div>
+            <div class="ref-progress"><div class="ref-progress__bar" style="width:${prog}%;"></div></div>
+            <div class="ref-progress-meta"><span>Рефералов с депозитом ${withDep} из ${threshold}</span></div>
+          </div>
+
+          <div class="ref-stats">
+            <div class="ref-stat"><div class="sm">Приглашено</div><div class="lg">${invited}</div></div>
+            <div class="ref-stat"><div class="sm">С депозитом</div><div class="lg">${withDep}</div></div>
+            <div class="ref-stat"><div class="sm">Начислено</div><div class="lg">${earned} ${currency}</div></div>
+          </div>
+        </div>
+      `;
+
+      const input = document.getElementById("refLinkInput");
+      if (input) input.value = inviteLink;
+
+      const bar  = document.getElementById("refLinkBar");
+      const btn  = document.getElementById("refCopyBtn");
+      async function copyLink() {
+        const text = (input && input.value) ? input.value : inviteLink;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const ta = document.createElement("textarea");
+            ta.value = text; document.body.appendChild(ta);
+            ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+          }
+          tg?.HapticFeedback?.notificationOccurred?.("success");
+          bar && bar.classList.add("copied");
+          setTimeout(() => { bar && bar.classList.remove("copied"); }, 600);
+        } catch (err) {
+          tg?.HapticFeedback?.notificationOccurred?.("error");
+          console.error("copy failed", err);
+        }
+      }
+      bar && bar.addEventListener("click", copyLink);
+      btn && btn.addEventListener("click", (e) => { e.stopPropagation(); copyLink(); });
+
+    } catch (err) {
+      console.error("loadRefs error:", err);
+      page.innerHTML = `
+        <div class="card" style="padding:16px">
+          <div class="error-text">Не удалось загрузить данные рефералки. Попробуйте позже.</div>
+        </div>
+      `;
+    }
+  }
+
+  // ====== Детализация ======
+  const STATUS_MAP = {
+    processing:   { label: "В обработке", cls: "badge--processing" },
+    "in progress":{ label: "В обработке", cls: "badge--processing" },
+    awaiting:     { label: "В обработке", cls: "badge--processing" },
+    pending:      { label: "В обработке", cls: "badge--processing" },
+    completed:    { label: "Завершён",    cls: "badge--completed"  },
+    canceled:     { label: "Отменён",     cls: "badge--failed"     },
+    cancelled:    { label: "Отменён",     cls: "badge--failed"     },
+    failed:       { label: "Отменён",     cls: "badge--failed"     },
+  };
+  const stInfo = code => STATUS_MAP[String(code||"").toLowerCase()] || { label:String(code||"—"), cls:"badge--processing" };
+
+  async function loadDetails(defaultTab = "orders") {
+    const page = document.getElementById("page-details"); if (!page) return;
+    const uid = (tg?.initDataUnsafe?.user?.id) || (window.USER_ID) || seq;
+
+    let ORDERS_CACHE = null;
+    let PAYMENTS_CACHE = null;
+    let ORDERS_POLL = null;
+
+    page.innerHTML = `
+      <div class="details-head details-head--center">
+        <div class="seg seg--accent" id="detailsSeg">
+          <button class="seg__btn ${defaultTab==="orders"?"seg__btn--active":""}" data-tab="orders">Заказы</button>
+          <button class="seg__btn ${defaultTab==="payments"?"seg__btn--active":""}" data-tab="payments">Платежи</button>
+        </div>
+      </div>
+      <div id="detailsFilters"></div>
+      <div class="list" id="detailsList">
+        <div class="skeleton" style="height:60px"></div>
+        <div class="skeleton" style="height:60px"></div>
+      </div>
+    `;
+
+    const seg = document.getElementById("detailsSeg");
+    const filtersWrap = document.getElementById("detailsFilters");
+    const list = document.getElementById("detailsList");
+
+    function renderOrdersFromCache(filter = "all") {
+      if (!Array.isArray(ORDERS_CACHE) || !ORDERS_CACHE.length) {
+        list.innerHTML = `<div class="empty">Заказы не найдены</div>`; return;
+      }
+      const norm = s => String(s||"").toLowerCase();
+      const items = ORDERS_CACHE.filter(o => {
+        if (filter === "all") return true;
+        const s = norm(o.status);
+        if (filter === "processing") return ["processing","in progress","awaiting","pending"].includes(s);
+        if (filter === "completed")  return s === "completed";
+        if (filter === "failed")     return ["failed","canceled","cancelled","failed"].includes(s);
+        return true;
+      });
+      if (!items.length) { list.innerHTML = `<div class="empty">По этому фильтру ничего нет</div>`; return; }
+
+      list.innerHTML = items.map(o => {
+        const st = stInfo(o.status);
+        const title = o.service || "Услуга";
+        const cat = o.category ? `${o.category} • ` : "";
+        const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
+        const net = netFromText(o.service, o.category);
+        const ico = netIcon(net);
+        return `
+          <div class="order" data-id="${o.id}">
+            <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
+            <div class="order__body">
+              <div class="order__head">
+                <div class="order__title">${title}</div>
+                <span class="badge ${st.cls}">${st.label}</span>
+              </div>
+              <div class="order__meta">${cat}Количество: ${o.quantity} • ${fmtDate(o.created_at)}</div>
+              <div class="order__foot">
+                <div class="order__sum">${sum}</div>
+                <div class="order__id">#${o.id}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      list.querySelectorAll('.order').forEach(card=>{
+        const id = String(card.dataset.id);
+        const o = ORDERS_CACHE.find(x => String(x.id) === id);
+        if (!o) return;
+        card.addEventListener('click', ()=> showOrderModal(o));
+      });
+    }
+
+    async function renderOrders(filter = "all") {
+      filtersWrap.innerHTML = `
+        <div class="filters">
+          <button class="filter ${filter==="all"?"active":""}" data-f="all">Все</button>
+          <button class="filter ${filter==="processing"?"active":""}" data-f="processing">В обработке</button>
+          <button class="filter ${filter==="completed"?"active":""}" data-f="completed">Завершён</button>
+          <button class="filter ${filter==="failed"?"active":""}" data-f="failed">Отменённые</button>
+        </div>
+      `;
+      filtersWrap.querySelectorAll(".filter").forEach(b => {
+        b.addEventListener("click", () => {
+          filtersWrap.querySelectorAll(".filter").forEach(x=>x.classList.toggle("active", x===b));
+          renderOrdersFromCache(b.dataset.f);
+        });
+      });
+
+      if (Array.isArray(ORDERS_CACHE)) {
+        renderOrdersFromCache(filter);
+        startOrdersPoll(filter);
+        return;
+      }
+
+      list.innerHTML = `<div class="skeleton" style="height:60px"></div><div class="skeleton" style="height:60px"></div>`;
+      try {
+        const q = new URLSearchParams({ user_id:String(uid), refresh:'1' });
+        const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
+        ORDERS_CACHE = r.ok ? await r.json() : [];
+      } catch { ORDERS_CACHE = []; }
+
+      renderOrdersFromCache(filter);
+      startOrdersPoll(filter);
+    }
+
+    function hasProcessingOrders() {
+      return (ORDERS_CACHE || []).some(
+        o => /^(processing|in progress|awaiting|pending)$/i.test(String(o.status))
+      );
+    }
+    function stopOrdersPoll() {
+      if (ORDERS_POLL) { clearInterval(ORDERS_POLL); ORDERS_POLL = null; }
+    }
+    async function tickOrdersPoll(filter) {
+      try {
+        const q = new URLSearchParams({ user_id:String(uid), refresh:'1' });
+        const r = await fetch(bust(`${API_BASE}/orders?${q.toString()}`), { credentials:"include" });
+        if (r.ok) ORDERS_CACHE = await r.json();
+        renderOrdersFromCache(filter);
+        if (!hasProcessingOrders()) stopOrdersPoll();
+      } catch (_) {}
+    }
+    function startOrdersPoll(filter) {
+      stopOrdersPoll();
+      if (!hasProcessingOrders()) return;
+      ORDERS_POLL = setInterval(() => {
+        const active = document.getElementById("page-details")?.classList.contains("active");
+        if (!active) return stopOrdersPoll();
+        tickOrdersPoll(filter);
+      }, 5000);
+    }
+
+    function nDate(x){
+      if (x == null) return 0;
+      if (typeof x === 'number') return x < 1e12 ? x*1000 : x;
+      if (/^\d+$/.test(String(x))) { const n = Number(x); return n<1e12 ? n*1000 : n; }
+      const t = +new Date(x); return Number.isFinite(t) ? t : 0;
+    }
+    function normTopup(p){
+      const method = (p.method || p.provider || 'cryptobot') + '';
+      const currency = p.currency || 'RUB';
+      const created = p.created_at ?? p.createdAt ?? p.time ?? p.ts;
+      const status = p.applied ? 'completed' : (p.status || 'processing');
+      const amount = (p.amount != null ? p.amount
+                   : (p.amount_rub != null ? p.amount_rub
+                   : (p.amount_usd != null ? p.amount_usd : 0)));
+      return {
+        id: p.id, user_id: p.user_id,
+        method, status, amount, currency, created_at: created,
+        invoice_id: p.invoice_id, pay_url: p.pay_url, _source: p._source || 'topup'
+      };
+    }
+    async function fetchPaymentsUnion() {
+      if (Array.isArray(PAYMENTS_CACHE)) return PAYMENTS_CACHE;
+      let arr = [];
+      try {
+        const q = new URLSearchParams({ user_id:String(uid), refresh:"1" });
+        const r = await fetch(bust(`${API_BASE}/payments?${q.toString()}`), { credentials:"include" });
+        arr = (r.ok ? await r.json().catch(()=>[]) : []);
+      } catch {}
+      PAYMENTS_CACHE = Array.isArray(arr) ? arr.map(normTopup).sort((a,b)=> nDate(b.created_at) - nDate(a.created_at)) : [];
+      return PAYMENTS_CACHE;
+    }
+    function renderPaymentsFromCache() {
+      if (!Array.isArray(PAYMENTS_CACHE) || !PAYMENTS_CACHE.length) {
+        list.innerHTML = `<div class="empty">Платежей пока нет</div>`;
+        return;
+      }
+      list.innerHTML = PAYMENTS_CACHE.map(p=>{
+        const st  = stInfo(p.status);
+        const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+        const prov = String(p.method || "cryptobot").toLowerCase();
+        const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
+        const ico = prov === 'ref' ? 'static/img/referral.svg' : `static/img/${prov}.svg`;
+        return `
+          <div class="pay" data-id="${p.id}">
+            <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
+            <div class="pay__body">
+              <div class="pay__top">
+                <div class="pay__sum">${sum}</div>
+                <span class="badge ${st.cls}">${st.label}</span>
+              </div>
+              <div class="pay__sub">${sub}</div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      list.querySelectorAll('.pay').forEach(card=>{
+        const id = String(card.dataset.id);
+        const p = PAYMENTS_CACHE.find(x => String(x.id) === id);
+        if (p) card.addEventListener('click', ()=> showPaymentModal(p));
+      });
+    }
+    async function renderPayments() {
+      filtersWrap.innerHTML = "";
+      list.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
+      await fetchPaymentsUnion();
+      renderPaymentsFromCache();
+    }
+
+    function showOrderModal(o){
+      const st = stInfo(o.status);
+      const net = netFromText(o.service, o.category);
+      const ico = netIcon(net);
+      const sum = `${(o.price ?? 0)} ${(o.currency || "₽")}`;
+      const linkHtml = o.link ? `<a href="${o.link}" target="_blank" rel="noopener">${o.link}</a>` : '—';
+
+      openModal(`
+        <h3>Заказ #${o.id}</h3>
+        <div class="modal-row">
+          <div style="display:flex; gap:10px; align-items:center">
+            <div class="order__ico"><img src="${ico}" class="order__ico-img" alt=""></div>
+            <div>
+              <div style="font-weight:700">${o.service || 'Услуга'}</div>
+              <div class="muted">${o.category || ''}</div>
+            </div>
+            <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+          </div>
+        </div>
+        <div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(o.created_at)}</div></div>
+        <div class="modal-row"><div class="muted">Количество</div><div>${o.quantity}</div></div>
+        <div class="modal-row"><div class="muted">Сумма</div><div>${sum}</div></div>
+        <div class="modal-row"><div class="muted">Ссылка</div><div style="word-break:break-all">${linkHtml}</div></div>
+        ${o.provider_id ? `<div class="modal-row"><div class="muted">Поставщик</div><div>#${o.provider_id}</div></div>` : ''}
+
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="orderClose">Закрыть</button>
+          <button class="btn btn-primary" id="orderRepeat">Повторить заказ</button>
+        </div>
+      `);
+
+      document.getElementById('orderClose')?.addEventListener('click', closeModal);
+      document.getElementById('orderRepeat')?.addEventListener('click', async ()=>{
+        let svc = o.service_id ? await fetchServiceById(o.service_id, net) : null;
+        if (!svc) svc = await findServiceByName(net, o.service);
+        if (!svc){ alert('Не удалось найти услугу для повтора'); return; }
+        closeModal();
+        openServicePage(svc, { link: o.link, qty: o.quantity });
+      });
+    }
+
+    function showPaymentModal(p){
+      const st = stInfo(p.status);
+      const prov = String(p.method || "cryptobot").toLowerCase();
+      const ico = prov === 'ref' ? 'static/img/referral.svg' : `static/img/${prov}.svg`;
+      const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+
+      const extraRows = [];
+      extraRows.push(`<div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>`);
+      if (prov === 'cryptobot' || prov === 'qiwi' || prov === 'card' || prov === 'promo') {
+        if (p.invoice_id) extraRows.push(`<div class="modal-row"><div class="muted">Invoice ID</div><div>#${p.invoice_id}</div></div>`);
+        if (p.amount_usd != null) extraRows.push(`<div class="modal-row"><div class="muted">Сумма (USD)</div><div>${p.amount_usd}</div></div>`);
+        if (p.pay_url) extraRows.push(`<div class="modal-row"><a class="btn btn-primary" href="${p.pay_url}" target="_blank" rel="noopener">Открыть ссылку оплаты</a></div>`);
+      } else if (prov === 'ref') {
+        if (p.from_user_id) extraRows.push(`<div class="modal-row"><div class="muted">От пользователя</div><div>#${p.from_user_id}</div></div>`);
+        if (p.invoice_id)   extraRows.push(`<div class="modal-row"><div class="muted">Топап</div><div>#${p.invoice_id}</div></div>`);
+      }
+
+      openModal(`
+        <h3>${prov === 'ref' ? 'Реферальное начисление' : 'Платёж'} #${p.id}</h3>
+        <div class="modal-row">
+          <div style="display:flex; gap:10px; align-items:center">
+            <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
+            <div>
+              <div style="font-weight:700">${sum}</div>
+              <div class="muted">${prov}</div>
+            </div>
+            <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
+          </div>
+        </div>
+        ${extraRows.join("")}
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="payClose">Закрыть</button>
+        </div>
+      `);
+      document.getElementById('payClose')?.addEventListener('click', closeModal);
+    }
+
+    async function switchTab(tab) {
+      seg.querySelectorAll(".seg__btn")
+        .forEach(b=>b.classList.toggle("seg__btn--active", b.dataset.tab===tab));
+      if (tab === "orders") {
+        await renderOrders("all");
+      } else {
+        stopOrdersPoll();
+        await renderPayments();
+      }
+    }
+
+    await switchTab(defaultTab);
+    seg.querySelectorAll(".seg__btn").forEach(btn =>
+      btn.addEventListener("click", () => switchTab(btn.dataset.tab))
+    );
+  }
+
+  // ====== Topup (кнопка в шапке) ======
+  btnTopup?.addEventListener('click', onTopupClick);
+
+  // ====== Keyboard inset -> hide tabbar ======
+  (function keyboardLift(){
+    const root=document.documentElement;
+    const tabbar = document.querySelector('.tabbar');
+
+    function applyKbInset(px){
+      if (document.body.classList.contains('roulette-open')) return; // рулетка сама прячет таббар
+      const v = px>40 ? px : 0;
+      root.style.setProperty('--kb', v+'px');
+      const open = v > 40;
+      document.body.classList.toggle('kb-open', open);
+      if (tabbar) tabbar.style.display = open ? 'none' : 'grid';
+    }
+
+    if (window.visualViewport){
+      const vv=window.visualViewport;
+      const handler=()=>{ const inset=Math.max(0, window.innerHeight - vv.height - vv.offsetTop); applyKbInset(inset); };
+      vv.addEventListener('resize', handler);
+      vv.addEventListener('scroll', handler);
+      handler();
+    }
+    try{
+      tg?.onEvent?.('viewportChanged', (e)=>{
+        const vh=(e&&(e.height||e.viewportHeight)) || tg?.viewportHeight || tg?.viewport?.height;
+        if (!vh) return; const inset=Math.max(0, window.innerHeight - vh); applyKbInset(inset);
+      });
+    }catch(_){}
+  })();
+
+  // Глобальный лог ошибок
+  window.addEventListener('error', e => console.error('JS error:', e.message, e.filename, e.lineno));
+
+  // Профиль из таббара
+  profileBtn?.addEventListener('click', ()=>{
+    ensureProfilePage();
+    updateProfilePageView();
+    showPage('page-profile');
+  });
+
+})();
