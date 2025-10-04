@@ -36,6 +36,7 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 
 CURRENCY = (os.getenv("CURRENCY", "RUB") or "RUB").strip().upper()
+
 # поддержим старое имя DEFAULT_MARKUP, но по умолчанию именно 5.0
 DEFAULT_MARKUP = os.getenv("DEFAULT_MARKUP")
 MARKUP_MULTIPLIER = float(os.getenv("MARKUP_MULTIPLIER") or DEFAULT_MARKUP or "5.0")
@@ -55,6 +56,10 @@ REF_TIER_THRESHOLD = int(os.getenv("REF_TIER_THRESHOLD", "50"))
 
 FX_CACHE_TTL = int(os.getenv("FX_CACHE_TTL", "600"))
 
+# ====== обновление каталога по TTL ======
+SERVICES_SYNC_TTL = int(os.getenv("SERVICES_SYNC_TTL", "900"))  # 15 минут по умолчанию
+_SERVICES_LAST_SYNC = 0
+
 NETWORKS = ["telegram", "tiktok", "instagram", "youtube", "facebook"]
 DISPLAY = {
     "telegram":  {"id": "telegram",  "name": "Telegram",  "desc": "подписчики, просмотры"},
@@ -65,7 +70,7 @@ DISPLAY = {
 }
 
 # --- app ---
-app = FastAPI(title="SMMShop API", version="2.4")
+app = FastAPI(title="SMMShop API", version="2.5")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins or ["*"],
@@ -94,7 +99,6 @@ _client = httpx.AsyncClient(timeout=30.0)
 # --- FX cache (нужно только для платежей/рефов, к прайсингу не относится) ---
 _fx_cache: Dict[str, Dict[str, Any]] = {}
 
-
 def _fx_get(k: str) -> Optional[float]:
     obj = _fx_cache.get(k)
     if not obj:
@@ -103,16 +107,13 @@ def _fx_get(k: str) -> Optional[float]:
         return None
     return float(obj.get("v", 0))
 
-
 def _fx_put(k: str, v: float) -> None:
     _fx_cache[k] = {"v": float(v), "t": time.time()}
-
 
 async def fx_usd_rub() -> float:
     cached = _fx_get("USD_RUB")
     if cached:
         return cached
-
     for url in (
         "https://api.exchangerate.host/latest?base=USD&symbols=RUB",
         "https://open.er-api.com/v6/latest/USD",
@@ -126,15 +127,12 @@ async def fx_usd_rub() -> float:
                 return v
         except Exception:
             continue
-
     # запасной вариант
     _fx_put("USD_RUB", 100.0)
     return 100.0
 
-
 def db() -> Session:
     return SessionLocal()
-
 
 # ========== Pricing helpers (персональная наценка) ==========
 def user_markup(u: Optional[User]) -> float:
@@ -150,7 +148,6 @@ def user_markup(u: Optional[User]) -> float:
         pass
     return MARKUP_MULTIPLIER
 
-
 async def rate_per_1k_for_user(svc: Service, u: Optional[User]) -> float:
     """
     Клиентская цена за 1000 для конкретного пользователя.
@@ -165,9 +162,7 @@ async def rate_per_1k_for_user(svc: Service, u: Optional[User]) -> float:
     mul = user_markup(u)
     return base_rub * mul
 
-
 # ===== ensure_user() =====
-
 def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
     u = (
         s.query(User)
@@ -212,7 +207,6 @@ def ensure_user(s: Session, tg_id: int, nick: Optional[str] = None) -> User:
     return u
 
 
-
 # --- схемы ---
 class UserOut(BaseModel):
     seq: int
@@ -223,7 +217,6 @@ class UserOut(BaseModel):
     topup_currency: str = "USD"
     markup: Optional[float] = None     # персональная наценка пользователя (если есть)
 
-
 class CreateOrderIn(BaseModel):
     user_id: int
     service: int
@@ -231,16 +224,13 @@ class CreateOrderIn(BaseModel):
     quantity: int
     promo_code: Optional[str] = None
 
-
 class RegisterIn(BaseModel):
     user_id: int
     nick: str
 
-
 class RefBindIn(BaseModel):
     user_id: int
     code: str
-
 
 # --- VEXBOOST ----
 async def vex_services_raw() -> List[Dict[str, Any]]:
@@ -253,7 +243,6 @@ async def vex_services_raw() -> List[Dict[str, Any]]:
     if not isinstance(data, list):
         raise HTTPException(502, "Unexpected services payload")
     return data
-
 
 def _detect_network(name: str, category: str) -> Optional[str]:
     t = f"{name} {category}".lower()
@@ -272,21 +261,24 @@ def _detect_network(name: str, category: str) -> Optional[str]:
         return None
     return None
 
-
 def client_rate_from_supplier_rub(supplier_rate_rub_per_1k: float) -> float:
     """Клиентская цена/1000 = (руб. поставщика/1000) × MARKUP_MULTIPLIER"""
     return float(supplier_rate_rub_per_1k) * MARKUP_MULTIPLIER
-
 
 async def sync_services_into_db():
     """
     Синхронизация каталога. ВАЖНО: трактуем it['rate'] как РУБ/1000 у поставщика.
     В БД храним rate_client_1000 = supplier_rub * MARKUP_MULTIPLIER.
+    Плюс: деактивируем услуги, которых больше нет у поставщика.
     """
     raw = await vex_services_raw()
     with db() as s:
+        seen_ids: Set[int] = set()
+
         for it in raw:
             sid = int(it.get("service"))
+            seen_ids.add(sid)
+
             name = it.get("name") or f"Service {sid}"
             type_ = it.get("type")
             cat = it.get("category") or ""
@@ -325,8 +317,27 @@ async def sync_services_into_db():
                 obj.currency = CURRENCY
                 obj.description = cat
                 obj.active = is_active
+
+        # деактивируем услуги, которых нет в свежем ответе поставщика
+        if seen_ids:
+            existing_ids = [row[0] for row in s.query(Service.id).all()]
+            missing = set(existing_ids) - seen_ids
+            if missing:
+                s.query(Service).filter(Service.id.in_(missing)) \
+                    .update({Service.active: False}, synchronize_session=False)
+
         s.commit()
 
+async def ensure_services_fresh(force: bool = False):
+    """Гарантируем актуальный каталог: по TTL или принудительно."""
+    global _SERVICES_LAST_SYNC
+    now = int(time.time())
+    if force or (now - _SERVICES_LAST_SYNC > SERVICES_SYNC_TTL):
+        try:
+            await sync_services_into_db()
+            _SERVICES_LAST_SYNC = now
+        except Exception as e:
+            logging.exception("services sync failed: %s", e)
 
 # --- lifecycle ---
 @app.on_event("startup")
@@ -337,14 +348,12 @@ async def _startup():
     except Exception as e:
         logging.exception("Startup sync failed: %s", e)
 
-
 @app.on_event("shutdown")
 async def _shutdown():
     try:
         await _client.aclose()
     except Exception:
         pass
-
 
 # --- helpers (ref) ---
 def _ensure_ref_link(s: Session, u: User) -> RefLink:
@@ -363,7 +372,6 @@ def _ensure_ref_link(s: Session, u: User) -> RefLink:
             return rl
     raise HTTPException(500, "cannot_generate_ref_code")
 
-
 def _current_rate_for_owner(s: Session, owner_user_id: int) -> float:
     # сколько рефералов с депозитом у владельца (исключаем промо-пополнения)
     sub = (
@@ -379,11 +387,9 @@ def _current_rate_for_owner(s: Session, owner_user_id: int) -> float:
     cnt = s.query(func.count()).select_from(sub).scalar() or 0
     return REF_TIER_RATE if cnt >= REF_TIER_THRESHOLD else REF_BASE_RATE
 
-
 # ============== PROMO: helpers & endpoints ==============
 def _norm_code(code: Optional[str]) -> str:
     return (code or "").strip().upper()
-
 
 def _promo_active(pc: PromoCode) -> bool:
     if not pc.is_active:
@@ -395,9 +401,9 @@ def _promo_active(pc: PromoCode) -> bool:
         return False
     return True
 
-
 def _promo_counters(s: Session, pc: PromoCode, user_id: int) -> Tuple[int, int]:
-    total = s.query(func.count(PromoActivation.id)).filter(PromoActivation.code_id == pc.id).scalar() or 0
+    total = s.query(func.count(PromoActivation.id))\
+             .filter(PromoActivation.code_id == pc.id).scalar() or 0
     per_user = (
         s.query(func.count(PromoActivation.id))
         .filter(PromoActivation.code_id == pc.id, PromoActivation.user_id == user_id)
@@ -405,7 +411,6 @@ def _promo_counters(s: Session, pc: PromoCode, user_id: int) -> Tuple[int, int]:
         or 0
     )
     return total, per_user
-
 
 def _promo_can_use(s: Session, pc: PromoCode, user_id: int) -> Tuple[bool, str]:
     if not _promo_active(pc):
@@ -417,7 +422,6 @@ def _promo_can_use(s: Session, pc: PromoCode, user_id: int) -> Tuple[bool, str]:
         return False, "promo_user_limit_reached"
     return True, ""
 
-
 async def _apply_markup_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, Any]:
     if pc.type != "markup" or not pc.markup_value or pc.markup_value <= 0:
         raise HTTPException(400, "invalid_promo_type")
@@ -428,7 +432,6 @@ async def _apply_markup_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, A
     s.add(PromoActivation(code_id=pc.id, user_id=u.id, amount_credit=None, discount_applied=None, created_at=now_ts()))
     s.commit()
     return {"ok": True, "kind": "markup", "markup": u.markup_override}
-
 
 async def _apply_balance_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, Any]:
     if pc.type != "balance" or not pc.balance_usd or pc.balance_usd <= 0:
@@ -462,24 +465,21 @@ async def _apply_balance_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, 
     s.commit()
     return {"ok": True, "kind": "balance", "added": add, "currency": CURRENCY}
 
-
 def _check_discount_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, Any]:
     if pc.type != "discount" or pc.discount_percent is None or pc.discount_percent <= 0:
         raise HTTPException(400, "invalid_promo_type")
     ok, reason = _promo_can_use(s, pc, u.id)
     if not ok:
-        return {"ok": False, "reason": reason}
+        raise HTTPException(409, reason)
     pct = float(pc.discount_percent)
     if pct >= 1.0:
         pct = pct / 100.0  # на случай ввода "15" вместо "0.15"
     pct = max(0.0, min(0.95, pct))  # защитим от 100%
     return {"ok": True, "kind": "discount", "percent": pct}
 
-
 class PromoApplyIn(BaseModel):
     user_id: int
     code: str
-
 
 @app.post("/api/v1/promo/apply")
 async def promo_apply(body: PromoApplyIn):
@@ -487,7 +487,7 @@ async def promo_apply(body: PromoApplyIn):
     Применение промокода в профиле.
     Поддерживает:
       - type=markup  — навсегда: устанавливает персональную наценку пользователю
-      - type=balance — одноразово: начисляет баланс (в USD-эквив., конвертируем в валюту магазина)
+      - type=balance — одноразово: начисляет баланс (в USD-экв., конвертируем в валюту магазина)
     Для скидок используйте /promo/check и передачу promo_code в /order/create.
     """
     code = _norm_code(body.code)
@@ -505,22 +505,15 @@ async def promo_apply(body: PromoApplyIn):
         elif pc.type == "balance":
             return await _apply_balance_promo(s, u, pc)
         elif pc.type == "discount":
-            # сообщаем, что этот ввод — на странице заказа
             data = _check_discount_promo(s, u, pc)
             data["hint"] = "use_in_order"
-            if not data.get("ok"):
-                raise HTTPException(409, data.get("reason", "promo_not_active"))
             return data
         else:
             raise HTTPException(400, "unknown_promo_type")
 
-
 @app.get("/api/v1/promo/check")
 async def promo_check(user_id: int = Query(...), code: str = Query(...)):
-    """
-    Проверка скидочного промокода перед оформлением заказа.
-    Возвращает percent (0..1).
-    """
+    """Проверка скидочного промокода перед оформлением заказа. Возвращает percent (0..1)."""
     code = _norm_code(code)
     if not code:
         raise HTTPException(400, "empty_code")
@@ -531,11 +524,7 @@ async def promo_check(user_id: int = Query(...), code: str = Query(...)):
             raise HTTPException(404, "promo_not_found")
         if pc.type != "discount":
             raise HTTPException(400, "not_discount_code")
-        data = _check_discount_promo(s, u, pc)
-        if not data.get("ok"):
-            raise HTTPException(409, data.get("reason", "promo_not_active"))
-        return data
-
+        return _check_discount_promo(s, u, pc)
 
 # ---- Admin create promo ----
 class PromoAdminCreateIn(BaseModel):
@@ -550,7 +539,6 @@ class PromoAdminCreateIn(BaseModel):
     expires_at: Optional[int] = None
     is_active: bool = True
     notes: Optional[str] = None
-
 
 @app.post("/api/v1/promo/admin/create")
 async def promo_admin_create(
@@ -595,7 +583,6 @@ async def promo_admin_create(
         s.refresh(pc)
         return {"ok": True, "id": pc.id, "code": pc.code, "type": pc.type}
 
-
 # ---- Admin helpers & endpoints ----
 def _require_admin(authorization: Optional[str] = Header(None)) -> None:
     if not ADMIN_TOKEN:
@@ -638,12 +625,17 @@ async def admin_users(authorization: Optional[str] = Header(None)):
             })
         return out
 
+@app.post("/api/v1/admin/services/sync")
+async def admin_sync_services(authorization: Optional[str] = Header(None)):
+    """Принудительно обновить каталог услуг из поставщика."""
+    _require_admin(authorization)
+    await ensure_services_fresh(force=True)
+    return {"ok": True}
 
 # --- endpoints ---
 @app.get("/api/v1/ping")
 async def ping():
     return {"ok": True}
-
 
 # Проверка наличия пользователя (ищем по tg_id ИЛИ по seq)
 @app.get("/api/v1/user/exists")
@@ -654,8 +646,6 @@ async def api_user_exists(user_id: int = Query(...)):
             or s.query(User.id).filter(User.seq == user_id).first()
         ) is not None
         return {"exists": exists}
-
-
 
 # Профиль: робастный поиск tg_id -> seq + склейка, чтобы не было «Гость»
 @app.get("/api/v1/user", response_model=UserOut)
@@ -701,7 +691,7 @@ async def api_user(
                 u.nick = nick
                 s.commit()
 
-        # ===== ваша логика consume_topup без изменений =====
+        # ===== consume_topup =====
         delta = 0.0
         if consume_topup:
             pays = (
@@ -775,7 +765,6 @@ async def api_register(body: RegisterIn):
             s.commit()
         return {"ok": True, "seq": u.seq, "nick": u.nick}
 
-
 # Привязка по реф.коду (бот может вызывать при /start ref_xxx)
 @app.post("/api/v1/referrals/bind")
 async def api_referrals_bind(body: RefBindIn):
@@ -800,7 +789,6 @@ async def api_referrals_bind(body: RefBindIn):
         s.add(rb)
         s.commit()
         return {"ok": True}
-
 
 # Реф. статистика
 @app.get("/api/v1/referrals/stats")
@@ -831,7 +819,7 @@ async def api_referrals_stats(user_id: int = Query(...)):
             .filter(
                 RefBind.ref_owner_user_id == u.id,
                 Topup.status == "paid",
-                Topup.provider != "promo",  # ⬅️ исключили промо
+                Topup.provider != "promo",
             )
             .subquery()
         )
@@ -881,13 +869,13 @@ async def api_referrals_stats(user_id: int = Query(...)):
             ],
         }
 
-
 @app.get("/api/v1/services")
 async def api_services(user_id: Optional[int] = Query(None)):
     """
     Если передан user_id — возвращаем цены с учётом персональной наценки.
     Иначе — как в базе (под дефолтную наценку).
     """
+    await ensure_services_fresh()
     with db() as s:
         u: Optional[User] = None
         if user_id:
@@ -905,7 +893,6 @@ async def api_services(user_id: Optional[int] = Query(None)):
         # просто выдаём счётчик по сетям
         return [groups[k] for k in ["telegram", "tiktok", "instagram", "youtube", "facebook"]]
 
-
 @app.get("/api/v1/services/{network}")
 async def api_services_by_network(network: str, user_id: Optional[int] = Query(None)):
     """
@@ -913,6 +900,8 @@ async def api_services_by_network(network: str, user_id: Optional[int] = Query(N
     """
     if network not in NETWORKS:
         raise HTTPException(404, "Unknown network")
+
+    await ensure_services_fresh()
     with db() as s:
         u: Optional[User] = None
         if user_id:
@@ -966,7 +955,6 @@ async def api_services_by_network(network: str, user_id: Optional[int] = Query(N
             ]
         return out
 
-
 # ---- Favorites ----
 @app.get("/api/v1/favorites")
 async def fav_list(user_id: int = Query(...)):
@@ -993,11 +981,9 @@ async def fav_list(user_id: int = Query(...)):
             for it in rows
         ]
 
-
 class FavIn(BaseModel):
     user_id: int
     service_id: int
-
 
 @app.post("/api/v1/favorites", status_code=204)
 async def fav_add(body: FavIn):
@@ -1006,7 +992,6 @@ async def fav_add(body: FavIn):
         s.merge(Favorite(user_id=u.id, service_id=int(body.service_id)))
         s.commit()
 
-
 @app.delete("/api/v1/favorites/{service_id}", status_code=204)
 async def fav_del(service_id: int, user_id: int = Query(...)):
     with db() as s:
@@ -1014,14 +999,20 @@ async def fav_del(service_id: int, user_id: int = Query(...)):
         s.query(Favorite).filter(Favorite.user_id == u.id, Favorite.service_id == service_id).delete()
         s.commit()
 
-
 # ---- Order create ----
+class CreateOrderIn(BaseModel):
+    user_id: int
+    service: int
+    link: str
+    quantity: int
+    promo_code: Optional[str] = None  # скидочный код
+
 @app.post("/api/v1/order/create")
 async def api_order_create(body: CreateOrderIn):
     with db() as s:
         u = ensure_user(s, body.user_id)
         svc = s.get(Service, int(body.service))
-        if not svc:
+        if not svc or not svc.active:
             raise HTTPException(404, "service not found")
 
         if body.quantity < (svc.min or 0) or body.quantity > (svc.max or 0):
@@ -1043,8 +1034,6 @@ async def api_order_create(body: CreateOrderIn):
                 if pc.type != "discount":
                     raise HTTPException(400, "promo_not_discount")
                 chk = _check_discount_promo(s, u, pc)
-                if not chk.get("ok"):
-                    raise HTTPException(409, chk.get("reason", "promo_not_active"))
                 pct = float(chk["percent"])
                 discount_applied = round(base_cost * pct, 2)
                 promo_row = pc
@@ -1098,7 +1087,6 @@ async def api_order_create(body: CreateOrderIn):
             s.commit()
 
         return {"order_id": o.id, "cost": cost, "currency": o.currency, "status": o.status}
-
 
 # ---- Invoice create ----
 @app.post("/api/v1/pay/invoice")
@@ -1154,8 +1142,6 @@ async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
     # Возвращаем обе ссылки — фронт откроет mini_app_url, если есть
     return {"pay_url": pay_url, "mini_app_url": mini_app_url, "invoice_id": invoice_id}
 
-
-
 # ---- Webhook ----
 def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(data.get("invoice"), dict):
@@ -1176,7 +1162,6 @@ def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
         "asset": (inv.get("asset") or "USDT").upper(),
         "payload": inv.get("payload") or data.get("payload") or "",
     }
-
 
 @app.post("/api/v1/cryptobot/webhook")
 async def cryptobot_webhook(request: Request):
@@ -1214,7 +1199,6 @@ async def cryptobot_webhook(request: Request):
 
     return {"ok": True}
 
-
 # ===== helpers: status normalize/synonyms (для детализации) =====
 def _order_status_norm(s: Optional[str]) -> str:
     t = (s or "").strip().lower().replace("_", " ")
@@ -1251,7 +1235,7 @@ _PAY_STATUS_SYNONYMS = {
     "failed":   ["failed", "canceled", "cancelled", "expired", "error"],
 }
 
-# ===== VEXBOOST: статус/инфо/отмена заказа =====
+# ===== VEXBOOST: проверка статуса заказа и массовое обновление =====
 async def vex_order_status(provider_order_id: str | int) -> Optional[str]:
     """
     Возвращает сырой статус от поставщика (In progress / Completed / Canceled ...)
@@ -1270,52 +1254,6 @@ async def vex_order_status(provider_order_id: str | int) -> Optional[str]:
     except Exception as e:
         logging.warning("vex_order_status fail for %s: %s", provider_order_id, e)
         return None
-
-
-async def vex_order_info(provider_order_id: str | int) -> Optional[Dict[str, Any]]:
-    """
-    Подробный статус: status + remains/charge (если отдаёт панель).
-    """
-    if not VEX_KEY or not provider_order_id:
-        return None
-    try:
-        qp = httpx.QueryParams({"action": "status", "key": VEX_KEY, "order": str(provider_order_id)})
-        url = f"{API_BASE}?{qp}"
-        r = await _client.get(url)
-        r.raise_for_status()
-        js = r.json()
-        st = (js.get("status") or js.get("order_status") or js.get("state") or "").strip()
-        remains = js.get("remains") or js.get("Remain") or js.get("Remains")
-        charge  = js.get("charge")  or js.get("price")  or js.get("Cost")
-        try: remains = float(remains)
-        except Exception: remains = None
-        try: charge = float(charge)
-        except Exception: charge = None
-        return {"status": st, "remains": remains, "charge": charge, "raw": js}
-    except Exception as e:
-        logging.warning("vex_order_info fail for %s: %s", provider_order_id, e)
-        return None
-
-
-async def vex_order_cancel(provider_order_id: str | int) -> Tuple[bool, str]:
-    """
-    Запрос на отмену заказа у поставщика (если поддерживается).
-    """
-    if not VEX_KEY or not provider_order_id:
-        return False, "no_key_or_order"
-    try:
-        qp = httpx.QueryParams({"action": "cancel", "key": VEX_KEY, "order": str(provider_order_id)})
-        url = f"{API_BASE}?{qp}"
-        r = await _client.get(url)
-        js = r.json()
-        ok = bool(js.get("success") or js.get("ok") or str(js.get("result", "")).lower() in ("true", "1"))
-        st = (js.get("status") or "").strip().lower()
-        if st in ("canceled", "cancelled"):
-            ok = True
-        return ok, json.dumps(js, ensure_ascii=False)
-    except Exception as e:
-        return False, str(e)
-
 
 async def refresh_orders_for_user(s: Session, u: User, limit: int = 40) -> int:
     """
@@ -1347,7 +1285,6 @@ async def refresh_orders_for_user(s: Session, u: User, limit: int = 40) -> int:
     if updated:
         s.commit()
     return updated
-
 
 # ===== Orders list =====
 @app.get("/api/v1/orders")
@@ -1405,7 +1342,6 @@ async def api_orders(
                 "provider_id": getattr(o, "provider_id", None),
             })
         return out
-
 
 # ===== Payments (topups + referral rewards) =====
 @app.get("/api/v1/payments")
@@ -1501,8 +1437,7 @@ async def api_payments(
     items.sort(key=lambda x: x["created_at"], reverse=True)
     return items[offset: offset + limit]
 
-
-# ---- Pricing explain (для проверки математики ×5 и персональных наценок) ----
+# ---- Pricing explain (для проверки математики ×default и персональных наценок)
 @app.get("/api/v1/pricing/explain")
 async def pricing_explain(service_id: int = Query(...), user_id: Optional[int] = None, qty: int = 1000):
     """
@@ -1533,103 +1468,5 @@ async def pricing_explain(service_id: int = Query(...), user_id: Optional[int] =
             "user_markup": float(mul),
             "client_rate_per_1000": round(client_rate_1000, 6),
             "client_price": round(client_rate_1000 * (qty/1000.0), 6),
-            "currency": CURRENCY,
-        }
-
-
-# ====== CANCEL ORDER (с возвратом) ======
-class OrderCancelIn(BaseModel):
-    user_id: int
-    order_id: int
-
-
-@app.post("/api/v1/order/cancel")
-async def api_order_cancel(body: OrderCancelIn):
-    """
-    Отмена заказа пользователем:
-      - если заказ завершён — 409
-      - если в ожидании/обработке — пытаемся отменить у поставщика
-      - считаем возврат по remains (если есть) или полностью, если не стартовал
-      - деньги возвращаем на баланс; в Payments появится запись provider='refund'
-    """
-    with db() as s:
-        u = ensure_user(s, body.user_id)
-        o = (
-            s.query(Order)
-            .filter(Order.id == int(body.order_id), Order.user_id == u.id)
-            .one_or_none()
-        )
-        if not o:
-            raise HTTPException(404, "order_not_found")
-
-        norm = _order_status_norm(o.status)
-        if norm == "completed":
-            raise HTTPException(409, "order_completed")
-
-        # подробный статус у поставщика
-        info = await vex_order_info(o.provider_id) if o.provider_id else None
-        st_now = _order_status_norm((info or {}).get("status") or o.status)
-
-        # если в процессе/ожидании — попробуем отменить
-        if st_now in ("processing", "pending"):
-            ok, _why = await vex_order_cancel(o.provider_id) if o.provider_id else (True, "")
-            if ok:
-                info2 = await vex_order_info(o.provider_id) or info or {}
-                info = info2
-                st_now = _order_status_norm(info2.get("status") or o.status)
-
-        # считаем сумму возврата
-        refund = 0.0
-        qty = max(1, int(o.quantity or 1))
-        cost = float(o.cost or 0.0)
-
-        remains = None
-        if info and info.get("remains") is not None:
-            try:
-                remains = max(0, min(qty, int(round(float(info["remains"])))))
-            except Exception:
-                remains = None
-
-        if remains is not None:
-            refund = round(cost * (remains / qty), 2)
-        else:
-            # без remains: если заказ не стартовал/отменён — полный возврат
-            if st_now in ("pending", "failed") or str(o.status).lower() in ("awaiting", "pending"):
-                refund = cost
-
-        refund = max(0.0, min(cost, refund))
-
-        # применяем возврат
-        if refund > 0:
-            fx = await fx_usd_rub()
-            if CURRENCY == "USD":
-                usd = round(refund, 2)
-            else:
-                usd = round(refund / (fx or 1.0), 2)
-
-            u.balance = float(u.balance or 0.0) + refund
-            t = Topup(
-                user_id=u.id,
-                provider="refund",
-                invoice_id=str(o.id),          # для связи с заказом
-                amount_usd=usd,
-                currency="USD",
-                status="paid",
-                applied=True,
-                pay_url=None,
-                created_at=now_ts(),
-            )
-            s.add(t)
-
-        # помечаем заказ
-        o.status = "Cancelled"
-        o.updated_at = now_ts()
-        s.commit()
-
-        return {
-            "ok": True,
-            "order_id": o.id,
-            "status": _order_status_norm(o.status),
-            "refund": refund,
             "currency": CURRENCY,
         }
