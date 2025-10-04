@@ -9,7 +9,7 @@
  * - Скрытие таббара при открытой клавиатуре
  */
 (function () {
-  console.log('app.js ready (per-spin charge + autospin sequential)');
+  console.log('app.js ready (per-spin charge + autospin sequential + live repricing)');
 
   // ====== Telegram WebApp ======
   const tg = window.Telegram?.WebApp || null;
@@ -30,7 +30,7 @@
   } catch (_) {}
 
   // Версия (для кэша картинок)
-  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-06';
+  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-07';
 
   // Добавляем ?v=... на <img src="static/...">, где ещё нет
   (function bumpStaticImages() {
@@ -49,6 +49,11 @@
 
   const API_BASE = "/api/v1";
 
+  // ===== Глобальные трекеры текущей услуги (для переприсовки после «Приватки») =====
+  window.__CUR_SERVICE_ID__   = null;
+  window.__CUR_SERVICE_NET__  = null;
+  window.__CUR_SVC_CONTEXT__  = { qty:null, link:"" };
+
   // ===== Roulette config/state =====
   const ROULETTE = {
     VALUES:  [0,2,4,5,6,8,10,12,15,20,30,40,60,100],
@@ -62,7 +67,7 @@
     strip: null,
     wheel: null,
     centerOffset: 0,
-    cardStep: 0,   // шаг по вертикали (высота билета + gap)
+    cardStep: 0,
     indexBase: 0,
     currentIndex: 0
   };
@@ -82,7 +87,7 @@
     favs:     document.getElementById("page-favs"),
     refs:     document.getElementById("page-refs"),
     details:  document.getElementById("page-details"),
-    profile:  null, // создадим динамически
+    profile:  null,
   };
 
   const catsListEl       = document.getElementById("catsList");
@@ -150,7 +155,7 @@
   function openModal(html){
     const m = ensureModal();
     const card = m.querySelector('.modal-card');
-    card.classList.remove('modal-card--plain');   // по умолчанию обычная
+    card.classList.remove('modal-card--plain');
     m.querySelector('.modal-content').innerHTML = html;
     m.setAttribute('aria-hidden','false');
   }
@@ -318,15 +323,36 @@
       if (ps) ps.textContent = `#${seq}`;
       if (pb) pb.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
       if (pm) {
-        const hasPersonal = Number.isFinite(userMarkup) && userMarkup > 0.01;
+        const hasPersonal = (typeof userMarkup === 'number') && (userMarkup > 0.01);
         pm.textContent = hasPersonal ? 'Приватка' : 'По умолчанию';
-        pm.removeAttribute('title'); // чтобы нигде не всплывали числа
-    }
-
+        pm.title = '';
+      }
     }
     try {
       if (document.getElementById('page-roulette')) updateRouletteBar();
     } catch (_) {}
+  }
+
+  // --- после изменения персональной наценки — перезагрузить текущую услугу и перерисовать страницу
+  async function refreshAfterMarkupChange(){
+    const sid = Number(window.__CUR_SERVICE_ID__ || 0);
+    const net = String(window.__CUR_SERVICE_NET__ || '');
+    if (!sid || !net) return;
+
+    try {
+      const uid = userId || seq;
+      const r = await fetch(bust(`${API_BASE}/services/${encodeURIComponent(net)}?user_id=${encodeURIComponent(uid)}`));
+      if (!r.ok) throw 0;
+      const arr = await r.json();
+      if (Array.isArray(arr)) {
+        servicesAll = arr.slice();
+        const svc = arr.find(x => Number(x.service) === sid);
+        if (svc) {
+          const ctx = window.__CUR_SVC_CONTEXT__ || {};
+          openServicePage(svc, { qty: ctx.qty || undefined, link: ctx.link || '' });
+        }
+      }
+    } catch(_){}
   }
 
   async function onProfilePromoApply(){
@@ -348,6 +374,7 @@
         userMarkup = Number(js.markup || userMarkup);
         alert('Персональная наценка обновлена!');
         await fetchProfile();
+        await refreshAfterMarkupChange(); // ⬅️ перерисуем текущую услугу
       } else if (js.kind === 'balance'){
         alert(`Начисление по промокоду: +${js.added} ${js.currency || ''}`);
         await fetchProfile();
@@ -416,9 +443,9 @@
 
       /* ===== рулетка: фикс-высота и фикс-размер билетов ===== */
       #page-roulette{
-        --wheel-h: 520px;      /* фиксированная высота поля */
-        --ticket-h: 150px;     /* фиксированная высота билета */
-        --ticket-gap: 18px;    /* вертикальный зазор между билетами */
+        --wheel-h: 520px;
+        --ticket-h: 150px;
+        --ticket-gap: 18px;
       }
 
       #page-roulette .wheel-pad{
@@ -605,7 +632,7 @@
     }
   }
 
-  // ===== ИНИЦИАЛИЗАЦИЯ РУЛЕТКИ (фикс-геометрия + базовый индекс) =====
+  // ===== ИНИЦИАЛИЗАЦИЯ РУЛЕТКИ =====
   function initRouletteUI(root){
     const wheel = root.querySelector('#rouletteWheel');
     const strip = root.querySelector('#rouletteStrip');
@@ -686,33 +713,33 @@
     return minIdx; // fallback
   }
   function animateToIndex(targetIdx, duration, done){
-  const s = rouletteState.strip;
-  const y = -(targetIdx * rouletteState.cardStep - rouletteState.centerOffset);
-  s.style.transition = `transform ${duration}ms cubic-bezier(.15,.9,.25,1)`;
-  requestAnimationFrame(()=>{ s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`; });
+    const s = rouletteState.strip;
+    const y = -(targetIdx * rouletteState.cardStep - rouletteState.centerOffset);
+    s.style.transition = `transform ${duration}ms cubic-bezier(.15,.9,.25,1)`;
+    requestAnimationFrame(()=>{ s.style.transform = `translate3d(-50%, ${Math.round(y)}px, 0)`; });
 
-  let finished = false;
-  const finish = () => {
-    if (finished) return;
-    finished = true;
-    clearTimeout(fallback);
-    s.removeEventListener('transitionend', onEnd);
-    s.style.transition = '';
-    rouletteState.currentIndex = targetIdx;
-    rouletteState.spinning = false;
-    document.getElementById('rbSpin')?.removeAttribute('disabled');
-    done && done();
-  };
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(fallback);
+      s.removeEventListener('transitionend', onEnd);
+      s.style.transition = '';
+      rouletteState.currentIndex = targetIdx;
+      rouletteState.spinning = false;
+      document.getElementById('rbSpin')?.removeAttribute('disabled');
+      done && done();
+    };
 
-  const onEnd = (e) => {
-    if (e && e.target !== s) return;
-    if (e && e.propertyName && e.propertyName !== 'transform') return;
-    finish();
-  };
+    const onEnd = (e) => {
+      if (e && e.target !== s) return;
+      if (e && e.propertyName && e.propertyName !== 'transform') return;
+      finish();
+    };
 
-  const fallback = setTimeout(finish, duration + 300);
-  s.addEventListener('transitionend', onEnd, { once: true });
-}
+    const fallback = setTimeout(finish, duration + 300);
+    s.addEventListener('transitionend', onEnd, { once: true });
+  }
 
 
   function updateRouletteBar() { setBalanceUI(lastBalance); }
@@ -739,14 +766,13 @@
     } catch (_) {}
   }
 
-  // ====== ОДИНОЧНЫЙ СПИН (списание ПО КАЖДОМУ спину)
+  // ====== ОДИНОЧНЫЙ СПИН ======
   async function spinRoulette(opts = {}){
     if (rouletteState.spinning) return false;
 
     const {
-      forceWin = null,     // не используется теперь, но оставим для совместимости (debug)
-      localOnly = false,   // не используется
-      onFinish  = null,    // callback(ok:boolean)
+      forceWin = null,
+      onFinish  = null,
     } = opts;
 
     const btn = document.getElementById('rbSpin');
@@ -759,7 +785,6 @@
       if (forceWin != null) {
         winVal = Number(forceWin);
       } else {
-        // Пер-спиновое списание (оптимистично)
         const cost = ROULETTE_COST_RUB;
         if (lastBalance + 1e-9 < cost){
           rouletteState.spinning = false;
@@ -777,7 +802,6 @@
           body: JSON.stringify({ user_id: userId || seq, cost_rub: cost })
         });
         if (!r.ok) {
-          // откат
           setBalanceUI(balanceBefore);
           const txt = await r.text().catch(()=> 'Ошибка');
           throw new Error(txt || 'spin failed');
@@ -792,7 +816,7 @@
       const targetIdx = findNextIndexOfValue(winVal);
       animateToIndex(targetIdx, ROULETTE.SPIN_MS, () => {
         if (finalBalance != null) setBalanceUI(finalBalance);
-        recenterToValue(winVal); // перецентруем для запаса
+        recenterToValue(winVal);
         try { tg?.HapticFeedback?.impactOccurred?.('medium'); } catch(_){}
         onFinish && onFinish(true);
       });
@@ -806,7 +830,7 @@
     }
   }
 
-  // ====== АВТО-СПИН (без предоплаты — N последовательных обычных спинов)
+  // ====== АВТО-СПИН ======
   const AUTOSPIN_MAX = 500;
   let autoSpinState = { active:false, remaining:0 };
 
@@ -831,7 +855,6 @@
       </div>
     `);
 
-    // Сделать модалку «плоской» (без заднего квадрата)
     const modal = ensureModal();
     modal.querySelector('.modal-card')?.classList.add('modal-card--plain');
 
@@ -909,7 +932,7 @@
     if (!autoSpinState.active) return;
     if (autoSpinState.remaining <= 0){
       stopAutoSpin();
-      fetchProfile(); // синк на всякий случай
+      fetchProfile();
       return;
     }
 
@@ -1153,10 +1176,15 @@
 
     let discountCode = '';
     let discountPct  = 0;
-    let qtyCurrent   = Math.max(min, Math.min(presets[0]||min, max));
+    let qtyCurrent   = Math.max(min, Math.min((opts.qty ? Number(opts.qty) : (presets[0]||min)), max));
     const rate1000   = Number(s.rate_client_1000 || 0);
 
     if (serviceTitleEl) serviceTitleEl.textContent = s.name || 'Услуга';
+
+    // запомним контекст текущей услуги — чтобы перерисовать после «Приватки»
+    window.__CUR_SERVICE_ID__  = Number(s.service);
+    window.__CUR_SERVICE_NET__ = s.network || currentNetwork || netFromText(s.name, s.category) || 'telegram';
+    window.__CUR_SVC_CONTEXT__ = { qty: qtyCurrent, link: '' };
 
     serviceDetailsEl.innerHTML = `
       <div class="svc">
@@ -1226,12 +1254,18 @@
     const promoApply  = document.getElementById('promoApply');
     const promoHint   = document.getElementById('promoHint');
 
+    // если был задан линк из opts — проставим и запомним в контексте
+    if (opts.link) { linkEl.value = String(opts.link); }
+    window.__CUR_SVC_CONTEXT__.link = linkEl.value || '';
+
     function recalc(){
       const base = priceFor(qtyCurrent, rate1000);
       const disc = Math.round(base * discountPct * 100) / 100;
       const total = Math.max(0, Math.round((base - disc) * 100) / 100);
       sumQty.textContent = qtyCurrent;
       sumPrice.textContent = `${total.toFixed(4)}${curSign(currency)}${disc>0 ? ` (−${disc.toFixed(2)})` : ''}`;
+      // обновим контекст qty
+      window.__CUR_SVC_CONTEXT__.qty = qtyCurrent;
     }
 
     qtyGrid.innerHTML = '';
@@ -1269,6 +1303,10 @@
       recalc();
     });
 
+    linkEl?.addEventListener('input', ()=>{
+      window.__CUR_SVC_CONTEXT__.link = linkEl.value || '';
+    });
+
     const presetQty  = Number(opts.qty || 0);
     const presetLink = String(opts.link || '');
     if (presetLink && linkEl) linkEl.value = presetLink;
@@ -1280,6 +1318,7 @@
         const num = parseInt(bt.querySelector('.num')?.textContent.replace(/\s/g,'')||'0',10);
         bt.classList.toggle('active', num === q);
       });
+      window.__CUR_SVC_CONTEXT__.qty = qtyCurrent;
     }
 
     let promoOpen = false;
@@ -1344,18 +1383,43 @@
       try{
         const body = { user_id:userId||seq, service:s.service, link, quantity:qtyCurrent };
         if (discountCode) body.promo_code = discountCode;
-        const r = await fetch(`${API_BASE}/order/create`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-        if (!r.ok) throw new Error(await r.text());
+        const r = await fetch(`${API_BASE}/order/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        if (!r.ok) {
+          let msg = 'Не удалось создать заказ';
+          try {
+            const txt = await r.text();
+            try {
+              const j = JSON.parse(txt);
+              if (j && j.detail) msg = j.detail;
+              else if (txt) msg = txt;
+            } catch {
+              if (txt) msg = txt;
+            }
+          } catch (_) {}
+          throw new Error(msg);
+        }
+
         const j = await r.json();
         alert(`Заказ создан!\nНомер: ${j.order_id}\nСумма: ${j.cost} ${j.currency}`);
+
         await fetchProfile();
-      }catch(e){
-        alert('Не удалось создать заказ: ' + (e?.message||e));
-      }finally{
-        btnCreate.disabled = false; btnCreate.textContent = 'Создать заказ';
+
+        if (linkEl) linkEl.value = '';
+        if (promoInput) promoInput.value = '';
+      } catch (e) {
+        alert('Ошибка оформления: ' + (e?.message || e));
+      } finally {
+        btnCreate.disabled = false;
+        btnCreate.textContent = 'Создать заказ';
       }
     });
 
+    // показать страницу услуги и сразу посчитать цену
     showPage("page-service");
     recalc();
     setPromoUI();
@@ -1365,38 +1429,32 @@
   btnBackToCats?.addEventListener('click', ()=> showPage("page-categories"));
   btnBackToServices?.addEventListener('click', ()=> showPage("page-services"));
 
-  // стартовая загрузка
-  loadCategories();
-  syncFavsFromServer().then(renderFavs);
-
   // === Автозапуск рулетки по параметру старта / ссылке ===
-(function autoOpenRouletteOnLaunch(){
-  function getLaunchIntent(){
-    // 1) deep-link Mini App: ?startapp=roulette
-    let sp = '';
-    try {
-      sp = (tg?.initDataUnsafe?.start_param || tg?.initDataUnsafe?.startParam || '').toLowerCase();
-    } catch(_) {}
+  (function autoOpenRouletteOnLaunch(){
+    function getLaunchIntent(){
+      // 1) deep-link Mini App: ?startapp=roulette
+      let sp = '';
+      try {
+        sp = (tg?.initDataUnsafe?.start_param || tg?.initDataUnsafe?.startParam || '').toLowerCase();
+      } catch(_) {}
 
-    // 2) web_app.url с параметром: ?p=roulette или ?page=roulette
-    const qp = new URLSearchParams(location.search);
-    const p  = (qp.get('p') || qp.get('page') || '').toLowerCase();
+      // 2) web_app.url с параметром: ?p=roulette или ?page=roulette
+      const qp = new URLSearchParams(location.search);
+      const p  = (qp.get('p') || qp.get('page') || '').toLowerCase();
 
-    // 3) hash: #roulette
-    const h  = (location.hash || '').replace(/^#/, '').toLowerCase();
+      // 3) hash: #roulette
+      const h  = (location.hash || '').replace(/^#/, '').toLowerCase();
 
-    const v = sp || p || (h.includes('roulette') ? 'roulette' : '');
-    if (['roulette','r','wheel'].includes(v)) return 'roulette';
-    return '';
-  }
+      const v = sp || p || (h.includes('roulette') ? 'roulette' : '');
+      if (['roulette','r','wheel'].includes(v)) return 'roulette';
+      return '';
+    }
 
-  if (getLaunchIntent() === 'roulette') {
-    // Страница рулетки сама создастся/стилизуется при вызове
-    ensureProfilePage();
-    openRoulette();
-  }
-})();
-
+    if (getLaunchIntent() === 'roulette') {
+      ensureProfilePage();
+      openRoulette();
+    }
+  })();
 
   // === Рефералка ===
   async function loadRefs() {
@@ -1853,5 +1911,9 @@
     updateProfilePageView();
     showPage('page-profile');
   });
+
+  // стартовая загрузка
+  loadCategories();
+  syncFavsFromServer().then(renderFavs);
 
 })();
