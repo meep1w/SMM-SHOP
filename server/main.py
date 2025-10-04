@@ -468,7 +468,7 @@ def _check_discount_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, Any]:
         raise HTTPException(400, "invalid_promo_type")
     ok, reason = _promo_can_use(s, pc, u.id)
     if not ok:
-        raise HTTPException(409, reason)
+        return {"ok": False, "reason": reason}
     pct = float(pc.discount_percent)
     if pct >= 1.0:
         pct = pct / 100.0  # на случай ввода "15" вместо "0.15"
@@ -508,6 +508,8 @@ async def promo_apply(body: PromoApplyIn):
             # сообщаем, что этот ввод — на странице заказа
             data = _check_discount_promo(s, u, pc)
             data["hint"] = "use_in_order"
+            if not data.get("ok"):
+                raise HTTPException(409, data.get("reason", "promo_not_active"))
             return data
         else:
             raise HTTPException(400, "unknown_promo_type")
@@ -529,7 +531,10 @@ async def promo_check(user_id: int = Query(...), code: str = Query(...)):
             raise HTTPException(404, "promo_not_found")
         if pc.type != "discount":
             raise HTTPException(400, "not_discount_code")
-        return _check_discount_promo(s, u, pc)
+        data = _check_discount_promo(s, u, pc)
+        if not data.get("ok"):
+            raise HTTPException(409, data.get("reason", "promo_not_active"))
+        return data
 
 
 # ---- Admin create promo ----
@@ -819,7 +824,6 @@ async def api_referrals_stats(user_id: int = Query(...)):
         # приглашено всего
         invited_total = s.query(func.count(RefBind.id)).filter(RefBind.ref_owner_user_id == u.id).scalar() or 0
 
-        # рефералов с депозитом (distinct по user_id в paid topups)
         # рефералов с депозитом (distinct по user_id в paid topups), промо не считаем
         sub = (
             s.query(distinct(Topup.user_id))
@@ -1039,6 +1043,8 @@ async def api_order_create(body: CreateOrderIn):
                 if pc.type != "discount":
                     raise HTTPException(400, "promo_not_discount")
                 chk = _check_discount_promo(s, u, pc)
+                if not chk.get("ok"):
+                    raise HTTPException(409, chk.get("reason", "promo_not_active"))
                 pct = float(chk["percent"])
                 discount_applied = round(base_cost * pct, 2)
                 promo_row = pc
@@ -1245,7 +1251,7 @@ _PAY_STATUS_SYNONYMS = {
     "failed":   ["failed", "canceled", "cancelled", "expired", "error"],
 }
 
-# ===== VEXBOOST: проверка статуса заказа и массовое обновление =====
+# ===== VEXBOOST: статус/инфо/отмена заказа =====
 async def vex_order_status(provider_order_id: str | int) -> Optional[str]:
     """
     Возвращает сырой статус от поставщика (In progress / Completed / Canceled ...)
@@ -1264,6 +1270,51 @@ async def vex_order_status(provider_order_id: str | int) -> Optional[str]:
     except Exception as e:
         logging.warning("vex_order_status fail for %s: %s", provider_order_id, e)
         return None
+
+
+async def vex_order_info(provider_order_id: str | int) -> Optional[Dict[str, Any]]:
+    """
+    Подробный статус: status + remains/charge (если отдаёт панель).
+    """
+    if not VEX_KEY or not provider_order_id:
+        return None
+    try:
+        qp = httpx.QueryParams({"action": "status", "key": VEX_KEY, "order": str(provider_order_id)})
+        url = f"{API_BASE}?{qp}"
+        r = await _client.get(url)
+        r.raise_for_status()
+        js = r.json()
+        st = (js.get("status") or js.get("order_status") or js.get("state") or "").strip()
+        remains = js.get("remains") or js.get("Remain") or js.get("Remains")
+        charge  = js.get("charge")  or js.get("price")  or js.get("Cost")
+        try: remains = float(remains)
+        except Exception: remains = None
+        try: charge = float(charge)
+        except Exception: charge = None
+        return {"status": st, "remains": remains, "charge": charge, "raw": js}
+    except Exception as e:
+        logging.warning("vex_order_info fail for %s: %s", provider_order_id, e)
+        return None
+
+
+async def vex_order_cancel(provider_order_id: str | int) -> Tuple[bool, str]:
+    """
+    Запрос на отмену заказа у поставщика (если поддерживается).
+    """
+    if not VEX_KEY or not provider_order_id:
+        return False, "no_key_or_order"
+    try:
+        qp = httpx.QueryParams({"action": "cancel", "key": VEX_KEY, "order": str(provider_order_id)})
+        url = f"{API_BASE}?{qp}"
+        r = await _client.get(url)
+        js = r.json()
+        ok = bool(js.get("success") or js.get("ok") or str(js.get("result", "")).lower() in ("true", "1"))
+        st = (js.get("status") or "").strip().lower()
+        if st in ("canceled", "cancelled"):
+            ok = True
+        return ok, json.dumps(js, ensure_ascii=False)
+    except Exception as e:
+        return False, str(e)
 
 
 async def refresh_orders_for_user(s: Session, u: User, limit: int = 40) -> int:
@@ -1482,5 +1533,103 @@ async def pricing_explain(service_id: int = Query(...), user_id: Optional[int] =
             "user_markup": float(mul),
             "client_rate_per_1000": round(client_rate_1000, 6),
             "client_price": round(client_rate_1000 * (qty/1000.0), 6),
+            "currency": CURRENCY,
+        }
+
+
+# ====== CANCEL ORDER (с возвратом) ======
+class OrderCancelIn(BaseModel):
+    user_id: int
+    order_id: int
+
+
+@app.post("/api/v1/order/cancel")
+async def api_order_cancel(body: OrderCancelIn):
+    """
+    Отмена заказа пользователем:
+      - если заказ завершён — 409
+      - если в ожидании/обработке — пытаемся отменить у поставщика
+      - считаем возврат по remains (если есть) или полностью, если не стартовал
+      - деньги возвращаем на баланс; в Payments появится запись provider='refund'
+    """
+    with db() as s:
+        u = ensure_user(s, body.user_id)
+        o = (
+            s.query(Order)
+            .filter(Order.id == int(body.order_id), Order.user_id == u.id)
+            .one_or_none()
+        )
+        if not o:
+            raise HTTPException(404, "order_not_found")
+
+        norm = _order_status_norm(o.status)
+        if norm == "completed":
+            raise HTTPException(409, "order_completed")
+
+        # подробный статус у поставщика
+        info = await vex_order_info(o.provider_id) if o.provider_id else None
+        st_now = _order_status_norm((info or {}).get("status") or o.status)
+
+        # если в процессе/ожидании — попробуем отменить
+        if st_now in ("processing", "pending"):
+            ok, _why = await vex_order_cancel(o.provider_id) if o.provider_id else (True, "")
+            if ok:
+                info2 = await vex_order_info(o.provider_id) or info or {}
+                info = info2
+                st_now = _order_status_norm(info2.get("status") or o.status)
+
+        # считаем сумму возврата
+        refund = 0.0
+        qty = max(1, int(o.quantity or 1))
+        cost = float(o.cost or 0.0)
+
+        remains = None
+        if info and info.get("remains") is not None:
+            try:
+                remains = max(0, min(qty, int(round(float(info["remains"])))))
+            except Exception:
+                remains = None
+
+        if remains is not None:
+            refund = round(cost * (remains / qty), 2)
+        else:
+            # без remains: если заказ не стартовал/отменён — полный возврат
+            if st_now in ("pending", "failed") or str(o.status).lower() in ("awaiting", "pending"):
+                refund = cost
+
+        refund = max(0.0, min(cost, refund))
+
+        # применяем возврат
+        if refund > 0:
+            fx = await fx_usd_rub()
+            if CURRENCY == "USD":
+                usd = round(refund, 2)
+            else:
+                usd = round(refund / (fx or 1.0), 2)
+
+            u.balance = float(u.balance or 0.0) + refund
+            t = Topup(
+                user_id=u.id,
+                provider="refund",
+                invoice_id=str(o.id),          # для связи с заказом
+                amount_usd=usd,
+                currency="USD",
+                status="paid",
+                applied=True,
+                pay_url=None,
+                created_at=now_ts(),
+            )
+            s.add(t)
+
+        # помечаем заказ
+        o.status = "Cancelled"
+        o.updated_at = now_ts()
+        s.commit()
+
+        return {
+            "ok": True,
+            "order_id": o.id,
+            "status": _order_status_norm(o.status),
+            "refund": refund,
             "currency": CURRENCY,
         }
