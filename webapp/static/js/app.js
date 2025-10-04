@@ -30,7 +30,7 @@
   } catch (_) {}
 
   // Версия (для кэша картинок)
-  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-04';
+  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-06';
 
   // Добавляем ?v=... на <img src="static/...">, где ещё нет
   (function bumpStaticImages() {
@@ -318,9 +318,11 @@
       if (ps) ps.textContent = `#${seq}`;
       if (pb) pb.textContent = `${fmt(lastBalance)}${curSign(currentCurrency)}`;
       if (pm) {
-        const hasPersonal = (typeof userMarkup === 'number') && (userMarkup > 0.01);
-        pm.textContent = hasPersonal ? `${Number(userMarkup).toFixed(3).replace(/\.?0+$/,'')}×` : 'По умолчанию';
-      }
+        const hasPersonal = Number.isFinite(userMarkup) && userMarkup > 0.01;
+        pm.textContent = hasPersonal ? 'Приватка' : 'По умолчанию';
+        pm.removeAttribute('title'); // чтобы нигде не всплывали числа
+    }
+
     }
     try {
       if (document.getElementById('page-roulette')) updateRouletteBar();
