@@ -1110,45 +1110,86 @@
   }
 
   // ====== Favorites ======
-  function favLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]'); } catch(_){ return []; } }
-  function favSave(a){ localStorage.setItem('smm_favs', JSON.stringify(a||[])); }
-  function favHas(id){ return favLoad().some(x=>x.id===id); }
-  function favAdd(item){ const a=favLoad(); if (!a.some(x=>x.id===item.id)){ a.push(item); favSave(a); } }
-  function favRemove(id){ favSave(favLoad().filter(x=>x.id!==id)); }
-  function renderFavs(){
-    const box = pages.favs?.querySelector('.fav-list');
-    if (!box) return;
-    const items = favLoad();
-    box.innerHTML = '';
-    if (!items.length){ box.innerHTML = '<div class="empty">Избранных услуг пока нет.</div>'; return; }
-    items.forEach(s=>{
-      const row = document.createElement('div'); row.className='service';
-      row.innerHTML = `
-        <div class="left"><div class="name">${s.name}</div><div class="meta">Сервис ID: ${s.id}${s.network ? ' • '+s.network : ''}</div></div>
-        <div class="right"><button class="btn" data-id="${s.id}">Открыть</button></div>`;
-      row.querySelector('button')?.addEventListener('click', ()=> openServicePage(s._raw || {service:s.id, name:s.name, min:s.min||1, max:s.max||100000, rate_client_1000:s.rate||0, currency:s.currency||currentCurrency}));
-      box.appendChild(row);
-    });
+function favLoad(){ try { return JSON.parse(localStorage.getItem('smm_favs') || '[]'); } catch(_){ return []; } }
+function favSave(a){ localStorage.setItem('smm_favs', JSON.stringify(a||[])); }
+function favHas(id){ return favLoad().some(x=>x.id===id); }
+function favAdd(item){
+  const a = favLoad();
+  if (!a.some(x => x.id === item.id)) {
+    a.push(item); favSave(a);
   }
-  async function syncFavsFromServer(){
-    try{
-      const uid = userId || seq;
-      const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
-      if(!r.ok) return;
-      const arr = await r.json();
-      if(!Array.isArray(arr)) return;
+}
+function favRemove(id){ favSave(favLoad().filter(x => x.id !== id)); }
 
-      const map = new Map(favLoad().map(x => [x.id, x]));
-      arr.forEach(s => {
-        map.set(s.service, {
-          id: s.service, name: s.name, network: s.network,
-          min: s.min, max: s.max, rate: s.rate_client_1000, currency: s.currency,
-          _raw: { ...s, service: s.service },
-        });
-      });
-      favSave(Array.from(map.values()));
-    }catch(_){}
+function renderFavs(){
+  const box = pages.favs?.querySelector('.fav-list');
+  if (!box) return;
+
+  const items = favLoad();
+  box.innerHTML = '';
+  if (!items.length){
+    box.innerHTML = '<div class="empty">Избранных услуг пока нет.</div>';
+    return;
   }
+
+  items.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'service';
+    row.innerHTML = `
+      <div class="left">
+        <div class="name">${s.name}</div>
+        <div class="meta">Сервис ID: ${s.id}${s.network ? ' • ' + s.network : ''}</div>
+      </div>
+      <div class="right">
+        <button class="btn" data-id="${s.id}">Открыть</button>
+      </div>`;
+
+    row.querySelector('button')?.addEventListener('click', async () => {
+      // Тянем актуальные данные услуги (с учётом персональной наценки) перед открытием
+      const svc = await fetchServiceById(s.id, s.network);
+      // fallback — если по какой-то причине не подтянулось
+      const fallback = s._raw || {
+        service: s.id,
+        name: s.name,
+        min: s.min || 1,
+        max: s.max || 100000,
+        rate_client_1000: s.rate || 0,
+        currency: s.currency || currentCurrency,
+        network: s.network || currentNetwork
+      };
+      openServicePage(svc || fallback);
+    });
+
+    box.appendChild(row);
+  });
+}
+
+async function syncFavsFromServer(){
+  try{
+    const uid = userId || seq;
+    const r = await fetch(`${API_BASE}/favorites?user_id=${encodeURIComponent(uid)}`);
+    if (!r.ok) return;
+    const arr = await r.json();
+    if (!Array.isArray(arr)) return;
+
+    // Обновляем локальный кеш избранного актуальными полями, включая цену с наценкой
+    const map = new Map(favLoad().map(x => [x.id, x]));
+    arr.forEach(s => {
+      map.set(s.service, {
+        id: s.service,
+        name: s.name,
+        network: s.network,
+        min: s.min,
+        max: s.max,
+        rate: s.rate_client_1000,      // цена/1000 уже с персональной наценкой
+        currency: s.currency,
+        _raw: { ...s, service: s.service },
+      });
+    });
+    favSave(Array.from(map.values()));
+  } catch (_){}
+}
+
 
   // ====== Full service page ======
   function presetValues(min,max){

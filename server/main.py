@@ -982,32 +982,47 @@ async def api_services_by_network(network: str, user_id: Optional[int] = Query(N
 # ---- Favorites ----
 @app.get("/api/v1/favorites")
 async def fav_list(user_id: int = Query(...)):
+    """
+    Возвращает избранные услуги пользователя.
+    ВАЖНО: rate_client_1000 отдается уже с учетом персональной наценки пользователя.
+    Некактивные услуги скрыты.
+    """
+    # на всякий случай держим каталог в актуальном состоянии
+    await ensure_services_fresh()
+
     with db() as s:
         u = ensure_user(s, user_id)
+
         rows = (
             s.query(Service)
-            .join(Favorite, Favorite.service_id == Service.id)
-            .filter(Favorite.user_id == u.id)
-            .all()
+             .join(Favorite, Favorite.service_id == Service.id)
+             .filter(Favorite.user_id == u.id, Service.active == True)  # noqa: E712
+             .order_by(Service.id.asc())
+             .all()
         )
-        return [
-            {
+
+        out = []
+        for it in rows:
+            # цена/1000 с учетом персональной наценки пользователя (всё в RUB)
+            rate = await rate_per_1k_for_user(it, u)
+            out.append({
                 "service": it.id,
                 "network": it.network,
                 "name": it.name,
                 "type": it.type,
                 "min": it.min,
                 "max": it.max,
-                "rate_client_1000": float(it.rate_client_1000 or 0.0),
+                "rate_client_1000": float(round(rate, 4)),
                 "currency": it.currency or CURRENCY,
                 "description": it.description or "",
-            }
-            for it in rows
-        ]
+            })
+        return out
+
 
 class FavIn(BaseModel):
     user_id: int
     service_id: int
+
 
 @app.post("/api/v1/favorites", status_code=204)
 async def fav_add(body: FavIn):
@@ -1016,11 +1031,14 @@ async def fav_add(body: FavIn):
         s.merge(Favorite(user_id=u.id, service_id=int(body.service_id)))
         s.commit()
 
+
 @app.delete("/api/v1/favorites/{service_id}", status_code=204)
 async def fav_del(service_id: int, user_id: int = Query(...)):
     with db() as s:
         u = ensure_user(s, user_id)
-        s.query(Favorite).filter(Favorite.user_id == u.id, Favorite.service_id == service_id).delete()
+        s.query(Favorite)\
+         .filter(Favorite.user_id == u.id, Favorite.service_id == service_id)\
+         .delete()
         s.commit()
 
 # ---- Order create ----
@@ -1111,6 +1129,7 @@ async def api_order_create(body: CreateOrderIn):
             s.commit()
 
         return {"order_id": o.id, "cost": cost, "currency": o.currency, "status": o.status}
+
 
 # ---- Invoice create ----
 @app.post("/api/v1/pay/invoice")
