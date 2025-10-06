@@ -1126,9 +1126,12 @@
       row.innerHTML = `
         <div class="left"><div class="name">${s.name}</div><div class="meta">Сервис ID: ${s.id}${s.network ? ' • '+s.network : ''}</div></div>
         <div class="right"><button class="btn" data-id="${s.id}">Открыть</button></div>`;
-      row.querySelector('button')?.addEventListener('click', ()=> openServicePage(s._raw || {service:s.id, name:s.name, min:s.min||1, max:s.max||100000, rate_client_1000:s.rate||0, currency:s.currency||currentCurrency}));
-      box.appendChild(row);
-    });
+      row.querySelector('button')?.addEventListener('click', async () => {
+        const svc = await fetchServiceById(s.id, s.network);   // ⬅️ подтянет /services/{net}?user_id=...
+        openServicePage(
+    svc || s._raw || { service:s.id, name:s.name, min:s.min||1, max:s.max||100000, rate_client_1000:s.rate||0, currency:s.currency||currentCurrency }
+  );
+});
   }
   async function syncFavsFromServer(){
     try{
