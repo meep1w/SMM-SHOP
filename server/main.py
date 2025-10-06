@@ -982,37 +982,28 @@ async def api_services_by_network(network: str, user_id: Optional[int] = Query(N
 # ---- Favorites ----
 @app.get("/api/v1/favorites")
 async def fav_list(user_id: int = Query(...)):
-    """
-    Возвращает избранные услуги пользователя.
-    ВАЖНО: rate_client_1000 отдается с учетом персональной наценки пользователя.
-    """
-    await ensure_services_fresh()
     with db() as s:
         u = ensure_user(s, user_id)
         rows = (
             s.query(Service)
             .join(Favorite, Favorite.service_id == Service.id)
-            .filter(Favorite.user_id == u.id, Service.active == True)  # noqa: E712
+            .filter(Favorite.user_id == u.id)
             .all()
         )
-
-        out = []
-        for it in rows:
-            # цена/1000 с учетом персональной наценки пользователя
-            rate = await rate_per_1k_for_user(it, u)
-            out.append({
+        return [
+            {
                 "service": it.id,
                 "network": it.network,
                 "name": it.name,
                 "type": it.type,
                 "min": it.min,
                 "max": it.max,
-                "rate_client_1000": float(round(rate, 4)),
+                "rate_client_1000": float(it.rate_client_1000 or 0.0),
                 "currency": it.currency or CURRENCY,
                 "description": it.description or "",
-            })
-        return out
-
+            }
+            for it in rows
+        ]
 
 class FavIn(BaseModel):
     user_id: int
