@@ -30,7 +30,7 @@
   } catch (_) {}
 
   // Версия (для кэша картинок)
-  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-07';
+  window.WEBAPP_VERSION = window.WEBAPP_VERSION || '2025-10-02-08';
 
   // Добавляем ?v=... на <img src="static/...">, где ещё нет
   (function bumpStaticImages() {
