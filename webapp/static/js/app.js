@@ -239,8 +239,15 @@
       currentCurrency = (p.currency || 'RUB').toUpperCase();
       setBalanceUI(Number(p.balance || 0));
 
+      // ⬇️ отслеживаем изменение персональной наценки
+      const prevMarkup = (typeof userMarkup === 'number') ? userMarkup : null;
       userMarkup = (p.markup != null ? Number(p.markup) : null);
       updateProfilePageView();
+
+      const changed = (prevMarkup !== userMarkup);
+      if (changed) {
+        await refreshAfterMarkupChange();
+      }
 
       if (p.topup_delta && Number(p.topup_delta) > 0){
         showOverlay(Number(p.topup_delta), p.topup_currency || currentCurrency);
@@ -286,7 +293,7 @@
       </div>
 
       <div class="card" style="padding:16px">
-        <div class="label">Эксклюзивный промокд</div>
+        <div class="label">Эксклюзивный промокод</div>
         <div class="promo-wrap" style="display:flex; gap:8px; align-items:center">
           <input id="profilePromoInput" type="text" placeholder="Введите код" style="flex:1; min-width:0;">
           <button class="btn" id="profilePromoApply">Активировать</button>
@@ -333,16 +340,29 @@
     } catch (_) {}
   }
 
-  // --- после изменения персональной наценки — перезагрузить текущую услугу и перерисовать страницу
+  // --- после изменения персональной наценки — перезагрузить текущую услугу и список в категории
   async function refreshAfterMarkupChange(){
     const sid = Number(window.__CUR_SERVICE_ID__ || 0);
     const net = String(window.__CUR_SERVICE_NET__ || '');
-    if (!sid || !net) return;
 
+    // 1) Перезагрузим список текущей сети и перерисуем
+    try {
+      if (currentNetwork) {
+        const uid = userId || seq;
+        const rList = await fetch(bust(`${API_BASE}/services/${encodeURIComponent(currentNetwork)}?user_id=${encodeURIComponent(uid)}`));
+        if (rList.ok) {
+          servicesAll = await rList.json();
+          applyServicesFilter();
+        }
+      }
+    } catch (_) {}
+
+    // 2) Если открыта страница услуги — перерисуем её
+    if (!sid || !net) return;
     try {
       const uid = userId || seq;
       const r = await fetch(bust(`${API_BASE}/services/${encodeURIComponent(net)}?user_id=${encodeURIComponent(uid)}`));
-      if (!r.ok) throw 0;
+      if (!r.ok) return;
       const arr = await r.json();
       if (Array.isArray(arr)) {
         servicesAll = arr.slice();
@@ -374,7 +394,7 @@
         userMarkup = Number(js.markup || userMarkup);
         alert('Персональная наценка обновлена!');
         await fetchProfile();
-        await refreshAfterMarkupChange(); // ⬅️ перерисуем текущую услугу
+        await refreshAfterMarkupChange(); // ⬅️ перерисуем текущую услугу и список
       } else if (js.kind === 'balance'){
         alert(`Начисление по промокоду: +${js.added} ${js.currency || ''}`);
         await fetchProfile();
@@ -1223,7 +1243,7 @@
           <button class="btn btn-primary btn-lg" id="svcCreate">Создать заказ</button>
         </div>
 
-        <div class="card desc" id="svcDesc">${s.description || s.desc || s.note || s.notes || 'Описание будет добавлено позже.'}</div>
+        <div class="card desc"><div id="svcDesc" style="white-space:pre-line"></div></div>
 
         <div class="card">
           <div class="fav-row">
@@ -1238,6 +1258,11 @@
           </div>
         </div>
       </div>`;
+
+    // безопасно подставляем текст описания (plain-text, с переносами)
+    const descEl = document.getElementById('svcDesc');
+    const descText = (s.description || s.desc || s.note || s.notes || 'Описание будет добавлено позже.');
+    if (descEl) descEl.textContent = String(descText);
 
     const qtyGrid   = document.getElementById('qtyGrid');
     const qtyInput  = document.getElementById('svcQty');
@@ -1746,8 +1771,12 @@
         const st  = stInfo(p.status);
         const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
         const prov = String(p.method || "cryptobot").toLowerCase();
-        const sub = `${prov} • ${fmtDate(p.created_at)} • #${p.id}`;
-        const ico = prov === 'ref' ? 'static/img/referral.svg' : `static/img/${prov}.svg`;
+        // ⬇️ иконки: refund только тут
+        const ico = prov === 'ref' ? 'static/img/referral.svg'
+                   : prov === 'refund' ? 'static/img/refund.svg'
+                   : `static/img/${prov}.svg`;
+        const title = prov === 'refund' ? 'Возврат' : prov;
+        const sub = `${title} • ${fmtDate(p.created_at)} • #${p.id}`;
         return `
           <div class="pay" data-id="${p.id}">
             <div class="pay__ico"><img src="${ico}" alt="${prov}" class="pay__ico-img"></div>
@@ -1819,8 +1848,11 @@
     function showPaymentModal(p){
       const st = stInfo(p.status);
       const prov = String(p.method || "cryptobot").toLowerCase();
-      const ico = prov === 'ref' ? 'static/img/referral.svg' : `static/img/${prov}.svg`;
+      const ico = prov === 'ref' ? 'static/img/referral.svg'
+                 : prov === 'refund' ? 'static/img/refund.svg'
+                 : `static/img/${prov}.svg`;
       const sum = `${(p.amount ?? 0)} ${(p.currency || "₽")}`;
+      const title = prov === 'refund' ? 'Возврат' : prov;
 
       const extraRows = [];
       extraRows.push(`<div class="modal-row"><div class="muted">Создан</div><div>${fmtDate(p.created_at)}</div></div>`);
@@ -1831,16 +1863,18 @@
       } else if (prov === 'ref') {
         if (p.from_user_id) extraRows.push(`<div class="modal-row"><div class="muted">От пользователя</div><div>#${p.from_user_id}</div></div>`);
         if (p.invoice_id)   extraRows.push(`<div class="modal-row"><div class="muted">Топап</div><div>#${p.invoice_id}</div></div>`);
+      } else if (prov === 'refund') {
+        // для возврата — просто показываем тип
       }
 
       openModal(`
-        <h3>${prov === 'ref' ? 'Реферальное начисление' : 'Платёж'} #${p.id}</h3>
+        <h3>${title} #${p.id}</h3>
         <div class="modal-row">
           <div style="display:flex; gap:10px; align-items:center">
             <div class="pay__ico"><img src="${ico}" class="pay__ico-img" alt=""></div>
             <div>
               <div style="font-weight:700">${sum}</div>
-              <div class="muted">${prov}</div>
+              <div class="muted">${title}</div>
             </div>
             <span class="badge ${st.cls}" style="margin-left:auto">${st.label}</span>
           </div>

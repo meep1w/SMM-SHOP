@@ -265,11 +265,23 @@ def client_rate_from_supplier_rub(supplier_rate_rub_per_1k: float) -> float:
     """Клиентская цена/1000 = (руб. поставщика/1000) × MARKUP_MULTIPLIER"""
     return float(supplier_rate_rub_per_1k) * MARKUP_MULTIPLIER
 
+# --- небольшая очистка текстов описаний
+def _clean_descr(x: Any) -> str:
+    if x is None:
+        return ""
+    s = str(x)
+    # нормализуем переводы строк и пробелы по краям
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    # уберём лишние пустые строки по краям
+    s = s.strip("\n ").rstrip()
+    return s
+
 async def sync_services_into_db():
     """
     Синхронизация каталога. ВАЖНО: трактуем it['rate'] как РУБ/1000 у поставщика.
     В БД храним rate_client_1000 = supplier_rub * MARKUP_MULTIPLIER.
     Плюс: деактивируем услуги, которых больше нет у поставщика.
+    Также: сохраняем РЕАЛЬНОЕ ОПИСАНИЕ из Vexboost (description/desc/notes/info/note).
     """
     raw = await vex_services_raw()
     with db() as s:
@@ -286,6 +298,18 @@ async def sync_services_into_db():
             max_ = int(it.get("max") or 0)
             supplier_rate_rub = float(it.get("rate") or 0.0)
             rate_view = client_rate_from_supplier_rub(supplier_rate_rub)
+
+            # ⬇️ Вытаскиваем реальное описание
+            desc_raw = (
+                it.get("description")
+                or it.get("desc")
+                or it.get("notes")
+                or it.get("info")
+                or it.get("note")
+                or ""
+            )
+            description = _clean_descr(desc_raw) or _clean_descr(cat)
+
             net = _detect_network(name, cat)
             is_active = True
             if not net:
@@ -303,7 +327,7 @@ async def sync_services_into_db():
                     max=max_,
                     rate_client_1000=rate_view,
                     currency=CURRENCY,
-                    description=cat,
+                    description=description,
                     active=is_active,
                 )
                 s.add(obj)
@@ -315,7 +339,7 @@ async def sync_services_into_db():
                 obj.max = max_
                 obj.rate_client_1000 = rate_view
                 obj.currency = CURRENCY
-                obj.description = cat
+                obj.description = description
                 obj.active = is_active
 
         # деактивируем услуги, которых нет в свежем ответе поставщика
