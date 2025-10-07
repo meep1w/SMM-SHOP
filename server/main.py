@@ -70,7 +70,7 @@ DISPLAY = {
 }
 
 # --- app ---
-app = FastAPI(title="SMMShop API", version="2.5")
+app = FastAPI(title="SMMShop API", version="2.6")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins or ["*"],
@@ -270,18 +270,14 @@ def _clean_descr(x: Any) -> str:
     if x is None:
         return ""
     s = str(x)
-    # нормализуем переводы строк и пробелы по краям
     s = s.replace("\r\n", "\n").replace("\r", "\n")
-    # уберём лишние пустые строки по краям
-    s = s.strip("\n ").rstrip()
-    return s
+    return s.strip("\n ").rstrip()
 
 async def sync_services_into_db():
     """
     Синхронизация каталога. ВАЖНО: трактуем it['rate'] как РУБ/1000 у поставщика.
-    В БД храним rate_client_1000 = supplier_rub * MARKUP_MULTIPLIER.
-    Плюс: деактивируем услуги, которых больше нет у поставщика.
-    Также: сохраняем РЕАЛЬНОЕ ОПИСАНИЕ из Vexboost (description/desc/notes/info/note).
+    rate_client_1000 = supplier_rub * MARKUP_MULTIPLIER.
+    Деактивируем пропавшие услуги и сохраняем описание.
     """
     raw = await vex_services_raw()
     with db() as s:
@@ -299,7 +295,6 @@ async def sync_services_into_db():
             supplier_rate_rub = float(it.get("rate") or 0.0)
             rate_view = client_rate_from_supplier_rub(supplier_rate_rub)
 
-            # ⬇️ Вытаскиваем реальное описание
             desc_raw = (
                 it.get("description")
                 or it.get("desc")
@@ -390,9 +385,7 @@ def _ensure_ref_link(s: Session, u: User) -> RefLink:
         exists = s.query(RefLink.id).filter(RefLink.code == code).first()
         if not exists:
             rl = RefLink(owner_user_id=u.id, code=code, created_at=now_ts())
-            s.add(rl)
-            s.commit()
-            s.refresh(rl)
+            s.add(rl); s.commit(); s.refresh(rl)
             return rl
     raise HTTPException(500, "cannot_generate_ref_code")
 
@@ -404,7 +397,7 @@ def _current_rate_for_owner(s: Session, owner_user_id: int) -> float:
         .filter(
             RefBind.ref_owner_user_id == owner_user_id,
             Topup.status == "paid",
-            Topup.provider != "promo",   # ⬅️ исключили промо
+            Topup.provider != "promo",
         )
         .subquery()
     )
@@ -471,7 +464,6 @@ async def _apply_balance_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, 
         fx = await fx_usd_rub()
         add = round(usd * fx, 2)
 
-    # кредитуем сразу (без ожидания consume_topup)
     u.balance = float(u.balance or 0.0) + add
     t = Topup(
         user_id=u.id,
@@ -497,8 +489,8 @@ def _check_discount_promo(s: Session, u: User, pc: PromoCode) -> Dict[str, Any]:
         raise HTTPException(409, reason)
     pct = float(pc.discount_percent)
     if pct >= 1.0:
-        pct = pct / 100.0  # на случай ввода "15" вместо "0.15"
-    pct = max(0.0, min(0.95, pct))  # защитим от 100%
+        pct = pct / 100.0
+    pct = max(0.0, min(0.95, pct))
     return {"ok": True, "kind": "discount", "percent": pct}
 
 class PromoApplyIn(BaseModel):
@@ -509,10 +501,9 @@ class PromoApplyIn(BaseModel):
 async def promo_apply(body: PromoApplyIn):
     """
     Применение промокода в профиле.
-    Поддерживает:
-      - type=markup  — навсегда: устанавливает персональную наценку пользователю
-      - type=balance — одноразово: начисляет баланс (в USD-экв., конвертируем в валюту магазина)
-    Для скидок используйте /promo/check и передачу promo_code в /order/create.
+    markup — навсегда (персональная наценка),
+    balance — начисление на баланс,
+    discount — только проверка, применять в /order/create.
     """
     code = _norm_code(body.code)
     if not code:
@@ -537,7 +528,6 @@ async def promo_apply(body: PromoApplyIn):
 
 @app.get("/api/v1/promo/check")
 async def promo_check(user_id: int = Query(...), code: str = Query(...)):
-    """Проверка скидочного промокода перед оформлением заказа. Возвращает percent (0..1)."""
     code = _norm_code(code)
     if not code:
         raise HTTPException(400, "empty_code")
@@ -602,9 +592,7 @@ async def promo_admin_create(
             notes=body.notes,
             created_at=now_ts(),
         )
-        s.add(pc)
-        s.commit()
-        s.refresh(pc)
+        s.add(pc); s.commit(); s.refresh(pc)
         return {"ok": True, "id": pc.id, "code": pc.code, "type": pc.type}
 
 # ---- Admin helpers & endpoints ----
@@ -619,10 +607,6 @@ def _require_admin(authorization: Optional[str] = Header(None)) -> None:
 
 @app.get("/api/v1/admin/users")
 async def admin_users(authorization: Optional[str] = Header(None)):
-    """
-    Отдаёт список пользователей для рассылки/статистики.
-    Формат: [{tg_id, seq, nick, balance, currency, orders, topups_total, topups_paid, refs, created_at, last_seen_at}, ...]
-    """
     _require_admin(authorization)
 
     with db() as s:
@@ -651,7 +635,6 @@ async def admin_users(authorization: Optional[str] = Header(None)):
 
 @app.post("/api/v1/admin/services/sync")
 async def admin_sync_services(authorization: Optional[str] = Header(None)):
-    """Принудительно обновить каталог услуг из поставщика."""
     _require_admin(authorization)
     await ensure_services_fresh(force=True)
     return {"ok": True}
@@ -671,24 +654,23 @@ async def api_user_exists(user_id: int = Query(...)):
         ) is not None
         return {"exists": exists}
 
-# Профиль: робастный поиск tg_id -> seq + склейка, чтобы не было «Гость»
+# Профиль: робастный поиск tg_id -> seq + склейка
 @app.get("/api/v1/user", response_model=UserOut)
 async def api_user(
     user_id: int = Query(...),
     consume_topup: int = 0,
     nick: Optional[str] = None,
-    autocreate: int = 1,  # 1 — как раньше; 0 — без создания (вернёт 404)
+    autocreate: int = 1,
 ):
     with db() as s:
-        # 1) пробуем по tg_id
+        # 1) по tg_id
         u = (
             s.query(User)
             .filter(User.tg_id == user_id)
             .order_by(User.id.desc())
             .first()
         )
-
-        # 2) если не нашли — ищем по seq и привязываем к tg_id
+        # 2) по seq и привязка к tg_id
         if not u:
             by_seq = (
                 s.query(User)
@@ -697,25 +679,22 @@ async def api_user(
                 .first()
             )
             if by_seq:
-                # если записи с таким tg_id ещё нет — привязываем
                 dupl = s.query(User.id).filter(User.tg_id == user_id).first()
                 if not dupl:
                     by_seq.tg_id = user_id
                     s.commit()
                 u = by_seq
-
-        # 3) если всё ещё нет — создаём (или 404 при autocreate=0)
+        # 3) создать
         if not u:
             if not autocreate:
                 raise HTTPException(404, "user_not_found")
             u = ensure_user(s, user_id, nick=nick)
         else:
-            # проставим ник, если пусто
             if nick and not u.nick:
                 u.nick = nick
                 s.commit()
 
-        # ===== consume_topup =====
+        # consume_topup (обычные пополнения)
         delta = 0.0
         if consume_topup:
             pays = (
@@ -765,7 +744,7 @@ async def api_user(
             markup=float(u.markup_override) if u.markup_override else None,
         )
 
-# Регистрация (ник должен быть уникальным)
+# Регистрация
 @app.post("/api/v1/register")
 async def api_register(body: RegisterIn):
     nick = (body.nick or "").strip()
@@ -789,7 +768,7 @@ async def api_register(body: RegisterIn):
             s.commit()
         return {"ok": True, "seq": u.seq, "nick": u.nick}
 
-# Привязка по реф.коду (бот может вызывать при /start ref_xxx)
+# Привязка по реф.коду
 @app.post("/api/v1/referrals/bind")
 async def api_referrals_bind(body: RefBindIn):
     code = (body.code or "").strip().lower()
@@ -797,7 +776,6 @@ async def api_referrals_bind(body: RefBindIn):
         raise HTTPException(400, "empty_code")
     with db() as s:
         u = ensure_user(s, body.user_id)
-        # уже привязан — игнор
         bound = s.query(RefBind).filter(RefBind.user_id == u.id).one_or_none()
         if bound:
             return {"ok": True, "already": True}
@@ -805,38 +783,27 @@ async def api_referrals_bind(body: RefBindIn):
         rl = s.query(RefLink).filter(RefLink.code == code).one_or_none()
         if not rl:
             raise HTTPException(404, "code_not_found")
-
         if rl.owner_user_id == u.id:
             raise HTTPException(400, "self_ref_forbidden")
 
         rb = RefBind(user_id=u.id, ref_owner_user_id=rl.owner_user_id, code=code, created_at=now_ts())
-        s.add(rb)
-        s.commit()
+        s.add(rb); s.commit()
         return {"ok": True}
 
 # Реф. статистика
 @app.get("/api/v1/referrals/stats")
 async def api_referrals_stats(user_id: int = Query(...)):
     with db() as s:
-        # tg_id -> seq
         u = (
-            s.query(User)
-            .filter(User.tg_id == user_id)
-            .order_by(User.id.desc())
-            .first()
-        )
+            s.query(User).filter(User.tg_id == user_id).order_by(User.id.desc()).first()
+        ) or s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
         if not u:
-            u = s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
-        if not u:
-            # создадим минимальный профиль, чтобы отдать ссылку
             u = ensure_user(s, tg_id=user_id)
 
         rl = _ensure_ref_link(s, u)
 
-        # приглашено всего
         invited_total = s.query(func.count(RefBind.id)).filter(RefBind.ref_owner_user_id == u.id).scalar() or 0
 
-        # рефералов с депозитом (distinct по user_id в paid topups), промо не считаем
         sub = (
             s.query(distinct(Topup.user_id))
             .join(RefBind, RefBind.user_id == Topup.user_id)
@@ -849,11 +816,9 @@ async def api_referrals_stats(user_id: int = Query(...)):
         )
         invited_with_deposit = s.query(func.count()).select_from(sub).scalar() or 0
 
-        # начислено всего
         earned_total = s.query(func.coalesce(func.sum(RefReward.amount_credit), 0.0))\
                         .filter(RefReward.to_user_id == u.id).scalar() or 0.0
 
-        # последниe 20 бонусов
         rewards = (
             s.query(RefReward)
             .filter(RefReward.to_user_id == u.id)
@@ -861,7 +826,6 @@ async def api_referrals_stats(user_id: int = Query(...)):
             .limit(20).all()
         )
 
-        # текущая ставка по порогу
         rate = REF_TIER_RATE if invited_with_deposit >= REF_TIER_THRESHOLD else REF_BASE_RATE
         rate_percent = int(round(rate * 100))
         currency = u.currency or CURRENCY
@@ -896,8 +860,7 @@ async def api_referrals_stats(user_id: int = Query(...)):
 @app.get("/api/v1/services")
 async def api_services(user_id: Optional[int] = Query(None)):
     """
-    Если передан user_id — возвращаем цены с учётом персональной наценки.
-    Иначе — как в базе (под дефолтную наценку).
+    Если передан user_id — цены с учётом персональной наценки.
     """
     await ensure_services_fresh()
     with db() as s:
@@ -914,14 +877,10 @@ async def api_services(user_id: Optional[int] = Query(None)):
         for it in s.query(Service).filter(Service.active == True).all():  # noqa: E712
             if it.network in groups:
                 groups[it.network]["count"] += 1
-        # просто выдаём счётчик по сетям
         return [groups[k] for k in ["telegram", "tiktok", "instagram", "youtube", "facebook"]]
 
 @app.get("/api/v1/services/{network}")
 async def api_services_by_network(network: str, user_id: Optional[int] = Query(None)):
-    """
-    Возвращает список услуг сети. Если user_id задан — цена с учётом персональной наценки.
-    """
     if network not in NETWORKS:
         raise HTTPException(404, "Unknown network")
 
@@ -943,7 +902,6 @@ async def api_services_by_network(network: str, user_id: Optional[int] = Query(N
             .all()
         )
 
-        # если есть пользователь — пересчитываем rate_client_1000 под его наценку
         out = []
         if u is not None:
             mul = user_markup(u)
@@ -983,13 +941,9 @@ async def api_services_by_network(network: str, user_id: Optional[int] = Query(N
 @app.get("/api/v1/favorites")
 async def fav_list(user_id: int = Query(...)):
     """
-    Возвращает избранные услуги пользователя.
-    ВАЖНО: rate_client_1000 отдается уже с учетом персональной наценки пользователя.
-    Некактивные услуги скрыты.
+    Избранные — цены уже с учётом персональной наценки.
     """
-    # на всякий случай держим каталог в актуальном состоянии
     await ensure_services_fresh()
-
     with db() as s:
         u = ensure_user(s, user_id)
 
@@ -1003,7 +957,6 @@ async def fav_list(user_id: int = Query(...)):
 
         out = []
         for it in rows:
-            # цена/1000 с учетом персональной наценки пользователя (всё в RUB)
             rate = await rate_per_1k_for_user(it, u)
             out.append({
                 "service": it.id,
@@ -1112,9 +1065,7 @@ async def api_order_create(body: CreateOrderIn):
             status="Awaiting",
             provider_id=str(supplier_order),
         )
-        s.add(o)
-        s.commit()
-        s.refresh(o)
+        s.add(o); s.commit(); s.refresh(o)
 
         # фиксируем активацию скидочного промокода, если был
         if promo_row and discount_applied > 0:
@@ -1129,7 +1080,6 @@ async def api_order_create(body: CreateOrderIn):
             s.commit()
 
         return {"order_id": o.id, "cost": cost, "currency": o.currency, "status": o.status}
-
 
 # ---- Invoice create ----
 @app.post("/api/v1/pay/invoice")
@@ -1158,10 +1108,9 @@ async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
         r = await c.post(link, headers=headers, json=body)
         js = r.json()
 
-    # Унифицировано: достаём из result или invoice
     res = js.get("result") or js.get("invoice") or {}
     pay_url = res.get("pay_url")
-    mini_app_url = res.get("mini_app_invoice_url")  # <— НУЖНОЕ ПОЛЕ
+    mini_app_url = res.get("mini_app_invoice_url")
     invoice_id = res.get("invoice_id") or res.get("id") or ""
 
     if not pay_url:
@@ -1177,12 +1126,10 @@ async def api_pay_invoice(payload: Dict[str, Any] = Body(...)):
             currency="USD",
             status="created",
             applied=False,
-            pay_url=pay_url,  # можно хранить только pay_url
+            pay_url=pay_url,
         )
-        s.add(t)
-        s.commit()
+        s.add(t); s.commit()
 
-    # Возвращаем обе ссылки — фронт откроет mini_app_url, если есть
     return {"pay_url": pay_url, "mini_app_url": mini_app_url, "invoice_id": invoice_id}
 
 # ---- Webhook ----
@@ -1197,7 +1144,6 @@ def _extract_invoice(data: Dict[str, Any]) -> Dict[str, Any]:
         inv = data["payload"]
     else:
         inv = {}
-
     return {
         "invoice_id": inv.get("invoice_id") or inv.get("id") or "",
         "status": str(inv.get("status") or "").lower(),
@@ -1237,20 +1183,20 @@ async def cryptobot_webhook(request: Request):
             applied=False,
             pay_url=None,
         )
-        s.add(t)
-        s.commit()
+        s.add(t); s.commit()
 
     return {"ok": True}
 
 # ===== helpers: status normalize/synonyms (для детализации) =====
-def _order_status_norm(s: Optional[str]) -> str:
-    t = (s or "").strip().lower().replace("_", " ")
+def _order_status_norm(sval: Optional[str]) -> str:
+    t = (sval or "").strip().lower().replace("_", " ")
     if t in ("awaiting", "in progress", "processing"):
         return "processing"
     if t in ("completed", "finished", "success", "done"):
         return "completed"
-    if t in ("canceled", "cancelled", "failed", "error"):
-        return "failed"
+    if t in ("canceled", "cancelled", "failed", "error", "partial"):
+        # partial трактуем как failed для целей возврата (частично не выполнено)
+        return "failed" if t == "partial" else "failed"
     if t in ("pending",):
         return "pending"
     return t or "processing"
@@ -1258,7 +1204,7 @@ def _order_status_norm(s: Optional[str]) -> str:
 _ORDER_STATUS_SYNONYMS = {
     "processing": ["awaiting", "in progress", "processing"],
     "completed":  ["completed", "finished", "success", "done"],
-    "failed":     ["canceled", "cancelled", "failed", "error"],
+    "failed":     ["canceled", "cancelled", "failed", "error", "partial"],
     "pending":    ["pending"],
 }
 
@@ -1278,12 +1224,8 @@ _PAY_STATUS_SYNONYMS = {
     "failed":   ["failed", "canceled", "cancelled", "expired", "error"],
 }
 
-# ===== VEXBOOST: проверка статуса заказа и массовое обновление =====
-async def vex_order_status(provider_order_id: str | int) -> Optional[str]:
-    """
-    Возвращает сырой статус от поставщика (In progress / Completed / Canceled ...)
-    или None, если не удалось.
-    """
+# ===== VEXBOOST: подробный статус =====
+async def vex_order_info(provider_order_id: str | int) -> Optional[Dict[str, Any]]:
     if not VEX_KEY:
         return None
     try:
@@ -1292,16 +1234,188 @@ async def vex_order_status(provider_order_id: str | int) -> Optional[str]:
         r = await _client.get(url)
         r.raise_for_status()
         js = r.json()
-        st = (js.get("status") or js.get("order_status") or js.get("state") or "").strip()
-        return st or None
+        return {
+            "status": (js.get("status") or js.get("order_status") or js.get("state") or "").strip(),
+            "remains": js.get("remains"),
+            "charge": js.get("charge"),
+            "start_count": js.get("start_count"),
+        }
     except Exception as e:
-        logging.warning("vex_order_status fail for %s: %s", provider_order_id, e)
+        logging.warning("vex_order_info fail for %s: %s", provider_order_id, e)
         return None
+
+# ===== Возврат (idempotent через Topup provider='refund') =====
+async def _apply_refund_if_needed(s: Session, u: User, o: Order, info: Dict[str, Any]) -> float:
+    """
+    Вычисляет необходимый возврат пользователю по заказу 'o' исходя из remains.
+    Возвращает сумму, которая была ДОначислена на баланс сейчас (в валюте магазина).
+    Идемпотентность обеспечивается суммированием уже созданных Topup(provider='refund', invoice_id='order:{id}').
+    """
+    try:
+        q = int(o.quantity or 0)
+    except Exception:
+        q = 0
+    if q <= 0:
+        return 0.0
+
+    # remains может быть строкой/float/None
+    rem_raw = info.get("remains", None)
+    try:
+        rem = int(float(rem_raw))
+    except Exception:
+        rem = None
+
+    if rem is None:
+        return 0.0
+
+    delivered = max(0, q - max(0, rem))
+    if delivered >= q:
+        return 0.0  # всё выполнено
+
+    # Сколько должны вернуть пользователю исходя из фактической поставки.
+    # Пропорционально оригинальной стоимости заказа в магазине.
+    need_refund_shop = round(float(o.cost or 0.0) * (1 - (delivered / q)), 2)
+
+    # Сколько уже возвращено по этому заказу
+    fx = await fx_usd_rub()
+    existing: List[Topup] = s.query(Topup).filter(
+        Topup.user_id == u.id,
+        Topup.provider == "refund",
+        Topup.invoice_id == f"order:{o.id}",
+    ).all()
+
+    already_shop = 0.0
+    for t in existing:
+        usd = float(t.amount_usd or 0.0)
+        already_shop += usd if CURRENCY == "USD" else (usd * fx)
+
+    delta_shop = round(need_refund_shop - already_shop, 2)
+    if delta_shop <= 0:
+        return 0.0
+
+    # Кредитуем баланс и фиксируем топап-Refund (в USD, для унификации истории)
+    delta_usd = delta_shop if CURRENCY == "USD" else round(delta_shop / (fx or 1.0), 2)
+    u.balance = float(u.balance or 0.0) + delta_shop
+    t = Topup(
+        user_id=u.id,
+        provider="refund",
+        invoice_id=f"order:{o.id}",
+        amount_usd=delta_usd,
+        currency="USD",
+        status="paid",
+        applied=True,
+        pay_url=None,
+        created_at=now_ts(),
+    )
+    s.add(t)
+    s.commit()
+    return delta_shop
+
+# ===== Обновление статусов + возвраты =====
+
+async def vex_order_info(provider_order_id: str | int) -> Dict[str, Any]:
+    """
+    Возвращает полную информацию по заказу у поставщика:
+    status, remains, charge (если есть). Поля могут отсутствовать.
+    """
+    if not VEX_KEY:
+        return {}
+    try:
+        qp = httpx.QueryParams(
+            {"action": "status", "key": VEX_KEY, "order": str(provider_order_id)}
+        )
+        url = f"{API_BASE}?{qp}"
+        r = await _client.get(url)
+        r.raise_for_status()
+        js = r.json() or {}
+        out = {
+            "status": (js.get("status") or js.get("order_status") or js.get("state") or "").strip(),
+        }
+        # remains может приезжать строкой
+        try:
+            out["remains"] = int(float(js.get("remains"))) if js.get("remains") is not None else None
+        except Exception:
+            out["remains"] = None
+        # charge (сколько реально списано у поставщика, обычно в рублях)
+        try:
+            out["charge"] = float(js.get("charge")) if js.get("charge") is not None else None
+        except Exception:
+            out["charge"] = None
+        return out
+    except Exception as e:
+        logging.warning("vex_order_info fail for %s: %s", provider_order_id, e)
+        return {}
+
+
+def _is_final_status(raw_status: Optional[str]) -> bool:
+    """
+    Считаем финальными: completed/failed и partial (частично выполнен).
+    """
+    t = (raw_status or "").lower()
+    norm = _order_status_norm(t)
+    if norm in ("completed", "failed"):
+        return True
+    # Явно учитываем «partial»
+    return "partial" in t
+
+
+async def _apply_order_refund(
+    s: Session,
+    u: User,
+    order: Order,
+    amount_rub: float,
+    currency: str,
+) -> float:
+    """
+    Зачисляет пользователю возврат по заказу. Идемпотентно — создаём Topup
+    с provider='refund' и invoice_id=f'order:{order.id}'. Если уже есть — не дублируем.
+    Возвращает фактически зачисленную сумму (RUB).
+    """
+    amount_rub = round(max(0.0, float(amount_rub or 0.0)), 2)
+    if amount_rub <= 0:
+        return 0.0
+
+    unique_id = f"order:{int(order.id)}"
+    exists = (
+        s.query(Topup.id)
+        .filter(Topup.provider == "refund", Topup.invoice_id == unique_id)
+        .first()
+    )
+    if exists:
+        return 0.0  # возврат уже делали
+
+    # Конвертируем в USD для поля amount_usd, если нужно (историческая совместимость)
+    fx = await fx_usd_rub()
+    if CURRENCY == "USD":
+        amount_usd = amount_rub
+    else:
+        amount_usd = round((amount_rub / (fx or 1.0)), 2)
+
+    # Кредитуем баланс
+    u.balance = float(u.balance or 0.0) + amount_rub
+
+    s.add(
+        Topup(
+            user_id=u.id,
+            provider="refund",
+            invoice_id=unique_id,
+            amount_usd=amount_usd,
+            currency=CURRENCY,
+            status="paid",
+            applied=True,
+            pay_url=None,
+            created_at=now_ts(),
+        )
+    )
+    s.commit()
+    return amount_rub
+
 
 async def refresh_orders_for_user(s: Session, u: User, limit: int = 40) -> int:
     """
     Обновляет статусы последних НЕфинальных заказов пользователя из VEXBOOST.
-    Возвращает кол-во обновлённых строк.
+    Для финальных статусов (canceled/partial/completed) делает возврат недопоставленной части.
+    Возвращает кол-во обновлённых записей (обновления статуса + применённые возвраты).
     """
     NON_FINAL = ("Awaiting", "In progress", "Processing", "Pending")
     q = (
@@ -1312,22 +1426,64 @@ async def refresh_orders_for_user(s: Session, u: User, limit: int = 40) -> int:
         .limit(limit)
     )
     rows = q.all()
-    updated = 0
+    changed = 0
+
     for o in rows:
         if not o.provider_id:
             continue
-        st_raw = await vex_order_status(o.provider_id)
-        if not st_raw:
+
+        info = await vex_order_info(o.provider_id)
+        if not info:
             continue
-        new_norm = _order_status_norm(st_raw)
+
+        raw_status = info.get("status") or o.status or ""
+        new_norm = _order_status_norm(raw_status)
         old_norm = _order_status_norm(o.status)
-        if new_norm != old_norm or st_raw != (o.status or ""):
-            o.status = st_raw  # храним сырой статус от поставщика
+
+        # Если статус изменился — обновим
+        if raw_status and (raw_status != (o.status or "")):
+            o.status = raw_status
             o.updated_at = now_ts()
-            updated += 1
-    if updated:
+            changed += 1
+
+        # Если стал финальным — считаем возврат
+        if _is_final_status(raw_status):
+            remains = info.get("remains")
+            qty = int(o.quantity or 0)
+
+            # по умолчанию: completed -> без возврата, canceled -> полный возврат
+            refund_rub = 0.0
+            if remains is not None and qty > 0:
+                # Пропорциональный возврат по недопоставленной части
+                part = max(0.0, min(1.0, float(remains) / float(qty)))
+                refund_rub = round(float(o.cost or 0.0) * part, 2)
+            else:
+                # Если нет данных о remains:
+                # - completed -> ничего
+                # - failed/canceled -> полный
+                if new_norm == "failed":
+                    refund_rub = round(float(o.cost or 0.0), 2)
+                else:
+                    refund_rub = 0.0
+
+            if refund_rub > 0:
+                try:
+                    applied = await _apply_order_refund(
+                        s=s,
+                        u=u,
+                        order=o,
+                        amount_rub=refund_rub,
+                        currency=o.currency or CURRENCY,
+                    )
+                    if applied > 0:
+                        changed += 1
+                except Exception as e:
+                    logging.warning("refund apply failed for order %s: %s", o.id, e)
+
+    if changed:
         s.commit()
-    return updated
+    return changed
+
 
 # ===== Orders list =====
 @app.get("/api/v1/orders")
@@ -1336,9 +1492,8 @@ async def api_orders(
     status: Optional[str] = None,  # processing/completed/failed/pending
     limit: int = 50,
     offset: int = 0,
-    refresh: int = 0,              # 1 = обновить статусы перед выдачей
+    refresh: int = 0,  # 1 = обновить статусы перед выдачей
 ):
-
     limit = max(1, min(200, int(limit)))
     offset = max(0, int(offset))
     with db() as s:
@@ -1373,18 +1528,21 @@ async def api_orders(
         rows = q.order_by(Order.id.desc()).limit(limit).offset(offset).all()
         out = []
         for o, svc in rows:
-            out.append({
-                "id": o.id,
-                "created_at": int(getattr(o, "created_at", None) or now_ts()),
-                "service": svc.name,
-                "category": svc.description or "",
-                "quantity": int(o.quantity or 0),
-                "price": float(o.cost or 0.0),
-                "currency": o.currency or CURRENCY,
-                "status": _order_status_norm(o.status),
-                "provider_id": getattr(o, "provider_id", None),
-            })
+            out.append(
+                {
+                    "id": o.id,
+                    "created_at": int(getattr(o, "created_at", None) or now_ts()),
+                    "service": svc.name,
+                    "category": svc.description or "",
+                    "quantity": int(o.quantity or 0),
+                    "price": float(o.cost or 0.0),
+                    "currency": o.currency or CURRENCY,
+                    "status": _order_status_norm(o.status),
+                    "provider_id": getattr(o, "provider_id", None),
+                }
+            )
         return out
+
 
 # ===== Payments (topups + referral rewards) =====
 @app.get("/api/v1/payments")
@@ -1396,7 +1554,7 @@ async def api_payments(
 ):
     """
     Возвращает объединённый список:
-      • Topups (обычные пополнения)
+      • Topups (обычные пополнения и возвраты provider='refund')
       • RefReward (реферальные начисления) как method='ref', status='completed'
       • Topups с provider='promo' (балансовые промокоды)
     Сортировано по времени (desc). Всегда массив, не null.
@@ -1437,21 +1595,26 @@ async def api_payments(
     for t in topups:
         usd = float(t.amount_usd or 0.0)
         if CURRENCY == "USD":
-            amount = round(usd, 2); currency = "USD"
+            amount = round(usd, 2)
+            currency = "USD"
         else:
-            amount = round(usd * fx, 2); currency = CURRENCY
+            amount = round(usd * fx, 2)
+            currency = CURRENCY
         created = int(getattr(t, "created_at", None) or now_ts())
-        items.append({
-            "id": int(t.id),
-            "created_at": created,
-            "amount": amount,
-            "amount_usd": round(usd, 2),
-            "currency": currency,
-            "method": t.provider or "cryptobot",
-            "status": _pay_status_norm(t.status),
-            "invoice_id": t.invoice_id,
-            "pay_url": getattr(t, "pay_url", None),
-        })
+        method = t.provider or "cryptobot"
+        items.append(
+            {
+                "id": int(t.id),
+                "created_at": created,
+                "amount": amount,
+                "amount_usd": round(usd, 2),
+                "currency": currency,
+                "method": method,
+                "status": _pay_status_norm(t.status),
+                "invoice_id": t.invoice_id,
+                "pay_url": getattr(t, "pay_url", None),
+            }
+        )
 
     # map referral rewards
     for r in rewards:
@@ -1464,25 +1627,30 @@ async def api_payments(
         else:
             amount_usd = round(amount / (fx or 1.0), 2) if (fx or 0) > 0 else None
 
-        items.append({
-            "id": int(r.id),
-            "created_at": created,
-            "amount": amount,
-            "amount_usd": amount_usd,
-            "currency": currency,
-            "method": "ref",
-            "status": "completed",
-            "invoice_id": None,
-            "pay_url": None,
-        })
+        items.append(
+            {
+                "id": int(r.id),
+                "created_at": created,
+                "amount": amount,
+                "amount_usd": amount_usd,
+                "currency": currency,
+                "method": "ref",
+                "status": "completed",
+                "invoice_id": None,
+                "pay_url": None,
+            }
+        )
 
     # сортировка и пагинация
     items.sort(key=lambda x: x["created_at"], reverse=True)
-    return items[offset: offset + limit]
+    return items[offset : offset + limit]
+
 
 # ---- Pricing explain (для проверки математики ×default и персональных наценок)
 @app.get("/api/v1/pricing/explain")
-async def pricing_explain(service_id: int = Query(...), user_id: Optional[int] = None, qty: int = 1000):
+async def pricing_explain(
+    service_id: int = Query(...), user_id: Optional[int] = None, qty: int = 1000
+):
     """
     Пояснение: supplier_rub -> ×наценка -> клиентская цена (всё в RUB).
     """
@@ -1490,15 +1658,18 @@ async def pricing_explain(service_id: int = Query(...), user_id: Optional[int] =
         u: Optional[User] = None
         if user_id:
             u = (
-                s.query(User).filter(User.tg_id == user_id).order_by(User.id.desc()).first()
+                s.query(User)
+                .filter(User.tg_id == user_id)
+                .order_by(User.id.desc())
+                .first()
             ) or s.query(User).filter(User.seq == user_id).order_by(User.id.desc()).first()
 
         svc = s.get(Service, int(service_id))
         if not svc:
             raise HTTPException(404, "service not found")
 
-        view = float(svc.rate_client_1000 or 0.0)                 # supplier_rub * default_markup
-        base_rub = view / max(MARKUP_MULTIPLIER, 1e-9)            # supplier_rub
+        view = float(svc.rate_client_1000 or 0.0)  # supplier_rub * default_markup
+        base_rub = view / max(MARKUP_MULTIPLIER, 1e-9)  # supplier_rub
         mul = user_markup(u) if u else MARKUP_MULTIPLIER
         client_rate_1000 = base_rub * mul
 
@@ -1510,6 +1681,7 @@ async def pricing_explain(service_id: int = Query(...), user_id: Optional[int] =
             "default_markup": MARKUP_MULTIPLIER,
             "user_markup": float(mul),
             "client_rate_per_1000": round(client_rate_1000, 6),
-            "client_price": round(client_rate_1000 * (qty/1000.0), 6),
+            "client_price": round(client_rate_1000 * (qty / 1000.0), 6),
             "currency": CURRENCY,
         }
+
