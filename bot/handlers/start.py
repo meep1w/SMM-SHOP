@@ -134,7 +134,7 @@ async def start_cmd(m: Message):
     if u is not None and not u.get("nick"):
         caption = (
             "<b>Добро пожаловать в магазин "
-            f"<a href=\"{html.escape(GROUP_URL or PUBLIC_CHAT_URL or '#')}\">Slovekiza</a>!</b>\n\n"
+            f"<a href=\"{html.escape(GROUP_URL or PUBLIC_CHAT_URL or '#')}\">Slovekinza</a>!</b>\n\n"
             "Для продолжения зарегистрируй никнейм. Его нельзя будет изменить или передать."
         )
         photo = FSInputFile(WELCOME_IMG) if WELCOME_IMG.exists() else None
@@ -152,7 +152,7 @@ async def start_cmd(m: Message):
     # 5) совсем новый пользователь — показываем привет и регистрацию
     caption = (
         "<b>Добро пожаловать в магазин "
-        f"<a href=\"{html.escape(GROUP_URL or PUBLIC_CHAT_URL or '#')}\">Slovekiza</a>!</b>\n\n"
+        f"<a href=\"{html.escape(GROUP_URL or PUBLIC_CHAT_URL or '#')}\">Slovekinza</a>!</b>\n\n"
         "Продвигайте свои соц.сети, каналы и воронки по лучшим ценам — в любое время.\n\n"
         f"Можете посетить мой <a href=\"{html.escape(PUBLIC_CHAT_URL or GROUP_URL or '#')}\">открытый чат</a> "
         f"или ознакомиться с моей <a href=\"{html.escape(SCHOOL_URL or '#')}\">школой траффика</a>."
